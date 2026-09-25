@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: trips-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-trips}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-trips_password_secure_2026}
+      POSTGRES_DB: ${DB_NAME:-trips}
+    volumes:
+      - trips_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trips} -d ${DB_NAME:-trips}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trips_net
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trips-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Exposto no loopback do host para integração limpa com Nginx Proxy Manager
+      - "127.0.0.1:${APP_PORT:-3050}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: ${APP_URL:-https://trips.bru.to}
+      DATABASE_URL: postgresql://${DB_USER:-trips}:${DB_PASSWORD:-trips_password_secure_2026}@db:5432/${DB_NAME:-trips}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@bru.to}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin_secret_pass_2026}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
+      SESSION_SECRET: ${SESSION_SECRET:-trips_secure_production_secret_key_84920}
+      SMTP_HOST: ${SMTP_HOST:-172.25.0.1}
+      SMTP_PORT: ${SMTP_PORT:-25}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      MAIL_FROM: ${MAIL_FROM:-Trips <trips@bru.to>}
+      TURNSTILE_ENABLED: ${TURNSTILE_ENABLED:-false}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      UPLOAD_PATH: /data/uploads
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-25}
+      SEED_DEMO: ${SEED_DEMO:-true}
+    volumes:
+      - trips_uploads:/data/uploads
+    networks:
+      - trips_net
+      - megasena_default
+
+networks:
+  trips_net:
+    driver: bridge
+  megasena_default:
+    external: true
+
+volumes:
+  trips_pgdata:
+    name: trips_pgdata
+  trips_uploads:
+    name: trips_uploads

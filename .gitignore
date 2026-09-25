@@ -1,0 +1,63 @@
+# Environment files and local configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output and test coverage
+client/dist/
+server/dist/
+server/public/
+dist/
+build/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Runtime data, uploads, databases, and backups
+uploads/
+data/
+storage/
+pgdata/
+postgres-data/
+backups/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.bak
+*.backup
+*.sql.gz
+backup_*.sql
+*_backup.sql
+
+# Logs, process files, and caches
+logs/
+*.log
+*.pid
+*.pid.lock
+.cache/
+.tmp/
+tmp/
+
+# Credentials, certificates, and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+service-account*.json
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

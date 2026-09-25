@@ -1,0 +1,1589 @@
+import { query } from '../db/pool.js';
+import { logger } from '../utils/logger.js';
+
+export const reportService = {
+  // Compiles complete Trip Book data for a trip
+  async getTripBookData(tripId: string) {
+    // 1. Trip details
+    const { rows: tripRows } = await query(
+      `SELECT t.*, u.name as owner_name, u.email as owner_email
+       FROM trips t
+       LEFT JOIN users u ON t.created_by = u.id
+       WHERE t.id = $1 AND t.deleted_at IS NULL`,
+      [tripId]
+    );
+
+    if (tripRows.length === 0) {
+      throw new Error('Viagem não encontrada');
+    }
+    const trip = tripRows[0];
+
+    // 2. Trip Days and Itinerary Items
+    const { rows: days } = await query(
+      `SELECT * FROM trip_days WHERE trip_id = $1 ORDER BY date ASC, order_index ASC`,
+      [tripId]
+    );
+
+    const { rows: items } = await query(
+      `SELECT * FROM itinerary_items WHERE trip_id = $1 ORDER BY order_index ASC, start_time ASC`,
+      [tripId]
+    );
+
+    // Group items by trip_day_id
+    const itemsByDay: Record<string, any[]> = {};
+    for (const item of items) {
+      if (!itemsByDay[item.trip_day_id]) itemsByDay[item.trip_day_id] = [];
+      itemsByDay[item.trip_day_id].push(item);
+    }
+
+    const fullDays = days.map(d => ({
+      ...d,
+      items: itemsByDay[d.id] || [],
+    }));
+
+    // 3. Transport reservations & segments
+    const { rows: transportRes } = await query(
+      `SELECT * FROM transport_reservations WHERE trip_id = $1 ORDER BY created_at ASC`,
+      [tripId]
+    );
+
+    const { rows: segments } = await query(
+      `SELECT * FROM transport_segments WHERE trip_id = $1 ORDER BY departure_date ASC, departure_time ASC`,
+      [tripId]
+    );
+
+    const segmentsByRes: Record<string, any[]> = {};
+    for (const s of segments) {
+      if (!segmentsByRes[s.reservation_id]) segmentsByRes[s.reservation_id] = [];
+      segmentsByRes[s.reservation_id].push(s);
+    }
+
+    const fullTransports = transportRes.map(tr => ({
+      ...tr,
+      segments: segmentsByRes[tr.id] || [],
+    }));
+
+    // 4. Hotel reservations
+    const { rows: hotels } = await query(
+      `SELECT * FROM hotel_reservations WHERE trip_id = $1 ORDER BY check_in_date ASC`,
+      [tripId]
+    );
+
+    // 5. Climate packing guides
+    const { rows: climateGuides } = await query(
+      `SELECT * FROM climate_packing_guides WHERE trip_id = $1 ORDER BY order_index ASC`,
+      [tripId]
+    );
+
+    // 6. Checklist items
+    const { rows: checklists } = await query(
+      `SELECT * FROM checklist_items WHERE trip_id = $1 ORDER BY order_index ASC`,
+      [tripId]
+    );
+
+    // 7. Expenses
+    const { rows: expenses } = await query(
+      `SELECT * FROM expenses WHERE trip_id = $1 ORDER BY date ASC`,
+      [tripId]
+    );
+
+    // 8. Participants
+    const { rows: members } = await query(
+      `SELECT tm.*, u.name, u.email, u.avatar_url
+       FROM trip_members tm
+       JOIN users u ON tm.user_id = u.id
+       WHERE tm.trip_id = $1`,
+      [tripId]
+    );
+
+    // 9. Travelers / Companions
+    const { rows: travelers } = await query(
+      `SELECT * FROM trip_travelers WHERE trip_id = $1 ORDER BY created_at ASC`,
+      [tripId]
+    );
+
+    return {
+      trip,
+      days: fullDays,
+      transports: fullTransports,
+      segments,
+      hotels,
+      climateGuides,
+      checklists,
+      expenses,
+      members,
+      travelers,
+    };
+  },
+
+  // Generates standalone, editorial HTML ready for print & PDF
+  generateTripBookHtml(data: any): string {
+    const { trip, days, transports, segments, hotels, climateGuides, checklists, expenses, members, travelers = [] } = data;
+    const theme = trip.theme || {
+      preset: 'sakura',
+      primary: '#b94a5d',
+      secondary: '#d989a4',
+      accent: '#fdf2f4',
+      text: '#2f3941',
+    };
+
+    const citiesList = Array.isArray(trip.cities) ? trip.cities.join(' • ') : (trip.destination_summary || '');
+
+    // Escape HTML strings for safety
+    const escapeHtml = (str?: string) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    };
+
+    // Normalize date to YYYY-MM-DD string
+    const toDateStr = (d: any): string => {
+      if (!d) return '';
+      if (d instanceof Date) return d.toISOString().slice(0, 10);
+      const s = String(d).trim();
+      if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+      return s;
+    };
+
+    // Add days in UTC
+    const addDays = (dateStr: string, n: number): string => {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d + n));
+      return dt.toISOString().slice(0, 10);
+    };
+
+    // Detailed date info
+    const parseDateInfo = (dInput: any) => {
+      const dStr = toDateStr(dInput);
+      if (!dStr) return null;
+      const [y, m, d] = dStr.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      const dow = dt.getUTCDay();
+      const shortDays = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+      const mm = m < 10 ? '0' + m : m;
+      const dd = d < 10 ? '0' + d : d;
+      return {
+        year: y,
+        month: m,
+        day: d,
+        dayOfWeek: dow,
+        weekdayShort: shortDays[dow],
+        formattedShort: `${d}/${m}`,
+        formattedBr: `${dd}/${mm}/${y}`,
+        formattedWeekday: `${dd}/${mm} (${shortDays[dow]})`,
+        dateStr: dStr,
+      };
+    };
+
+    // Format dates in Portuguese
+    const formatDateBr = (dStr?: string) => {
+      const info = parseDateInfo(dStr);
+      return info ? info.formattedBr : '';
+    };
+
+    const formatDateShort = (dStr?: string) => {
+      const info = parseDateInfo(dStr);
+      return info ? info.formattedShort : '';
+    };
+
+    // Extract passenger names from segment passenger_names or fallback
+    const extractPassengerNames = (val: any): string[] => {
+      if (!val || (Array.isArray(val) && val.length === 0)) {
+        if (travelers && travelers.length > 0) return travelers.map((t: any) => t.display_name);
+        return [];
+      }
+      let parsed = val;
+      if (typeof val === 'string') {
+        try { parsed = JSON.parse(val); } catch { return [val]; }
+      }
+      if (Array.isArray(parsed)) {
+        const names = parsed.map((p: any) => {
+          if (typeof p === 'string') return p;
+          if (p && typeof p === 'object' && p.name) return p.name;
+          return String(p);
+        }).filter(Boolean);
+        if (names.length > 0) return names;
+      }
+      if (travelers && travelers.length > 0) return travelers.map((t: any) => t.display_name);
+      return [];
+    };
+
+    // Index days by dateStr
+    const daysByDate: Record<string, any> = {};
+    for (const d of days) {
+      const ds = toDateStr(d.date);
+      if (ds) {
+        daysByDate[ds] = {
+          ...d,
+          dateStr: ds,
+        };
+      }
+    }
+
+    // Index flight segments by departure and arrival date
+    const segmentsByDate: Record<string, any[]> = {};
+    const allSegments = segments || [];
+    for (const s of allSegments) {
+      const depDate = toDateStr(s.departure_date);
+      const arrDate = toDateStr(s.arrival_date);
+      const pax = extractPassengerNames(s.passenger_names);
+      const segWithPax = { ...s, passengerNames: pax };
+
+      if (depDate) {
+        if (!segmentsByDate[depDate]) segmentsByDate[depDate] = [];
+        segmentsByDate[depDate].push({ ...segWithPax, isArrivalOnly: false });
+      }
+      if (arrDate && arrDate !== depDate) {
+        if (!segmentsByDate[arrDate]) segmentsByDate[arrDate] = [];
+        segmentsByDate[arrDate].push({ ...segWithPax, isArrivalOnly: true });
+      }
+    }
+
+    // Index hotels by active stay dates
+    const hotelsByDate: Record<string, any> = {};
+    const allHotels = hotels || [];
+    for (const h of allHotels) {
+      const inDate = toDateStr(h.check_in_date);
+      const outDate = toDateStr(h.check_out_date);
+      if (inDate) {
+        let cur = inDate;
+        const limit = outDate || inDate;
+        let count = 0;
+        while (cur <= limit && count < 60) {
+          hotelsByDate[cur] = h;
+          cur = addDays(cur, 1);
+          count++;
+        }
+      }
+    }
+
+    // Determine timeline date range
+    const dateCandidates: string[] = [];
+    const tripStartStr = toDateStr(trip.start_date);
+    const tripEndStr = toDateStr(trip.end_date);
+    if (tripStartStr) dateCandidates.push(tripStartStr);
+    if (tripEndStr) dateCandidates.push(tripEndStr);
+    for (const d of days) {
+      const ds = toDateStr(d.date);
+      if (ds) dateCandidates.push(ds);
+    }
+    for (const s of allSegments) {
+      const dep = toDateStr(s.departure_date);
+      const arr = toDateStr(s.arrival_date);
+      if (dep) dateCandidates.push(dep);
+      if (arr) dateCandidates.push(arr);
+    }
+
+    dateCandidates.sort();
+    const minDateStr = dateCandidates.length > 0 ? dateCandidates[0] : tripStartStr;
+    const maxDateStr = dateCandidates.length > 0 ? dateCandidates[dateCandidates.length - 1] : tripEndStr;
+
+    // Build unified timeline array for all trip days
+    const timelineDays: any[] = [];
+    if (minDateStr && maxDateStr && minDateStr <= maxDateStr) {
+      let cur = minDateStr;
+      let count = 0;
+      while (cur <= maxDateStr && count < 100) {
+        const dInfo = parseDateInfo(cur)!;
+        const dayRecord = daysByDate[cur];
+        const dayFlights = segmentsByDate[cur] || [];
+        const dayHotel = hotelsByDate[cur];
+
+        let baseLocation = dayRecord?.base_location;
+        let title = dayRecord?.title;
+        let icon = dayRecord?.icon;
+        let anchorId = dayRecord ? `dia-${dayRecord.day_number}` : (dayFlights.length > 0 ? 'transportes' : `data-${cur}`);
+
+        if (!dayRecord && dayFlights.length > 0) {
+          const firstFlight = dayFlights[0];
+          if (firstFlight.isArrivalOnly) {
+            baseLocation = firstFlight.arrival_location || 'Destino';
+            title = `Chegada a ${firstFlight.arrival_location || 'Destino'}`;
+            icon = '🛬';
+          } else if (cur === minDateStr) {
+            baseLocation = 'Em Voo (Brasil → Destino)';
+            title = 'Saída do Brasil / Início da Viagem';
+            icon = '✈️';
+          } else if (cur === maxDateStr || cur >= (days[days.length - 1]?.dateStr || '')) {
+            baseLocation = 'Em Voo de Retorno';
+            title = 'Retorno ao Brasil / Embarque';
+            icon = '🛫';
+          } else {
+            baseLocation = 'Em Trânsito Internacional';
+            title = 'Voo Internacional em Trânsito';
+            icon = '✈️';
+          }
+        }
+
+        timelineDays.push({
+          dateStr: cur,
+          dateInfo: dInfo,
+          dayRecord,
+          dayNumber: dayRecord?.day_number,
+          title: title || (dayRecord?.subtitle) || 'Dia de Viagem',
+          subtitle: dayRecord?.subtitle,
+          baseLocation: baseLocation || 'Em Trânsito',
+          icon: icon || '📍',
+          items: dayRecord?.items || [],
+          flights: dayFlights,
+          hotel: dayHotel,
+          anchorId,
+          hasDetailedCard: !!dayRecord,
+        });
+
+        cur = addDays(cur, 1);
+        count++;
+      }
+    }
+
+    // Group timeline days into months for Calendar Grid
+    const monthsMap: Record<string, { year: number; month: number; days: any[] }> = {};
+    for (const tDay of timelineDays) {
+      const ym = `${tDay.dateInfo.year}-${tDay.dateInfo.month < 10 ? '0' + tDay.dateInfo.month : tDay.dateInfo.month}`;
+      if (!monthsMap[ym]) {
+        monthsMap[ym] = {
+          year: tDay.dateInfo.year,
+          month: tDay.dateInfo.month,
+          days: [],
+        };
+      }
+      monthsMap[ym].days.push(tDay);
+    }
+
+    const monthNamesPt = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+    ];
+
+    // Calendar grid generator
+    const renderMonthGrid = (mKey: string, mData: { year: number; month: number; days: any[] }) => {
+      const { year, month } = mData;
+      const monthName = monthNamesPt[month - 1];
+      const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+      const totalDaysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+      const daysLookup: Record<number, any> = {};
+      for (const td of mData.days) {
+        daysLookup[td.dateInfo.day] = td;
+      }
+
+      const weeks: (any | null)[][] = [];
+      let currentWeek: (any | null)[] = [];
+
+      for (let i = 0; i < firstDow; i++) {
+        currentWeek.push(null);
+      }
+
+      for (let d = 1; d <= totalDaysInMonth; d++) {
+        currentWeek.push({
+          dayNum: d,
+          data: daysLookup[d] || null,
+        });
+        if (currentWeek.length === 7) {
+          weeks.push(currentWeek);
+          currentWeek = [];
+        }
+      }
+
+      if (currentWeek.length > 0) {
+        while (currentWeek.length < 7) {
+          currentWeek.push(null);
+        }
+        weeks.push(currentWeek);
+      }
+
+      return `
+        <div class="cal-month-wrap">
+          <div class="cal-month-header">🌸 ${monthName} ${year}</div>
+          <table class="cal-grid-table">
+            <thead>
+              <tr>
+                <th style="width: 14.28%;">DOM</th>
+                <th style="width: 14.28%;">SEG</th>
+                <th style="width: 14.28%;">TER</th>
+                <th style="width: 14.28%;">QUA</th>
+                <th style="width: 14.28%;">QUI</th>
+                <th style="width: 14.28%;">SEX</th>
+                <th style="width: 14.28%;">SÁB</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${weeks.map(week => `
+                <tr>
+                  ${week.map(cell => {
+                    if (!cell) {
+                      return `<td class="cal-day-cell cal-day-muted">&nbsp;</td>`;
+                    }
+                    const tDay = cell.data;
+                    if (!tDay) {
+                      return `
+                        <td>
+                          <div class="cal-day-cell cal-day-muted">
+                            <div class="cal-day-header"><span class="cal-day-num">${cell.dayNum}</span></div>
+                          </div>
+                        </td>
+                      `;
+                    }
+
+                    const flightSummary = tDay.flights && tDay.flights.length > 0
+                      ? tDay.flights.map((f: any) => f.identification_number).join(' / ')
+                      : null;
+                    const flightPax = tDay.flights && tDay.flights.length > 0 && tDay.flights[0].passengerNames && tDay.flights[0].passengerNames.length > 0
+                      ? tDay.flights[0].passengerNames.join(', ')
+                      : null;
+
+                    return `
+                      <td>
+                        <a href="#${tDay.anchorId}" class="cal-day-cell cal-day-active" title="Ver detalhes: ${escapeHtml(tDay.title)}">
+                          <div class="cal-day-header">
+                            <span class="cal-day-num">${cell.dayNum}</span>
+                            ${tDay.dayNumber ? `<span class="cal-day-badge">Dia ${tDay.dayNumber}</span>` : (tDay.flights && tDay.flights.length > 0 ? `<span class="cal-day-badge">✈️ Voo</span>` : '')}
+                          </div>
+                          <div class="cal-day-base">
+                            <span>${tDay.icon || '📍'}</span>
+                            <span>${escapeHtml(tDay.baseLocation)}</span>
+                          </div>
+                          <div class="cal-day-title">${escapeHtml(tDay.title)}</div>
+                          ${flightSummary ? `
+                            <div class="cal-day-flight">
+                              ✈️ <strong>${escapeHtml(flightSummary)}</strong>
+                              ${flightPax ? `<span class="cal-day-flight-pax">👤 ${escapeHtml(flightPax)}</span>` : ''}
+                            </div>
+                          ` : ''}
+                        </a>
+                      </td>
+                    `;
+                  }).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    // Google Calendar style agenda table generator
+    const renderAgendaTable = () => {
+      return `
+        <table class="agenda-table">
+          <thead>
+            <tr>
+              <th style="width: 14%;">Dia / Data</th>
+              <th style="width: 15%;">Base / Local</th>
+              <th style="width: 25%;">Voos & Deslocamentos</th>
+              <th style="width: 32%;">Agenda do Dia — Primeiros Compromissos</th>
+              <th style="width: 14%;">Pernoite / Hotel</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${timelineDays.map(tDay => {
+              // 1. Flights HTML with passengers
+              let flightsHtml = '<span style="color: #94a3b8;">—</span>';
+              if (tDay.flights && tDay.flights.length > 0) {
+                flightsHtml = tDay.flights.map((f: any) => `
+                  <div class="table-flight-pill">
+                    <div class="table-flight-header">
+                      ✈️ <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number)}</strong>
+                    </div>
+                    <div class="table-flight-route">
+                      ${f.isArrivalOnly ? '🛬 Pouso: ' : '🛫 Partida: '}
+                      ${escapeHtml(f.departure_station_code || f.departure_location || '—')} (${f.departure_time || '—'}) ➔ 
+                      ${escapeHtml(f.arrival_station_code || f.arrival_location || '—')} (${f.arrival_time || '—'})
+                    </div>
+                    ${f.passengerNames && f.passengerNames.length > 0 ? `
+                      <div class="table-flight-pax">
+                        👤 Passageiro(s): <strong>${escapeHtml(f.passengerNames.join(', '))}</strong>
+                        ${f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
+                      </div>
+                    ` : ''}
+                  </div>
+                `).join('');
+              } else if (tDay.title && /transfer|shinkansen|trem|ida para/i.test(tDay.title)) {
+                flightsHtml = `<span style="color: #475569; font-weight: 500;">🚆 Deslocamento / ${escapeHtml(tDay.title)}</span>`;
+              }
+
+              // 2. Google Calendar Event Chips
+              let agendaChipsHtml = '';
+              if (tDay.items && tDay.items.length > 0) {
+                const itemsToShow = tDay.items.slice(0, 3);
+                const remaining = tDay.items.length - 3;
+                agendaChipsHtml = `
+                  <div class="gcal-chips-wrap">
+                    ${itemsToShow.map((it: any) => {
+                      const cat = (it.category || 'activity').toLowerCase();
+                      return `
+                        <div class="gcal-chip gcal-cat-${cat}" title="${escapeHtml(it.title)}">
+                          <span class="gcal-time">${it.start_time || '—'}</span>
+                          <span class="gcal-title">${escapeHtml(it.title)}</span>
+                        </div>
+                      `;
+                    }).join('')}
+                    ${remaining > 0 ? `<div class="gcal-more">+ ${remaining} compromissos adicionais...</div>` : ''}
+                  </div>
+                `;
+              } else if (tDay.flights && tDay.flights.length > 0) {
+                agendaChipsHtml = `
+                  <div class="gcal-chips-wrap">
+                    ${tDay.flights.map((f: any) => `
+                      <div class="gcal-chip gcal-cat-transport">
+                        <span class="gcal-time">${f.departure_time || f.arrival_time || '—'}</span>
+                        <span class="gcal-title">${f.isArrivalOnly ? 'Desembarque' : 'Embarque'} ${escapeHtml(f.identification_number)} (${escapeHtml(f.departure_station_code || '')} ➔ ${escapeHtml(f.arrival_station_code || '')})</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                `;
+              } else {
+                agendaChipsHtml = `
+                  <div class="gcal-chips-wrap">
+                    <div class="gcal-chip gcal-cat-activity">
+                      <span class="gcal-time">Dia todo</span>
+                      <span class="gcal-title">${escapeHtml(tDay.title || 'Atividades livres no destino')}</span>
+                    </div>
+                  </div>
+                `;
+              }
+
+              // 3. Lodging / Overnight
+              let lodgingHtml = '';
+              if (tDay.hotel) {
+                lodgingHtml = `<strong>🏨 ${escapeHtml(tDay.hotel.hotel_name)}</strong><br><small style="color: #64748b;">${escapeHtml(tDay.hotel.city || '')}</small>`;
+              } else if (tDay.flights && tDay.flights.some((f: any) => f.arrival_date && f.arrival_date !== f.departure_date)) {
+                lodgingHtml = `<span style="color: #2563eb; font-weight: 500;">✈️ A bordo / Voo noturno</span>`;
+              } else {
+                lodgingHtml = `<span style="color: #475569;">Pernoite em ${escapeHtml(tDay.baseLocation)}</span>`;
+              }
+
+              return `
+                <tr>
+                  <td>
+                    <a href="#${tDay.anchorId}" class="table-day-link" title="Ver detalhes do dia">
+                      ${tDay.dayNumber ? `<span class="table-day-badge">Dia ${tDay.dayNumber}</span><br>` : ''}
+                      <strong>${tDay.dateInfo.formattedWeekday}</strong>
+                    </a>
+                  </td>
+                  <td>
+                    <strong>${tDay.icon || '📍'} ${escapeHtml(tDay.baseLocation)}</strong>
+                  </td>
+                  <td>${flightsHtml}</td>
+                  <td>${agendaChipsHtml}</td>
+                  <td>${lodgingHtml}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    };
+
+    return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>${trip.title} ${trip.subtitle || ''} — Trip Book</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,400&display=swap');
+
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm 16mm;
+      @bottom-right {
+        content: counter(page);
+        font-family: 'Inter', sans-serif;
+        font-size: 8pt;
+        color: #888;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Noto Sans', 'Noto Sans CJK JP', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+      color: ${theme.text || '#2f3941'};
+      background-color: #ffffff;
+      line-height: 1.5;
+      font-size: 9.5pt;
+    }
+
+    .page-break {
+      page-break-before: always;
+      break-before: page;
+    }
+
+    /* Cover Page */
+    .cover-page {
+      height: 100vh;
+      min-height: 250mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20mm 15mm;
+      background: linear-gradient(145deg, #ffffff 0%, ${theme.accent || '#fdf2f4'} 100%);
+      border: 1px solid rgba(0,0,0,0.06);
+      page-break-after: always;
+      position: relative;
+    }
+
+    .cover-top {
+      text-align: center;
+      margin-top: 15mm;
+    }
+
+    .cover-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 38pt;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: ${theme.primary || '#b94a5d'};
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .cover-subtitle {
+      font-family: 'Inter', sans-serif;
+      font-size: 16pt;
+      font-weight: 300;
+      letter-spacing: 4px;
+      color: #64748b;
+      margin-bottom: 25px;
+    }
+
+    .cover-period {
+      display: inline-block;
+      padding: 6px 18px;
+      background: #ffffff;
+      border: 1px solid ${theme.secondary || '#d989a4'};
+      border-radius: 20px;
+      font-weight: 500;
+      color: ${theme.primary || '#b94a5d'};
+      font-size: 11pt;
+      margin-bottom: 20px;
+    }
+
+    .cover-destinations {
+      font-size: 10pt;
+      color: #475569;
+      font-weight: 400;
+      max-width: 85%;
+      margin: 0 auto;
+      line-height: 1.8;
+    }
+
+    .cover-image-container {
+      margin: 25px auto;
+      width: 100%;
+      max-width: 160mm;
+      height: 95mm;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+      border: 3px solid #ffffff;
+    }
+
+    .cover-image-container img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .cover-bottom {
+      text-align: center;
+      margin-bottom: 10mm;
+    }
+
+    .cover-tagline {
+      font-family: 'Playfair Display', serif;
+      font-style: italic;
+      font-size: 13pt;
+      color: ${theme.primary || '#b94a5d'};
+    }
+
+    /* Section Styling */
+    h1.section-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 18pt;
+      color: ${theme.primary || '#b94a5d'};
+      border-bottom: 2px solid ${theme.secondary || '#d989a4'};
+      padding-bottom: 5px;
+      margin-bottom: 15px;
+      margin-top: 25px;
+      page-break-after: avoid;
+    }
+
+    h2.subsection-title {
+      font-size: 12pt;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 15px;
+      margin-bottom: 8px;
+      page-break-after: avoid;
+    }
+
+    /* Callout Box */
+    .callout-box {
+      background: ${theme.accent || '#fdf2f4'};
+      border-left: 4px solid ${theme.primary || '#b94a5d'};
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin: 15px 0;
+      font-size: 9pt;
+      page-break-inside: avoid;
+    }
+
+    .callout-title {
+      font-weight: 700;
+      color: ${theme.primary || '#b94a5d'};
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Tables */
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 20px 0;
+      font-size: 8.5pt;
+      page-break-inside: auto;
+    }
+
+    table.data-table th, table.data-table td {
+      border: 1px solid #e2e8f0;
+      padding: 7px 10px;
+      text-align: left;
+    }
+
+    table.data-table th {
+      background-color: ${theme.accent || '#fdf2f4'};
+      color: ${theme.primary || '#b94a5d'};
+      font-weight: 600;
+      font-size: 8.5pt;
+    }
+
+    table.data-table tr:nth-child(even) {
+      background-color: #fafaf9;
+    }
+
+    /* Day Box (Trip Book Day Card) */
+    .day-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      margin-bottom: 18px;
+      padding: 14px 16px;
+      background: #ffffff;
+      page-break-inside: avoid;
+    }
+
+    .day-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      border-bottom: 1px solid #f1f5f9;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+
+    .day-badge {
+      background: ${theme.primary || '#b94a5d'};
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 9pt;
+      padding: 4px 8px;
+      border-radius: 4px;
+      min-width: 48px;
+      text-align: center;
+    }
+
+    .day-title-wrap h3 {
+      font-size: 11pt;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .day-subtitle {
+      font-size: 8.5pt;
+      color: #64748b;
+      margin-top: 2px;
+    }
+
+    .day-narrative {
+      font-size: 9pt;
+      line-height: 1.5;
+      color: #334155;
+      margin-bottom: 10px;
+      text-align: justify;
+    }
+
+    .day-meta-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      background: #f8fafc;
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 8pt;
+      margin-bottom: 10px;
+      border: 1px solid #f1f5f9;
+    }
+
+    .meta-tag {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #475569;
+    }
+
+    .meta-tag strong {
+      color: #1e293b;
+    }
+
+    /* Alert / Action reminder inside day */
+    .day-alert-box {
+      background: #fffbeb;
+      border: 1px solid #fef3c7;
+      border-left: 3px solid #f59e0b;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 8pt;
+      color: #92400e;
+      margin-top: 6px;
+    }
+
+    .day-ideas-box {
+      background: #f0fdf4;
+      border: 1px solid #dcfce7;
+      border-left: 3px solid #22c55e;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 8pt;
+      color: #166534;
+      margin-top: 6px;
+    }
+
+    /* Itinerary sub-items */
+    .itinerary-sublist {
+      margin-top: 8px;
+      margin-left: 5px;
+    }
+
+    .itinerary-subitem {
+      display: flex;
+      gap: 8px;
+      font-size: 8.5pt;
+      margin-bottom: 5px;
+      padding: 4px 0;
+      border-bottom: 1px dashed #f1f5f9;
+    }
+
+    .subitem-time {
+      font-weight: 600;
+      color: ${theme.primary || '#b94a5d'};
+      min-width: 45px;
+    }
+
+    .subitem-content {
+      flex: 1;
+    }
+
+    .subitem-title {
+      font-weight: 600;
+      color: #1e293b;
+    }
+
+    .subitem-tips {
+      font-size: 8pt;
+      color: #64748b;
+      font-style: italic;
+    }
+
+    .footer-ornament {
+      text-align: center;
+      margin: 25px 0 15px 0;
+      color: ${theme.secondary || '#d989a4'};
+      font-size: 14pt;
+    }
+
+    /* Anchor Jump and Scroll */
+    html {
+      scroll-behavior: smooth;
+    }
+
+    :target {
+      outline: 2.5px solid ${theme.primary || '#b94a5d'};
+      outline-offset: 4px;
+      transition: outline 0.3s ease;
+    }
+
+    .section-subtitle {
+      font-size: 8.5pt;
+      color: #64748b;
+      margin-top: -4px;
+      margin-bottom: 12px;
+    }
+
+    /* CALENDAR GRID VIEW */
+    .cal-month-wrap {
+      margin-bottom: 22px;
+      page-break-inside: avoid;
+    }
+
+    .cal-month-header {
+      font-family: 'Playfair Display', serif;
+      font-size: 12pt;
+      font-weight: 700;
+      color: ${theme.primary || '#b94a5d'};
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .cal-grid-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+      margin-bottom: 10px;
+    }
+
+    .cal-grid-table th {
+      background: ${theme.primary || '#b94a5d'};
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 7.5pt;
+      text-align: center;
+      padding: 6px 2px;
+      letter-spacing: 0.5px;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .cal-grid-table td {
+      border: 1px solid #e2e8f0;
+      vertical-align: top;
+      height: 82px;
+      padding: 0;
+      background: #ffffff;
+    }
+
+    .cal-day-cell {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 5px 6px;
+      text-decoration: none;
+      color: inherit;
+      box-sizing: border-box;
+      transition: background 0.15s ease, box-shadow 0.15s ease;
+      cursor: pointer;
+    }
+
+    .cal-day-cell.cal-day-active:hover {
+      background: ${theme.accent || '#fdf2f4'};
+      box-shadow: inset 0 0 0 1.5px ${theme.primary || '#b94a5d'};
+    }
+
+    .cal-day-cell.cal-day-muted {
+      background: #fafaf9;
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    .cal-day-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3px;
+    }
+
+    .cal-day-num {
+      font-weight: 700;
+      font-size: 9pt;
+      color: #1e293b;
+    }
+
+    .cal-day-badge {
+      font-size: 6.5pt;
+      font-weight: 700;
+      background: ${theme.accent || '#fdf2f4'};
+      color: ${theme.primary || '#b94a5d'};
+      border: 1px solid ${theme.secondary || '#d989a4'};
+      padding: 1px 4px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+
+    .cal-day-base {
+      font-size: 7pt;
+      font-weight: 600;
+      color: #334155;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .cal-day-title {
+      font-size: 6.8pt;
+      color: #64748b;
+      line-height: 1.2;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      margin-bottom: 3px;
+    }
+
+    .cal-day-flight {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 3px;
+      padding: 2px 4px;
+      margin-top: auto;
+      font-size: 6.5pt;
+      color: #1e40af;
+      line-height: 1.2;
+    }
+
+    .cal-day-flight-pax {
+      font-size: 6pt;
+      color: #2563eb;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+      margin-top: 1px;
+    }
+
+    /* AGENDA TABLE (DOCX STYLE + GOOGLE CALENDAR) */
+    .agenda-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 15px 0 25px 0;
+      font-size: 8pt;
+      page-break-inside: auto;
+    }
+
+    .agenda-table th {
+      background: ${theme.accent || '#fdf2f4'};
+      color: ${theme.primary || '#b94a5d'};
+      font-weight: 700;
+      font-size: 8pt;
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      text-align: left;
+    }
+
+    .agenda-table td {
+      border: 1px solid #e2e8f0;
+      padding: 7px 10px;
+      vertical-align: top;
+    }
+
+    .agenda-table tr:nth-child(even) {
+      background-color: #fafaf9;
+    }
+
+    .agenda-table tr:hover {
+      background-color: #fdf8f9;
+    }
+
+    .table-day-link {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+
+    .table-day-link:hover strong {
+      color: ${theme.primary || '#b94a5d'};
+      text-decoration: underline;
+    }
+
+    .table-day-badge {
+      display: inline-block;
+      font-size: 6.5pt;
+      font-weight: 700;
+      background: ${theme.primary || '#b94a5d'};
+      color: #ffffff;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-bottom: 2px;
+    }
+
+    .table-flight-pill {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 5px;
+      padding: 4px 6px;
+      margin-bottom: 4px;
+      font-size: 7.5pt;
+      color: #1e3a8a;
+    }
+
+    .table-flight-header {
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .table-flight-route {
+      font-size: 7pt;
+      color: #2563eb;
+      margin-top: 1px;
+    }
+
+    .table-flight-pax {
+      font-size: 6.8pt;
+      font-weight: 600;
+      color: #1d4ed8;
+      margin-top: 2px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    /* GOOGLE CALENDAR CHIPS */
+    .gcal-chips-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 3.5px;
+    }
+
+    .gcal-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2.5px 6px;
+      border-radius: 4px;
+      font-size: 7.5pt;
+      line-height: 1.25;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+
+    .gcal-chip .gcal-time {
+      font-weight: 700;
+      font-size: 7pt;
+      min-width: 32px;
+      opacity: 0.9;
+    }
+
+    .gcal-chip .gcal-title {
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    .gcal-cat-transport {
+      background-color: #eff6ff;
+      border-left: 3.5px solid #2563eb;
+      color: #1e3a8a;
+    }
+
+    .gcal-cat-attraction {
+      background-color: #ecfdf5;
+      border-left: 3.5px solid #059669;
+      color: #064e3b;
+    }
+
+    .gcal-cat-restaurant {
+      background-color: #fffbeb;
+      border-left: 3.5px solid #d97706;
+      color: #78350f;
+    }
+
+    .gcal-cat-hotel {
+      background-color: #f5f3ff;
+      border-left: 3.5px solid #7c3aed;
+      color: #4c1d95;
+    }
+
+    .gcal-cat-activity {
+      background-color: #fdf2f4;
+      border-left: 3.5px solid ${theme.primary || '#b94a5d'};
+      color: #4c0519;
+    }
+
+    .gcal-cat-note {
+      background-color: #f8fafc;
+      border-left: 3.5px solid #64748b;
+      color: #334155;
+    }
+
+    .gcal-more {
+      font-size: 6.8pt;
+      color: #64748b;
+      font-style: italic;
+      padding-left: 6px;
+      margin-top: 1px;
+    }
+
+    /* Day Card flight banner & back link */
+    .cal-back-link {
+      font-size: 7.5pt;
+      color: ${theme.primary || '#b94a5d'};
+      text-decoration: none;
+      font-weight: 600;
+      padding: 2px 7px;
+      border: 1px solid ${theme.secondary || '#d989a4'};
+      border-radius: 4px;
+      background: #ffffff;
+      white-space: nowrap;
+      margin-left: auto;
+    }
+
+    .cal-back-link:hover {
+      background: ${theme.accent || '#fdf2f4'};
+    }
+
+    .day-flight-banner {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid #2563eb;
+      padding: 7px 12px;
+      border-radius: 5px;
+      font-size: 8pt;
+      color: #1e3a8a;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- CAPA EDITORIAL -->
+  <div class="cover-page">
+    <div class="cover-top">
+      <div class="cover-title">${trip.title}</div>
+      ${trip.subtitle ? `<div class="cover-subtitle">${trip.subtitle}</div>` : ''}
+      <div class="cover-period">${formatDateBr(trip.start_date)} — ${formatDateBr(trip.end_date)}</div>
+      <div class="cover-destinations">${citiesList}</div>
+    </div>
+
+    ${
+      trip.cover_image_url
+        ? `<div class="cover-image-container">
+             <img src="${trip.cover_image_url}" alt="Capa da viagem" />
+           </div>`
+        : ''
+    }
+
+    <div class="cover-bottom">
+      <div class="cover-tagline">${trip.tagline || 'Guia e Roteiro Completo de Viagem'}</div>
+    </div>
+  </div>
+
+  <!-- VISÃO GERAL & CALENDÁRIO -->
+  <div class="page-content">
+    <h1 class="section-title">Visão Geral da Viagem</h1>
+    ${
+      trip.description
+        ? `<p style="font-size: 9.5pt; line-height: 1.6; margin-bottom: 15px; text-align: justify;">${trip.description}</p>`
+        : ''
+    }
+
+    <div class="callout-box">
+      <div class="callout-title">🌸 JANELA SAZONAL & INFORMAÇÕES DE VIAGEM</div>
+      <p>As datas do roteiro foram estrategicamente planejadas para coincidir com as melhores condições e atrativos locais. Recomenda-se checar previsões meteorológicas finas e horários locais 7 a 10 dias antes do embarque.</p>
+    </div>
+
+    <div id="calendario">
+      <h2 class="subsection-title">📅 Visão de Calendário da Viagem</h2>
+      <p class="section-subtitle">Grade mensal da viagem. Clique em qualquer dia para navegar diretamente aos detalhes do roteiro.</p>
+      
+      ${Object.entries(monthsMap).map(([mKey, mData]) => renderMonthGrid(mKey, mData)).join('')}
+
+      <h2 class="subsection-title" style="margin-top: 25px;">📋 Programação Geral & Agenda Diária</h2>
+      <p class="section-subtitle">Visão consolidada com bases, voos de cada membro e os primeiros compromissos diários formatados no padrão Google Calendar.</p>
+
+      ${renderAgendaTable()}
+    </div>
+  </div>
+
+  ${
+    climateGuides && climateGuides.length > 0
+      ? `
+  <!-- CLIMA E MALA -->
+  <div class="page-break">
+    <h1 class="section-title">Clima, Mala & Recomendações</h1>
+    <p style="margin-bottom: 12px; color: #64748b; font-size: 8.5pt;">Temperaturas médias históricas e itens essenciais recomendados para a bagagem:</p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width: 25%;">Cidade / Período</th>
+          <th style="width: 30%;">Faixa Típica</th>
+          <th>O que levar / Recomendações</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${climateGuides
+          .map(
+            (cg: any) => `
+          <tr>
+            <td><strong>${cg.city_or_period}</strong></td>
+            <td>${cg.typical_range || '—'}</td>
+            <td>${cg.what_to_pack || '—'}</td>
+          </tr>
+        `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  </div>
+  `
+      : ''
+  }
+
+  <!-- ROTEIRO DIA A DIA -->
+  <div class="page-break">
+    <h1 class="section-title">Roteiro Detalhado por Dia</h1>
+    
+    ${days
+      .map(
+        (day: any) => {
+          const ds = toDateStr(day.date);
+          const dayFlights = segmentsByDate[ds] || [];
+          return `
+      <div class="day-card" id="dia-${day.day_number}" data-date="${ds}">
+        <div class="day-header">
+          <div class="day-badge">${formatDateShort(day.date)}</div>
+          <div class="day-title-wrap">
+            <h3>${day.icon || '📍'} ${day.title || `Dia ${day.day_number}`}</h3>
+            ${day.subtitle ? `<div class="day-subtitle">${day.subtitle}</div>` : ''}
+          </div>
+          <a href="#calendario" class="cal-back-link" title="Voltar ao Calendário">↑ Calendário</a>
+        </div>
+
+        ${
+          dayFlights.length > 0
+            ? `
+          <div class="day-flight-banner">
+            <div style="font-weight: 700; margin-bottom: 3px; display: flex; align-items: center; gap: 4px;">
+              ✈️ Voos Agendados para este Dia:
+            </div>
+            ${dayFlights.map((f: any) => `
+              <div style="margin-top: 3px;">
+                <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number)}</strong>: 
+                ${escapeHtml(f.departure_station_code || f.departure_location || '')} (${f.departure_time || '—'}) ➔ 
+                ${escapeHtml(f.arrival_station_code || f.arrival_location || '')} (${f.arrival_time || '—'})
+                ${f.passengerNames && f.passengerNames.length > 0 ? ` • Passageiro(s): <strong>${escapeHtml(f.passengerNames.join(', '))}</strong>` : ''}
+                ${f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `
+            : ''
+        }
+
+        ${day.narrative ? `<div class="day-narrative">${day.narrative}</div>` : ''}
+
+        <div class="day-meta-strip">
+          <div class="meta-tag">📍 Base: <strong>${day.base_location || 'Em Trânsito'}</strong></div>
+          ${
+            day.temperature_min || day.temperature_max
+              ? `<div class="meta-tag">🌡 Clima: <strong>${day.temperature_min || ''}–${day.temperature_max || ''} °C</strong></div>`
+              : ''
+          }
+          ${
+            day.estimated_cost
+              ? `<div class="meta-tag">💴 Custo: <strong>${day.cost_currency || ''} ${day.estimated_cost}</strong></div>`
+              : ''
+          }
+          ${day.included_services ? `<div class="meta-tag">✓ Incluído: <strong>${day.included_services}</strong></div>` : ''}
+        </div>
+
+        ${
+          day.items && day.items.length > 0
+            ? `
+          <div class="itinerary-sublist">
+            ${day.items
+              .map(
+                (item: any) => `
+              <div class="itinerary-subitem">
+                <div class="subitem-time">${item.start_time || '—'}</div>
+                <div class="subitem-content">
+                  <div class="subitem-title">${item.title}</div>
+                  ${item.address ? `<div style="font-size: 7.5pt; color: #64748b;">${item.address}</div>` : ''}
+                  ${item.tips ? `<div class="subitem-tips">💡 ${item.tips}</div>` : ''}
+                </div>
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+        `
+            : ''
+        }
+
+        ${
+          day.ideas && day.ideas.length > 0
+            ? `
+          <div class="day-ideas-box">
+            <strong>✨ IDEIAS:</strong> ${Array.isArray(day.ideas) ? day.ideas.join(' • ') : day.ideas}
+          </div>
+        `
+            : ''
+        }
+
+        ${
+          day.alerts && day.alerts.length > 0
+            ? `
+          <div class="day-alert-box">
+            <strong>🔔 RESERVAR / CONFERIR:</strong> ${Array.isArray(day.alerts) ? day.alerts.join(' • ') : day.alerts}
+          </div>
+        `
+            : ''
+        }
+      </div>
+    `;
+        }
+      )
+      .join('')}
+
+    <div class="footer-ornament">❀  ❀  ❀</div>
+  </div>
+
+  ${
+    transports && transports.length > 0
+      ? `
+  <!-- TRANSPORTES & VOOS -->
+  <div class="page-break" id="transportes">
+    <h1 class="section-title">Transportes & Voos</h1>
+    ${transports
+      .map(
+        (tr: any) => `
+      <div style="margin-bottom: 20px;">
+        <h2 class="subsection-title">
+          ${tr.type === 'FLIGHT' ? '✈️ Reserva Aérea' : '🚆 Transporte'}: ${tr.provider_name || ''} 
+          ${tr.booking_code ? `<span style="color: ${theme.primary}; font-weight: bold;">(Localizador: ${tr.booking_code})</span>` : ''}
+        </h2>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Voo / Veículo</th>
+              <th>Origem</th>
+              <th>Partida</th>
+              <th>Destino</th>
+              <th>Chegada</th>
+              <th>Duração / Conexão</th>
+              <th>Assento / Classe</th>
+              <th>Passageiro(s)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              tr.segments && tr.segments.length > 0
+                ? tr.segments
+                    .map(
+                      (s: any) => `
+                  <tr>
+                    <td><strong>${s.identification_number || s.carrier_name || 'Voo'}</strong></td>
+                    <td>${s.departure_location} (${s.departure_station_code || '—'})</td>
+                    <td>${formatDateShort(s.departure_date)} ${s.departure_time || ''}</td>
+                    <td>${s.arrival_location} (${s.arrival_station_code || '—'})</td>
+                    <td>${formatDateShort(s.arrival_date)} ${s.arrival_time || ''}</td>
+                    <td>${s.duration_minutes ? Math.floor(s.duration_minutes / 60) + 'h' + (s.duration_minutes % 60) + 'm' : '—'} ${s.layover_minutes ? `(Conexão: ${Math.floor(s.layover_minutes / 60)}h${s.layover_minutes % 60}m)` : ''}</td>
+                    <td>${s.seat || '—'} / ${s.cabin_class || 'Econômica'}</td>
+                    <td><strong>${escapeHtml(extractPassengerNames(s.passenger_names).join(', ') || '—')}</strong></td>
+                  </tr>
+                `
+                    )
+                    .join('')
+                : `<tr><td colspan="8">Nenhum trecho detalhado</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    `
+      )
+      .join('')}
+  </div>
+  `
+      : ''
+  }
+
+  ${
+    hotels && hotels.length > 0
+      ? `
+  <!-- HOSPEDAGENS -->
+  <div class="page-break">
+    <h1 class="section-title">Hospedagens & Vouchers</h1>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Hotel / Pousada</th>
+          <th>Cidade</th>
+          <th>Check-in</th>
+          <th>Check-out</th>
+          <th>Reserva / Hóspede</th>
+          <th>Acomodação</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${hotels
+          .map(
+            (h: any) => `
+          <tr>
+            <td><strong>${h.hotel_name}</strong><br><small style="color: #64748b;">${h.address || ''}</small></td>
+            <td>${h.city || ''}</td>
+            <td>${formatDateBr(h.check_in_date)} ${h.check_in_time ? `às ${h.check_in_time}` : ''}</td>
+            <td>${formatDateBr(h.check_out_date)} ${h.check_out_time ? `até ${h.check_out_time}` : ''}</td>
+            <td>${h.reservation_number || '—'}<br><small>${h.guest_names || ''}</small></td>
+            <td>${h.room_type || 'Quarto Standard'}</td>
+            <td><span style="color: green; font-weight: bold;">${h.payment_status || 'Confirmado'}</span></td>
+          </tr>
+        `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  </div>
+  `
+      : ''
+  }
+
+  ${
+    checklists && checklists.length > 0
+      ? `
+  <!-- CHECKLIST FINAL -->
+  <div class="page-break">
+    <h1 class="section-title">Checklist Final de Viagem</h1>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px;">
+      ${checklists
+        .map(
+          (c: any) => `
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 9pt; padding: 6px; border-bottom: 1px dashed #e2e8f0;">
+          <input type="checkbox" ${c.is_completed ? 'checked' : ''} style="accent-color: ${theme.primary || '#b94a5d'};" />
+          <span style="${c.is_completed ? 'text-decoration: line-through; color: #94a3b8;' : ''}">${c.title}</span>
+        </div>
+      `
+        )
+        .join('')}
+    </div>
+  </div>
+  `
+      : ''
+  }
+
+</body>
+</html>`;
+  },
+};

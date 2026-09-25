@@ -1,0 +1,606 @@
+import { Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
+import { query } from '../db/pool.js';
+import { computeFileHash } from '../middleware/upload.js';
+import { openaiService } from '../services/openaiService.js';
+import { logger } from '../utils/logger.js';
+
+export const documentController = {
+  // 1. List documents for a trip
+  async listDocuments(req: Request, res: Response) {
+    const { tripId } = req.params;
+
+    try {
+      const { rows: docs } = await query(
+        `SELECT d.*, 
+                e.id as extraction_id, e.detected_type, e.raw_extraction, e.normalized_data, 
+                e.user_corrections, e.model_used, e.status as extraction_status,
+                u.name as uploader_name
+         FROM documents d
+         LEFT JOIN document_ai_extractions e ON d.id = e.document_id
+         LEFT JOIN users u ON d.user_id = u.id
+         WHERE d.trip_id = $1 AND d.deleted_at IS NULL
+         ORDER BY d.created_at DESC`,
+        [tripId]
+      );
+
+      const formatted = docs.map((d: any) => ({
+        id: d.id,
+        trip_id: d.trip_id,
+        user_id: d.user_id,
+        uploader_name: d.uploader_name,
+        original_name: d.original_name,
+        internal_filename: d.internal_filename,
+        mime_type: d.mime_type,
+        file_size: d.file_size,
+        file_hash: d.file_hash,
+        category: d.category,
+        ai_status: d.ai_status,
+        notes: d.notes,
+        created_at: d.created_at,
+        extraction: d.extraction_id
+          ? {
+              id: d.extraction_id,
+              detected_type: d.detected_type,
+              raw_extraction: d.raw_extraction,
+              normalized_data: d.normalized_data,
+              user_corrections: d.user_corrections,
+              model_used: d.model_used,
+              status: d.extraction_status,
+            }
+          : null,
+      }));
+
+      return res.json({ documents: formatted });
+    } catch (err: any) {
+      logger.error('Erro ao listar documentos:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao listar documentos' });
+    }
+  },
+
+  // 2. Upload document & trigger AI interpretation
+  async uploadDocument(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    }
+
+    try {
+      // Compute SHA-256 hash
+      const fileHash = await computeFileHash(file.path);
+
+      // Save document record in DB
+      const { rows: docRows } = await query(
+        `INSERT INTO documents (
+          trip_id, user_id, original_name, internal_filename, storage_path,
+          mime_type, file_size, file_hash, category, ai_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OTHER', 'PROCESSING')
+        RETURNING *`,
+        [
+          tripId,
+          req.user?.id || null,
+          file.originalname,
+          file.filename,
+          file.path,
+          file.mimetype,
+          file.size,
+          fileHash,
+        ]
+      );
+
+      const doc = docRows[0];
+
+      // Audit log
+      await query(
+        `INSERT INTO audit_logs (user_id, trip_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, $2, 'DOCUMENT_UPLOADED', 'DOCUMENT', $3, $4)`,
+        [req.user?.id || null, tripId, doc.id, JSON.stringify({ fileName: file.originalname, size: file.size })]
+      );
+
+      // Run AI interpretation
+      logger.info('Submetendo documento à interpretação por IA...', { docId: doc.id, fileName: file.originalname });
+      
+      const aiResult = await openaiService.processDocument({
+        filePath: file.path,
+        mimeType: file.mimetype,
+        originalName: file.originalname,
+        userId: req.user?.id,
+        tripId,
+        documentId: doc.id,
+      });
+
+      let extractionData = null;
+
+      if (aiResult.success && aiResult.rawExtraction) {
+        // Save extraction
+        const { rows: extRows } = await query(
+          `INSERT INTO document_ai_extractions (
+            document_id, trip_id, detected_type, raw_extraction, normalized_data,
+            model_used, duration_ms, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'DRAFT')
+          RETURNING *`,
+          [
+            doc.id,
+            tripId,
+            aiResult.detectedType,
+            JSON.stringify(aiResult.rawExtraction),
+            JSON.stringify(aiResult.normalizedData),
+            aiResult.modelUsed,
+            aiResult.durationMs,
+          ]
+        );
+
+        extractionData = extRows[0];
+
+        // Map detected type to document category
+        let newCategory = 'OTHER';
+        if (aiResult.detectedType === 'flight_reservation') newCategory = 'FLIGHT';
+        else if (aiResult.detectedType === 'hotel_reservation') newCategory = 'HOTEL';
+        else if (aiResult.detectedType === 'activity_ticket') newCategory = 'TICKET';
+        else if (aiResult.detectedType === 'expense_receipt') newCategory = 'RECEIPT';
+
+        await query(`UPDATE documents SET ai_status = 'COMPLETED', category = $1 WHERE id = $2`, [newCategory, doc.id]);
+        doc.category = newCategory;
+        doc.ai_status = 'COMPLETED';
+      } else {
+        await query(`UPDATE documents SET ai_status = $1 WHERE id = $2`, [
+          openaiService.isConfigured() ? 'FAILED' : 'SKIPPED',
+          doc.id,
+        ]);
+        doc.ai_status = openaiService.isConfigured() ? 'FAILED' : 'SKIPPED';
+      }
+
+      return res.status(201).json({
+        document: {
+          ...doc,
+          extraction: extractionData,
+        },
+        aiResult,
+      });
+    } catch (err: any) {
+      logger.error('Erro no upload de documento:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao processar upload do documento' });
+    }
+  },
+
+  // 2.5 Reprocess document with AI
+  async reprocessDocument(req: Request, res: Response) {
+    const { tripId, documentId } = req.params;
+
+    try {
+      const { rows } = await query(
+        'SELECT * FROM documents WHERE id = $1 AND trip_id = $2 AND deleted_at IS NULL',
+        [documentId, tripId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Documento não encontrado' });
+      }
+
+      const doc = rows[0];
+
+      logger.info('Reprocessando documento com IA...', { docId: doc.id, fileName: doc.original_name });
+
+      const aiResult = await openaiService.processDocument({
+        filePath: doc.storage_path,
+        mimeType: doc.mime_type,
+        originalName: doc.original_name,
+        userId: req.user?.id,
+        tripId,
+        documentId: doc.id,
+      });
+
+      let extractionData = null;
+
+      if (aiResult.success && aiResult.rawExtraction) {
+        await query('DELETE FROM document_ai_extractions WHERE document_id = $1', [doc.id]);
+
+        const { rows: extRows } = await query(
+          `INSERT INTO document_ai_extractions (
+            document_id, trip_id, detected_type, raw_extraction, normalized_data,
+            model_used, duration_ms, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'DRAFT')
+          RETURNING *`,
+          [
+            doc.id,
+            tripId,
+            aiResult.detectedType,
+            JSON.stringify(aiResult.rawExtraction),
+            JSON.stringify(aiResult.normalizedData),
+            aiResult.modelUsed,
+            aiResult.durationMs,
+          ]
+        );
+
+        extractionData = extRows[0];
+
+        let newCategory = 'OTHER';
+        if (aiResult.detectedType === 'flight_reservation') newCategory = 'FLIGHT';
+        else if (aiResult.detectedType === 'hotel_reservation') newCategory = 'HOTEL';
+        else if (aiResult.detectedType === 'activity_ticket') newCategory = 'TICKET';
+        else if (aiResult.detectedType === 'expense_receipt') newCategory = 'RECEIPT';
+
+        await query(`UPDATE documents SET ai_status = 'COMPLETED', category = $1 WHERE id = $2`, [newCategory, doc.id]);
+        doc.category = newCategory;
+        doc.ai_status = 'COMPLETED';
+      } else {
+        await query(`UPDATE documents SET ai_status = 'FAILED' WHERE id = $1`, [doc.id]);
+        doc.ai_status = 'FAILED';
+      }
+
+      return res.json({
+        document: {
+          ...doc,
+          extraction: extractionData,
+        },
+        aiResult,
+      });
+    } catch (err: any) {
+      logger.error('Erro ao reprocessar documento:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao reprocessar documento com IA' });
+    }
+  },
+
+  // 3. Confirm AI Extraction & create corresponding entity
+  async confirmExtraction(req: Request, res: Response) {
+    const { tripId, documentId } = req.params;
+    const { confirmedType, normalizedData, userCorrections, travelerAssociations } = req.body;
+
+    try {
+      const { rows: docs } = await query('SELECT * FROM documents WHERE id = $1 AND trip_id = $2', [documentId, tripId]);
+      if (docs.length === 0) return res.status(404).json({ error: 'Documento não encontrado' });
+
+      // Resolve traveler associations (links to users, existing companions, or new companions)
+      const resolvedTravelers: Array<{
+        travelerId?: string;
+        name: string;
+        ticketName?: string;
+        seat?: string;
+        ticketNumber?: string;
+      }> = [];
+
+      if (Array.isArray(travelerAssociations)) {
+        for (const assoc of travelerAssociations) {
+          if (assoc.action === 'IGNORE') continue;
+
+          let targetTravelerId = assoc.targetTravelerId;
+          let displayName = assoc.newCompanionName || assoc.displayName || assoc.detectedName;
+
+          if (assoc.action === 'CREATE_COMPANION') {
+            const { rows: newComp } = await query(
+              `INSERT INTO trip_travelers (
+                trip_id, display_name, ticket_name, role, created_by
+              ) VALUES ($1, $2, $3, 'COMPANION', $4)
+              RETURNING id, display_name`,
+              [tripId, displayName.trim(), assoc.detectedName?.trim() || null, req.user?.id]
+            );
+            if (newComp.length > 0) {
+              targetTravelerId = newComp[0].id;
+              displayName = newComp[0].display_name;
+            }
+          } else if (assoc.action === 'LINK_USER' && assoc.targetUserId) {
+            // Find existing traveler for this user or create one
+            const { rows: userTraveler } = await query(
+              `SELECT id, display_name FROM trip_travelers WHERE trip_id = $1 AND user_id = $2`,
+              [tripId, assoc.targetUserId]
+            );
+            if (userTraveler.length > 0) {
+              targetTravelerId = userTraveler[0].id;
+              displayName = userTraveler[0].display_name;
+              if (assoc.detectedName) {
+                await query(`UPDATE trip_travelers SET ticket_name = $1 WHERE id = $2`, [assoc.detectedName, targetTravelerId]);
+              }
+            } else {
+              const { rows: uInfo } = await query('SELECT name, email FROM users WHERE id = $1', [assoc.targetUserId]);
+              if (uInfo.length > 0) {
+                const { rows: inserted } = await query(
+                  `INSERT INTO trip_travelers (trip_id, user_id, display_name, ticket_name, email, role, created_by)
+                   VALUES ($1, $2, $3, $4, $5, 'VIEWER', $6)
+                   RETURNING id, display_name`,
+                  [tripId, assoc.targetUserId, uInfo[0].name, assoc.detectedName || null, uInfo[0].email, req.user?.id]
+                );
+                targetTravelerId = inserted[0].id;
+                displayName = inserted[0].display_name;
+              }
+            }
+          } else if (assoc.action === 'LINK_TRAVELER' && assoc.targetTravelerId) {
+            targetTravelerId = assoc.targetTravelerId;
+            const { rows: trRows } = await query('SELECT display_name FROM trip_travelers WHERE id = $1', [targetTravelerId]);
+            if (trRows.length > 0) {
+              displayName = trRows[0].display_name;
+              if (assoc.detectedName) {
+                await query(`UPDATE trip_travelers SET ticket_name = $1 WHERE id = $2`, [assoc.detectedName, targetTravelerId]);
+              }
+            }
+          }
+
+          resolvedTravelers.push({
+            travelerId: targetTravelerId,
+            name: displayName,
+            ticketName: assoc.detectedName,
+            seat: assoc.seat,
+            ticketNumber: assoc.ticketNumber,
+          });
+        }
+      }
+
+      // Update extraction status
+      await query(
+        `UPDATE document_ai_extractions
+         SET status = 'CONFIRMED', user_corrections = $1, normalized_data = $2, updated_at = NOW()
+         WHERE document_id = $3 AND trip_id = $4`,
+        [JSON.stringify(userCorrections || {}), JSON.stringify(normalizedData), documentId, tripId]
+      );
+
+      const data = normalizedData || {};
+
+      // Auto-create reservation based on confirmed type:
+      if (confirmedType === 'flight_reservation' || confirmedType === 'FLIGHT') {
+        // Create flight reservation
+        const { rows: resRows } = await query(
+          `INSERT INTO transport_reservations (
+            trip_id, type, booking_code, ticket_number, provider_name,
+            total_amount, currency, status, document_id, notes
+          ) VALUES ($1, 'FLIGHT', $2, $3, $4, $5, $6, 'CONFIRMED', $7, $8)
+          RETURNING id`,
+          [
+            tripId,
+            data.reservationCode || null,
+            data.ticketNumber || null,
+            data.airline || 'Companhia Aérea',
+            data.totalAmount || null,
+            data.currency || 'USD',
+            documentId,
+            data.notes || null,
+          ]
+        );
+        const resId = resRows[0].id;
+
+        // Create segments
+        if (Array.isArray(data.segments)) {
+          for (let i = 0; i < data.segments.length; i++) {
+            const seg = data.segments[i];
+            await query(
+              `INSERT INTO transport_segments (
+                reservation_id, trip_id, segment_number, transport_type,
+                carrier_name, identification_number, departure_location, departure_station_code,
+                departure_date, departure_time, departure_timezone, arrival_location, arrival_station_code,
+                arrival_date, arrival_time, arrival_timezone, cabin_class, seat, duration_minutes, passenger_names
+              ) VALUES ($1, $2, $3, 'FLIGHT', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+              [
+                resId,
+                tripId,
+                i + 1,
+                seg.airline || data.airline || null,
+                seg.flightNumber || null,
+                seg.departureCity || seg.departureAirport || 'Origem',
+                seg.departureAirport || null,
+                seg.departureDate || null,
+                seg.departureTime || null,
+                seg.departureTimezone || null,
+                seg.arrivalCity || seg.arrivalAirport || 'Destino',
+                seg.arrivalAirport || null,
+                seg.arrivalDate || null,
+                seg.arrivalTime || null,
+                seg.arrivalTimezone || null,
+                seg.cabin || 'Economy',
+                seg.seat || null,
+                seg.durationMinutes || null,
+                JSON.stringify(resolvedTravelers.length > 0 ? resolvedTravelers : (data.passengers || [])),
+              ]
+            );
+          }
+        }
+
+        // Lança/atualiza despesa de transporte se houver valor
+        if (data.totalAmount && parseFloat(data.totalAmount) > 0) {
+          const expenseDate = (Array.isArray(data.segments) && data.segments[0]?.departureDate) || new Date().toISOString().split('T')[0];
+          const desc = `Passagem Aérea: ${data.airline || 'Companhia Aérea'}${data.reservationCode ? ` (${data.reservationCode})` : ''}`;
+          const amount = parseFloat(data.totalAmount);
+          const curr = data.currency || 'BRL';
+          const notes = data.ticketNumber ? `Bilhete: ${data.ticketNumber}` : null;
+
+          const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
+          if (existingExp.length > 0) {
+            await query(
+              `UPDATE expenses 
+               SET category = 'TRANSPORT', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
+               WHERE id = $6`,
+              [desc, amount, curr, expenseDate, notes, existingExp[0].id]
+            );
+          } else {
+            await query(
+              `INSERT INTO expenses (
+                trip_id, category, description, amount, currency,
+                payment_method, date, document_id, paid_by_user_id, notes
+              ) VALUES ($1, 'TRANSPORT', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
+              [tripId, desc, amount, curr, expenseDate, documentId, req.user?.id || null, notes]
+            );
+          }
+        }
+
+        await query(`UPDATE documents SET category = 'FLIGHT' WHERE id = $1`, [documentId]);
+      } else if (confirmedType === 'hotel_reservation' || confirmedType === 'HOTEL') {
+        // Create hotel reservation
+        await query(
+          `INSERT INTO hotel_reservations (
+            trip_id, hotel_name, address, city, country,
+            check_in_date, check_in_time, check_out_date, check_out_time,
+            reservation_number, guest_names, room_type, total_amount, currency,
+            payment_status, phone, email, website, document_id, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+          [
+            tripId,
+            data.hotelName || 'Hotel',
+            data.address || null,
+            data.city || null,
+            data.country || null,
+            data.checkInDate || new Date().toISOString().split('T')[0],
+            data.checkInTime || '15:00',
+            data.checkOutDate || new Date().toISOString().split('T')[0],
+            data.checkOutTime || '11:00',
+            data.reservationNumber || null,
+            (resolvedTravelers.length > 0 ? resolvedTravelers.map((t) => t.name).join(', ') : (data.guestNames || null)),
+            data.roomType || null,
+            data.totalAmount || null,
+            data.currency || 'USD',
+            data.paymentStatus || 'CONFIRMED',
+            data.phone || null,
+            data.email || null,
+            data.website || null,
+            documentId,
+            data.notes || null,
+          ]
+        );
+
+        // Lança/atualiza despesa de hospedagem se houver valor
+        if (data.totalAmount && parseFloat(data.totalAmount) > 0) {
+          const expenseDate = data.checkInDate || new Date().toISOString().split('T')[0];
+          const desc = `Hospedagem: ${data.hotelName || 'Hotel'}${data.reservationNumber ? ` (${data.reservationNumber})` : ''}`;
+          const amount = parseFloat(data.totalAmount);
+          const curr = data.currency || 'BRL';
+          const notes = data.reservationNumber ? `Reserva: ${data.reservationNumber}` : null;
+
+          const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
+          if (existingExp.length > 0) {
+            await query(
+              `UPDATE expenses 
+               SET category = 'ACCOMMODATION', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
+               WHERE id = $6`,
+              [desc, amount, curr, expenseDate, notes, existingExp[0].id]
+            );
+          } else {
+            await query(
+              `INSERT INTO expenses (
+                trip_id, category, description, amount, currency,
+                payment_method, date, document_id, paid_by_user_id, notes
+              ) VALUES ($1, 'ACCOMMODATION', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
+              [tripId, desc, amount, curr, expenseDate, documentId, req.user?.id || null, notes]
+            );
+          }
+        }
+
+        await query(`UPDATE documents SET category = 'HOTEL' WHERE id = $1`, [documentId]);
+      } else if (confirmedType === 'activity_ticket' || confirmedType === 'TICKET') {
+        // Lança/atualiza despesa de atração se houver valor
+        if (data.totalAmount && parseFloat(data.totalAmount) > 0) {
+          const expenseDate = data.eventDate || new Date().toISOString().split('T')[0];
+          const desc = `Ingresso / Atração: ${data.activityName || 'Atração'}`;
+          const amount = parseFloat(data.totalAmount);
+          const curr = data.currency || 'BRL';
+          const notes = data.ticketCode ? `Código: ${data.ticketCode}` : null;
+
+          const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
+          if (existingExp.length > 0) {
+            await query(
+              `UPDATE expenses 
+               SET category = 'TICKETS', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
+               WHERE id = $6`,
+              [desc, amount, curr, expenseDate, notes, existingExp[0].id]
+            );
+          } else {
+            await query(
+              `INSERT INTO expenses (
+                trip_id, category, description, amount, currency,
+                payment_method, date, document_id, paid_by_user_id, notes
+              ) VALUES ($1, 'TICKETS', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
+              [tripId, desc, amount, curr, expenseDate, documentId, req.user?.id || null, notes]
+            );
+          }
+        }
+
+        await query(`UPDATE documents SET category = 'TICKET' WHERE id = $1`, [documentId]);
+      } else if (confirmedType === 'expense_receipt' || confirmedType === 'RECEIPT') {
+        // Lança/atualiza despesa de recibo
+        const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
+        const expCategory = data.category || 'OTHER';
+        const expDesc = data.merchantName || 'Despesa comprovada';
+        const expAmount = parseFloat(data.totalAmount) || 0;
+        const expCurr = data.currency || 'BRL';
+        const expMethod = data.paymentMethod || 'CREDIT_CARD';
+        const expDate = data.date || new Date().toISOString().split('T')[0];
+        const expNotes = data.notes || null;
+
+        if (existingExp.length > 0) {
+          await query(
+            `UPDATE expenses 
+             SET category = $1, description = $2, amount = $3, currency = $4, payment_method = $5, date = $6, notes = $7, updated_at = NOW()
+             WHERE id = $8`,
+            [expCategory, expDesc, expAmount, expCurr, expMethod, expDate, expNotes, existingExp[0].id]
+          );
+        } else {
+          await query(
+            `INSERT INTO expenses (
+              trip_id, category, description, amount, currency,
+              payment_method, date, document_id, paid_by_user_id, notes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+              tripId,
+              expCategory,
+              expDesc,
+              expAmount,
+              expCurr,
+              expMethod,
+              expDate,
+              documentId,
+              req.user?.id || null,
+              expNotes,
+            ]
+          );
+        }
+
+        await query(`UPDATE documents SET category = 'RECEIPT' WHERE id = $1`, [documentId]);
+      }
+
+      // Record audit
+      await query(
+        `INSERT INTO audit_logs (user_id, trip_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, $2, 'AI_EXTRACTION_CONFIRMED', 'DOCUMENT', $3, $4)`,
+        [req.user?.id, tripId, documentId, JSON.stringify({ confirmedType })]
+      );
+
+      return res.json({ message: 'Dados extraídos e confirmados com sucesso no sistema!' });
+    } catch (err: any) {
+      logger.error('Erro ao confirmar extração:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao salvar dados confirmados' });
+    }
+  },
+
+  // 4. View / Stream Document File Inline
+  async viewDocument(req: Request, res: Response) {
+    const { documentId } = req.params;
+
+    try {
+      const { rows } = await query('SELECT * FROM documents WHERE id = $1 AND deleted_at IS NULL', [documentId]);
+      if (rows.length === 0) return res.status(404).json({ error: 'Documento não encontrado' });
+
+      const doc = rows[0];
+      if (!fs.existsSync(doc.storage_path)) {
+        return res.status(404).json({ error: 'Arquivo físico não encontrado no servidor' });
+      }
+
+      res.setHeader('Content-Type', doc.mime_type);
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.original_name)}"`);
+      const stream = fs.createReadStream(doc.storage_path);
+      stream.pipe(res);
+    } catch (err: any) {
+      logger.error('Erro ao visualizar documento:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao abrir arquivo' });
+    }
+  },
+
+  // 5. Delete Document
+  async deleteDocument(req: Request, res: Response) {
+    const { tripId, documentId } = req.params;
+
+    try {
+      await query(`UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2`, [documentId, tripId]);
+      return res.json({ message: 'Documento excluído com sucesso' });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao excluir documento' });
+    }
+  },
+};

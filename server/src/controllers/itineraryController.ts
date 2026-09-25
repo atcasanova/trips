@@ -1,0 +1,338 @@
+import { Request, Response } from 'express';
+import { query } from '../db/pool.js';
+import { logger } from '../utils/logger.js';
+
+export const itineraryController = {
+  // 1. List all days and itinerary items for a trip
+  async listDays(req: Request, res: Response) {
+    const { tripId } = req.params;
+
+    try {
+      const { rows: days } = await query(
+        `SELECT * FROM trip_days WHERE trip_id = $1 ORDER BY date ASC, order_index ASC`,
+        [tripId]
+      );
+
+      const { rows: items } = await query(
+        `SELECT * FROM itinerary_items WHERE trip_id = $1 ORDER BY order_index ASC, start_time ASC`,
+        [tripId]
+      );
+
+      const itemsByDay: Record<string, any[]> = {};
+      for (const item of items) {
+        if (!itemsByDay[item.trip_day_id]) itemsByDay[item.trip_day_id] = [];
+        itemsByDay[item.trip_day_id].push(item);
+      }
+
+      const result = days.map((d: any) => ({
+        ...d,
+        items: itemsByDay[d.id] || [],
+      }));
+
+      return res.json({ days: result });
+    } catch (err: any) {
+      logger.error('Erro ao listar dias do roteiro:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao carregar roteiro' });
+    }
+  },
+
+  // 2. Create Day
+  async createDay(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const {
+      date,
+      day_number,
+      title,
+      subtitle,
+      base_location,
+      icon,
+      narrative,
+      temperature_min,
+      temperature_max,
+      weather_description,
+      estimated_cost,
+      cost_currency,
+      included_services,
+      ideas,
+      alerts,
+      order_index,
+    } = req.body;
+
+    if (!date) return res.status(400).json({ error: 'A data do dia é obrigatória' });
+
+    try {
+      const { rows } = await query(
+        `INSERT INTO trip_days (
+          trip_id, date, day_number, title, subtitle, base_location, icon,
+          narrative, temperature_min, temperature_max, weather_description,
+          estimated_cost, cost_currency, included_services, ideas, alerts, order_index
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        RETURNING *`,
+        [
+          tripId,
+          date,
+          day_number || 1,
+          title || null,
+          subtitle || null,
+          base_location || null,
+          icon || '📍',
+          narrative || null,
+          temperature_min || null,
+          temperature_max || null,
+          weather_description || null,
+          estimated_cost || null,
+          cost_currency || null,
+          included_services || null,
+          JSON.stringify(ideas || []),
+          JSON.stringify(alerts || []),
+          order_index || 0,
+        ]
+      );
+
+      return res.status(201).json({ day: { ...rows[0], items: [] } });
+    } catch (err: any) {
+      logger.error('Erro ao criar dia do roteiro:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao criar dia no roteiro' });
+    }
+  },
+
+  // 3. Update Day
+  async updateDay(req: Request, res: Response) {
+    const { tripId, dayId } = req.params;
+    const updates = req.body;
+
+    try {
+      const allowed = [
+        'date', 'day_number', 'title', 'subtitle', 'base_location', 'icon',
+        'narrative', 'temperature_min', 'temperature_max', 'weather_description',
+        'estimated_cost', 'cost_currency', 'included_services', 'ideas', 'alerts', 'order_index'
+      ];
+
+      const setClauses: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      for (const field of allowed) {
+        if (updates[field] !== undefined) {
+          setClauses.push(`${field} = $${idx++}`);
+          let val = updates[field];
+          if (['ideas', 'alerts'].includes(field) && typeof val === 'object') {
+            val = JSON.stringify(val);
+          }
+          values.push(val);
+        }
+      }
+
+      if (setClauses.length === 0) return res.json({ message: 'Nenhuma alteração' });
+
+      setClauses.push(`updated_at = NOW()`);
+      values.push(dayId, tripId);
+
+      const sql = `UPDATE trip_days SET ${setClauses.join(', ')} WHERE id = $${idx++} AND trip_id = $${idx} RETURNING *`;
+      const { rows } = await query(sql, values);
+
+      if (rows.length === 0) return res.status(404).json({ error: 'Dia não encontrado' });
+
+      return res.json({ day: rows[0] });
+    } catch (err: any) {
+      logger.error('Erro ao atualizar dia do roteiro:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao atualizar dia' });
+    }
+  },
+
+  // 4. Delete Day
+  async deleteDay(req: Request, res: Response) {
+    const { tripId, dayId } = req.params;
+    try {
+      await query('DELETE FROM trip_days WHERE id = $1 AND trip_id = $2', [dayId, tripId]);
+      return res.json({ message: 'Dia removido com sucesso' });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao remover dia' });
+    }
+  },
+
+  // 5. Create Itinerary Item
+  async createItineraryItem(req: Request, res: Response) {
+    const { tripId, dayId } = req.params;
+    const {
+      title,
+      category,
+      start_time,
+      end_time,
+      timezone,
+      location_name,
+      address,
+      latitude,
+      longitude,
+      duration_text,
+      cost_amount,
+      cost_currency,
+      booking_reference,
+      url,
+      tips,
+      notes,
+      order_index,
+    } = req.body;
+
+    if (!title) return res.status(400).json({ error: 'O título da atividade é obrigatório' });
+
+    try {
+      const { rows } = await query(
+        `INSERT INTO itinerary_items (
+          trip_id, trip_day_id, title, category, start_time, end_time, timezone,
+          location_name, address, latitude, longitude, duration_text,
+          cost_amount, cost_currency, booking_reference, url, tips, notes, order_index
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        RETURNING *`,
+        [
+          tripId,
+          dayId,
+          title.trim(),
+          category || 'ATTRACTION',
+          start_time || null,
+          end_time || null,
+          timezone || null,
+          location_name || null,
+          address || null,
+          latitude || null,
+          longitude || null,
+          duration_text || null,
+          cost_amount || null,
+          cost_currency || null,
+          booking_reference || null,
+          url || null,
+          tips || null,
+          notes || null,
+          order_index || 0,
+        ]
+      );
+
+      return res.status(201).json({ item: rows[0] });
+    } catch (err: any) {
+      logger.error('Erro ao adicionar atividade ao roteiro:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao adicionar atividade' });
+    }
+  },
+
+  // 6. Update Itinerary Item
+  async updateItineraryItem(req: Request, res: Response) {
+    const { tripId, itemId } = req.params;
+    const updates = req.body;
+
+    try {
+      const allowed = [
+        'title', 'category', 'start_time', 'end_time', 'timezone',
+        'location_name', 'address', 'latitude', 'longitude', 'duration_text',
+        'cost_amount', 'cost_currency', 'booking_reference', 'url', 'tips', 'notes', 'order_index'
+      ];
+
+      const setClauses: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      for (const field of allowed) {
+        if (updates[field] !== undefined) {
+          setClauses.push(`${field} = $${idx++}`);
+          values.push(updates[field]);
+        }
+      }
+
+      if (setClauses.length === 0) return res.json({ message: 'Nenhuma alteração' });
+
+      setClauses.push(`updated_at = NOW()`);
+      values.push(itemId, tripId);
+
+      const sql = `UPDATE itinerary_items SET ${setClauses.join(', ')} WHERE id = $${idx++} AND trip_id = $${idx} RETURNING *`;
+      const { rows } = await query(sql, values);
+
+      if (rows.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
+
+      return res.json({ item: rows[0] });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao atualizar atividade' });
+    }
+  },
+
+  // 7. Delete Itinerary Item
+  async deleteItineraryItem(req: Request, res: Response) {
+    const { tripId, itemId } = req.params;
+    try {
+      await query('DELETE FROM itinerary_items WHERE id = $1 AND trip_id = $2', [itemId, tripId]);
+      return res.json({ message: 'Atividade removida com sucesso' });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao remover atividade' });
+    }
+  },
+
+  // 8. Move Itinerary Item between days or order
+  async moveItem(req: Request, res: Response) {
+    const { tripId, itemId } = req.params;
+    const { targetDayId, newOrderIndex } = req.body;
+
+    if (!targetDayId) {
+      return res.status(400).json({ error: 'O dia de destino é obrigatório' });
+    }
+
+    try {
+      const orderIdx = typeof newOrderIndex === 'number' ? newOrderIndex : 999;
+      const { rows } = await query(
+        `UPDATE itinerary_items
+         SET trip_day_id = $1, order_index = $2, updated_at = NOW()
+         WHERE id = $3 AND trip_id = $4
+         RETURNING *`,
+        [targetDayId, orderIdx, itemId, tripId]
+      );
+
+      if (rows.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
+
+      return res.json({ item: rows[0] });
+    } catch (err: any) {
+      logger.error('Erro ao mover atividade:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao mover atividade' });
+    }
+  },
+
+  // 9. Reorder items in a day
+  async reorderItems(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const { itemIds } = req.body;
+
+    if (!Array.isArray(itemIds)) {
+      return res.status(400).json({ error: 'itemIds deve ser uma lista de IDs' });
+    }
+
+    try {
+      for (let i = 0; i < itemIds.length; i++) {
+        await query(
+          'UPDATE itinerary_items SET order_index = $1 WHERE id = $2 AND trip_id = $3',
+          [i, itemIds[i], tripId]
+        );
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao reordenar atividades' });
+    }
+  },
+
+  // 10. Reorder days
+  async reorderDays(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const { dayIds } = req.body;
+
+    if (!Array.isArray(dayIds)) {
+      return res.status(400).json({ error: 'dayIds deve ser uma lista de IDs' });
+    }
+
+    try {
+      for (let i = 0; i < dayIds.length; i++) {
+        await query(
+          'UPDATE trip_days SET day_number = $1, order_index = $2 WHERE id = $3 AND trip_id = $4',
+          [i + 1, i, dayIds[i], tripId]
+        );
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao reordenar dias' });
+    }
+  },
+};
