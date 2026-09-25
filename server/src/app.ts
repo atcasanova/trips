@@ -56,6 +56,29 @@ if (fs.existsSync(env.UPLOAD_PATH)) {
 // Serve Frontend (React Vite build)
 const publicDir = path.resolve(__dirname, '../public');
 if (fs.existsSync(publicDir)) {
+  // Service Worker route with specific PWA headers
+  app.get('/sw.js', (_req: Request, res: Response) => {
+    const swPath = path.join(publicDir, 'sw.js');
+    if (fs.existsSync(swPath)) {
+      res.setHeader('Content-Type', 'application/javascript');
+      res.setHeader('Service-Worker-Allowed', '/');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      return res.sendFile(swPath);
+    }
+    return res.status(404).send('Service worker not found');
+  });
+
+  // Web App Manifest route
+  app.get(['/manifest.json', '/manifest.webmanifest'], (_req: Request, res: Response) => {
+    const manifestPath = path.join(publicDir, 'manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.sendFile(manifestPath);
+    }
+    return res.status(404).send('Manifest not found');
+  });
+
   app.use(express.static(publicDir));
 
   // SPA fallback: return index.html for unknown routes

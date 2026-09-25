@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plane, Users, LogOut, Compass, Shield, KeyRound, UserPlus } from 'lucide-react';
+import { Plane, Users, LogOut, Compass, Shield, KeyRound, UserPlus, Download } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.js';
+import { usePwa } from '../context/PwaContext.js';
 import { AdminUsersModal } from './AdminUsersModal.js';
 import { ChangePasswordModal } from './ChangePasswordModal.js';
 import { InviteModal } from './InviteModal.js';
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
+  const { isInstallable, isInstalled, promptInstall } = usePwa();
   const navigate = useNavigate();
   const [showUsersModal, setShowUsersModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -46,6 +48,17 @@ export const Navbar: React.FC = () => {
               <Compass className="w-4 h-4" />
               <span className="hidden md:inline">Painel de Viagens</span>
             </Link>
+
+            {isInstallable && !isInstalled && (
+              <button
+                onClick={() => promptInstall()}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
+                title="Instalar Trips no seu aparelho"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Instalar App</span>
+              </button>
+            )}
 
             {user && (
               <button
