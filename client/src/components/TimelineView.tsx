@@ -21,11 +21,13 @@ import {
   X,
   FileText,
   Wand2,
+  ExternalLink,
 } from 'lucide-react';
 import { Trip, TripDay, ItineraryItem } from '../types/index.js';
 import { api } from '../api/client.js';
 import { parseSafeDate } from '../utils/date.js';
 import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
+import { GoogleMapsIcon } from './GoogleMapsIcon.js';
 
 interface TimelineViewProps {
   trip: Trip;
@@ -837,11 +839,24 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {mapPointNumber && (
                                     <span
-                                      className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-[10px] font-extrabold text-white"
+                                      className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-[10px] font-extrabold text-white shrink-0"
                                       title={`Ponto ${mapPointNumber} no mapa`}
                                     >
                                       {mapPointNumber}
                                     </span>
+                                  )}
+                                  {hasMapCoordinates(item) && (
+                                    <a
+                                      href={`https://www.google.com/maps/search/?api=1&query=${toFiniteCoordinate(item.latitude)},${toFiniteCoordinate(item.longitude)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="inline-flex items-center justify-center p-0.5 rounded hover:bg-slate-200/80 transition-transform hover:scale-115 shrink-0 cursor-pointer"
+                                      title={`Abrir "${item.title}" no Google Maps`}
+                                      aria-label={`Abrir "${item.title}" no Google Maps`}
+                                    >
+                                      <GoogleMapsIcon className="w-3.5 h-3.5" />
+                                    </a>
                                   )}
                                   <span className="font-semibold text-xs text-slate-900">{item.title}</span>
                                   {item.map_mode === 'SKIP' && (
@@ -868,8 +883,21 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
                                 {item.address && (
                                   <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                                    <MapPin className="w-3 h-3 text-slate-400" />
-                                    {item.address}
+                                    <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                                    {hasMapCoordinates(item) ? (
+                                      <a
+                                        href={`https://www.google.com/maps/search/?api=1&query=${toFiniteCoordinate(item.latitude)},${toFiniteCoordinate(item.longitude)}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="hover:text-brand-600 hover:underline transition-colors"
+                                        title={`Abrir "${item.title}" no Google Maps`}
+                                      >
+                                        {item.address}
+                                      </a>
+                                    ) : (
+                                      item.address
+                                    )}
                                   </div>
                                 )}
                                 {item.location_kind === 'AREA' && item.location_anchor_name && (
@@ -1448,6 +1476,26 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
+
+              {hasMapCoordinates(editingItem.item) && (
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                  <div className="flex items-center gap-1.5 text-slate-700">
+                    <GoogleMapsIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="font-mono text-[11px] text-slate-500">
+                      GPS: {toFiniteCoordinate(editingItem.item.latitude)?.toFixed(5)}, {toFiniteCoordinate(editingItem.item.longitude)?.toFixed(5)}
+                    </span>
+                  </div>
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${toFiniteCoordinate(editingItem.item.latitude)},${toFiniteCoordinate(editingItem.item.longitude)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-brand-600 hover:text-brand-700 font-semibold text-[11px] hover:underline flex items-center gap-1"
+                    title="Abrir coordenadas no Google Maps"
+                  >
+                    Ver no Google Maps <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
 
               <div className="pt-4 flex justify-end gap-2 border-t border-slate-100">
                 <button

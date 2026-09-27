@@ -1419,7 +1419,16 @@ export const reportService = {
               <div class="itinerary-subitem">
                 <div class="subitem-time">${item.start_time || '—'}</div>
                 <div class="subitem-content">
-                  <div class="subitem-title">${item.title}</div>
+                  <div class="subitem-title">
+                    ${item.title}
+                    ${
+                      item.latitude && item.longitude && !(Number(item.latitude) === 0 && Number(item.longitude) === 0)
+                        ? `<a href="https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}" target="_blank" rel="noopener noreferrer" style="text-decoration: none; margin-left: 5px; vertical-align: middle; display: inline-flex;" title="Abrir no Google Maps">
+                            <span style="font-size: 8.5pt;">📍</span>
+                          </a>`
+                        : ''
+                    }
+                  </div>
                   ${item.address ? `<div style="font-size: 7.5pt; color: #64748b;">${item.address}</div>` : ''}
                   ${item.tips ? `<div class="subitem-tips">💡 ${item.tips}</div>` : ''}
                 </div>
