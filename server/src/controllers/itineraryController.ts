@@ -254,7 +254,17 @@ export const itineraryController = {
       const changesLocationIdentity = ['title', 'category', 'location_name', 'address'].some(
         (field) => updates[field] !== undefined
       );
-      if (changesLocationIdentity) setClauses.push('location_confirmed_at = NULL');
+      if (changesLocationIdentity) {
+        setClauses.push('location_confirmed_at = NULL');
+        setClauses.push(`latitude = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE latitude END`);
+        setClauses.push(`longitude = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE longitude END`);
+        setClauses.push(`location_source = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE location_source END`);
+        setClauses.push(`location_source_url = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE location_source_url END`);
+        setClauses.push(`location_confidence = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE location_confidence END`);
+        setClauses.push(`location_kind = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE location_kind END`);
+        setClauses.push(`location_anchor_name = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE location_anchor_name END`);
+        setClauses.push(`location_verified_at = CASE WHEN location_source = 'OPENAI_WEB_SEARCH' THEN NULL ELSE location_verified_at END`);
+      }
       setClauses.push(`updated_at = NOW()`);
       values.push(itemId, tripId);
 
@@ -269,6 +279,7 @@ export const itineraryController = {
           `UPDATE itinerary_items
            SET latitude = NULL, longitude = NULL, location_source = NULL,
                location_source_url = NULL, location_confidence = NULL,
+               location_kind = NULL, location_anchor_name = NULL,
                location_verified_at = NULL, location_confirmed_at = NULL, updated_at = NOW()
            WHERE id = $1 AND trip_id = $2`,
           [itemId, tripId]

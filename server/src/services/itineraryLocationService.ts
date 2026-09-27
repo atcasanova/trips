@@ -142,9 +142,11 @@ export async function refreshItineraryLocations(
              location_source = 'OPENAI_WEB_SEARCH',
              location_source_url = $5,
              location_confidence = $6,
+             location_kind = $7,
+             location_anchor_name = $8,
              location_verified_at = NOW(),
              updated_at = NOW()
-         WHERE id = $7 AND trip_id = $8`,
+         WHERE id = $9 AND trip_id = $10`,
         [
           location.canonicalName,
           location.address,
@@ -152,6 +154,8 @@ export async function refreshItineraryLocations(
           location.longitude,
           location.sourceUrl,
           location.confidence,
+          location.kind,
+          location.anchorName,
           location.id,
           params.tripId,
         ]

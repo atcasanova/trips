@@ -836,6 +836,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                       <CheckCircle className="h-3 w-3" /> Confirmado
                                     </span>
                                   )}
+                                  {item.location_kind === 'AREA' && (
+                                    <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200" title={item.location_anchor_name ? `Âncora no mapa: ${item.location_anchor_name}` : 'Área visitável'}>
+                                      Área
+                                    </span>
+                                  )}
                                   {item.category && item.category !== 'ATTRACTION' && (
                                     <span className="text-[10px] font-medium text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
                                       {item.category}
@@ -847,6 +852,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                   <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                                     <MapPin className="w-3 h-3 text-slate-400" />
                                     {item.address}
+                                  </div>
+                                )}
+                                {item.location_kind === 'AREA' && item.location_anchor_name && (
+                                  <div className="text-[11px] text-sky-700 mt-0.5">
+                                    Âncora: {item.location_anchor_name}
                                   </div>
                                 )}
                                 {item.tips && (

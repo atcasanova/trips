@@ -145,6 +145,8 @@ export interface ItineraryItem {
   location_confidence?: number | null;
   location_verified_at?: string | null;
   location_confirmed_at?: string | null;
+  location_kind?: 'PLACE' | 'AREA' | null;
+  location_anchor_name?: string | null;
   duration_text?: string | null;
   cost_amount?: number | null;
   cost_currency?: string | null;
