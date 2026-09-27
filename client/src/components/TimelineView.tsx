@@ -3,6 +3,7 @@ import {
   Calendar,
   Clock,
   MapPin,
+  MapPinOff,
   Sparkles,
   Plus,
   AlertTriangle,
@@ -123,6 +124,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
     let number = 0;
     return localDays.flatMap((day) =>
       (day.items || []).flatMap((item) => {
+        if (item.map_mode === 'SKIP') return [];
         const latitude = toFiniteCoordinate(item.latitude);
         const longitude = toFiniteCoordinate(item.longitude);
         if (
@@ -166,6 +168,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
       (day.items || []).some(
         (item) =>
           item.category !== 'NOTE' &&
+          item.map_mode !== 'SKIP' &&
           !item.location_confirmed_at &&
           (!hasMapCoordinates(item) || item.location_source === 'OPENAI_WEB_SEARCH')
       )
@@ -225,6 +228,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'Não foi possível alterar a confirmação deste ponto.');
+    }
+  };
+
+  const handleMapMode = async (item: ItineraryItem) => {
+    const mapMode = item.map_mode === 'SKIP' ? 'AUTO' : 'SKIP';
+    try {
+      await api.days.setMapMode(trip.id, item.id, mapMode);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Não foi possível alterar a visibilidade deste item no mapa.');
     }
   };
 
@@ -831,6 +844,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                     </span>
                                   )}
                                   <span className="font-semibold text-xs text-slate-900">{item.title}</span>
+                                  {item.map_mode === 'SKIP' && (
+                                    <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200" title="Este item não aparece no mapa e não será pesquisado automaticamente">
+                                      <MapPinOff className="h-3 w-3" /> Fora do mapa
+                                    </span>
+                                  )}
                                   {item.location_confirmed_at && (
                                     <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200" title="Este ponto não será pesquisado novamente até a confirmação ser removida">
                                       <CheckCircle className="h-3 w-3" /> Confirmado
@@ -869,6 +887,20 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
                             {canEdit && (
                               <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleMapMode(item)}
+                                  aria-pressed={item.map_mode === 'SKIP'}
+                                  className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold transition-colors ${
+                                    item.map_mode === 'SKIP'
+                                      ? 'bg-slate-200 text-slate-700 hover:bg-sky-100 hover:text-sky-800'
+                                      : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-800'
+                                  }`}
+                                  title={item.map_mode === 'SKIP' ? 'Incluir no mapa e permitir pesquisa na próxima atualização' : 'Não exibir no mapa nem pesquisar automaticamente'}
+                                >
+                                  <MapPinOff className="h-3.5 w-3.5" />
+                                  <span className="hidden sm:inline">{item.map_mode === 'SKIP' ? 'Incluir no mapa' : 'Ignorar mapa'}</span>
+                                </button>
                                 {mapPointNumber && (
                                   <button
                                     type="button"
@@ -1078,6 +1110,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                               >
                                 {it.startTime && <strong className="text-indigo-600">{it.startTime}</strong>}
                                 {it.title}
+                                {it.mapMode === 'SKIP' && (
+                                  <span className="inline-flex items-center gap-0.5 text-slate-500" title="Não será pesquisado nem exibido no mapa">
+                                    <MapPinOff className="h-3 w-3" /> Fora do mapa
+                                  </span>
+                                )}
                               </span>
                             ))}
                           </div>

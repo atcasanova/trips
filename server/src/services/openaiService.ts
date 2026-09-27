@@ -762,6 +762,7 @@ Regras obrigatórias para evitar falsos positivos:
         locationName?: string;
         address?: string;
         tips?: string;
+        mapMode?: 'AUTO' | 'SKIP';
       }>;
     }>;
     durationMs: number;
@@ -810,6 +811,7 @@ Regras rigorosas para a conversão:
    - "startTime": Sugira horários lógicos sequenciais espaçados ao longo do dia (ex: 09:00, 11:30, 14:00, 16:30, 19:00).
    - "locationName": Bairro, área ou cidade correspondente.
    - "tips": Dica útil de visitação ou observação prática (ex: "Comprar ingressos com antecedência", "Provar peixe fresco no mercado", etc.).
+   - "mapMode": Escolha "AUTO" quando o item descreve uma parada física ou área nomeada que vale localizar no mapa. Escolha "SKIP" quando não há lugar pesquisável: deslocamento/transfer genérico, check-in ou check-out sem hotel nomeado, dia livre, tempo livre, descanso, instrução, lembrete, nota ou logística sem terminal/endereço específico. Se houver um local físico explicitamente nomeado (inclusive hotel, aeroporto, estação ou atração), prefira "AUTO". Em caso de dúvida sem nome de local, use "SKIP".
 
 Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
 {
@@ -827,6 +829,7 @@ Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
           "category": "TRANSPORT",
           "startTime": "15:00",
           "locationName": "Aeroporto de Tóquio",
+          "mapMode": "AUTO",
           "tips": "Retirar Pocket Wi-Fi e ativar cartão Suica/Pasmo"
         },
         {
@@ -834,6 +837,7 @@ Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
           "category": "TRANSPORT",
           "startTime": "16:30",
           "locationName": "Tóquio",
+          "mapMode": "SKIP",
           "tips": "Check-in e descanso da viagem"
         }
       ]

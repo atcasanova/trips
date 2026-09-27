@@ -203,6 +203,7 @@ export const api = {
           resolved: number;
           updated: number;
           skippedConfirmedLocations: number;
+          skippedIgnoredLocations: number;
           error?: string;
         };
       }>(
@@ -213,6 +214,11 @@ export const api = {
       request<{ item: ItineraryItem }>(`/trips/${tripId}/itinerary/items/${itemId}/location-confirmation`, {
         method: 'PUT',
         body: JSON.stringify({ confirmed }),
+      }),
+    setMapMode: (tripId: string, itemId: string, mapMode: 'AUTO' | 'SKIP') =>
+      request<{ item: ItineraryItem }>(`/trips/${tripId}/itinerary/items/${itemId}/map-mode`, {
+        method: 'PUT',
+        body: JSON.stringify({ mapMode }),
       }),
     reorder: (tripId: string, dayIds: string[]) =>
       request<{ days: TripDay[] }>(`/trips/${tripId}/days/reorder`, {

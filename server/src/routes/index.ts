@@ -75,6 +75,7 @@ router.put('/trips/:tripId/days/:dayId/items/:itemId', requireAuth, requireTripR
 router.delete('/trips/:tripId/days/:dayId/items/:itemId', requireAuth, requireTripRole('EDITOR'), itineraryController.deleteItineraryItem);
 router.post('/trips/:tripId/itinerary/locations/refresh', requireAuth, requireTripRole('EDITOR'), itineraryController.refreshLocations);
 router.put('/trips/:tripId/itinerary/items/:itemId/location-confirmation', requireAuth, requireTripRole('EDITOR'), itineraryController.setLocationConfirmation);
+router.put('/trips/:tripId/itinerary/items/:itemId/map-mode', requireAuth, requireTripRole('EDITOR'), itineraryController.setMapMode);
 
 // 6. Reservations (Flights, Trains, Hotels)
 router.get('/trips/:tripId/transports', requireAuth, requireTripRole('VIEWER'), reservationController.listTransports);

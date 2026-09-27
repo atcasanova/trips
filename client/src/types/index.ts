@@ -147,6 +147,7 @@ export interface ItineraryItem {
   location_confirmed_at?: string | null;
   location_kind?: 'PLACE' | 'AREA' | null;
   location_anchor_name?: string | null;
+  map_mode?: 'AUTO' | 'SKIP';
   duration_text?: string | null;
   cost_amount?: number | null;
   cost_currency?: string | null;

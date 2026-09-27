@@ -15,6 +15,7 @@ export interface ItineraryLocationRefreshResult {
   updated: number;
   skippedManualLocations: number;
   skippedConfirmedLocations: number;
+  skippedIgnoredLocations: number;
   error?: string;
 }
 
@@ -53,7 +54,7 @@ export async function refreshItineraryLocations(
       query(
         `SELECT
            i.id, i.trip_day_id, i.title, i.category, i.location_name, i.address,
-           i.latitude, i.longitude, i.location_source, i.location_confirmed_at,
+           i.latitude, i.longitude, i.location_source, i.location_confirmed_at, i.map_mode,
            d.title AS day_title, d.day_number, d.base_location
          FROM itinerary_items i
          JOIN trip_days d ON d.id = i.trip_day_id
@@ -71,6 +72,7 @@ export async function refreshItineraryLocations(
         updated: 0,
         skippedManualLocations: 0,
         skippedConfirmedLocations: 0,
+        skippedIgnoredLocations: 0,
       };
     }
 
@@ -82,13 +84,17 @@ export async function refreshItineraryLocations(
       return true;
     });
 
-    const skippedConfirmedLocations = items.filter(
+    const skippedIgnoredLocations = items.filter(
+      (item: any) => item.map_mode === 'SKIP'
+    ).length;
+    const eligibleItems = items.filter((item: any) => item.map_mode !== 'SKIP');
+    const skippedConfirmedLocations = eligibleItems.filter(
       (item: any) => Boolean(item.location_confirmed_at)
     ).length;
-    const skippedManualLocations = items.filter(
+    const skippedManualLocations = eligibleItems.filter(
       (item: any) => !item.location_confirmed_at && hasCoordinates(item) && item.location_source !== 'OPENAI_WEB_SEARCH'
     ).length;
-    const candidates: ItineraryLocationCandidate[] = items
+    const candidates: ItineraryLocationCandidate[] = eligibleItems
       .filter(
         (item: any) =>
           !item.location_confirmed_at &&
@@ -106,7 +112,14 @@ export async function refreshItineraryLocations(
       }));
 
     if (candidates.length === 0) {
-      return { candidates: 0, resolved: 0, updated: 0, skippedManualLocations, skippedConfirmedLocations };
+      return {
+        candidates: 0,
+        resolved: 0,
+        updated: 0,
+        skippedManualLocations,
+        skippedConfirmedLocations,
+        skippedIgnoredLocations,
+      };
     }
 
     const trip = tripRows[0];
@@ -127,6 +140,7 @@ export async function refreshItineraryLocations(
         updated: 0,
         skippedManualLocations,
         skippedConfirmedLocations,
+        skippedIgnoredLocations,
         error: resolution.error,
       };
     }
@@ -170,6 +184,7 @@ export async function refreshItineraryLocations(
       updated,
       skippedManualLocations,
       skippedConfirmedLocations,
+      skippedIgnoredLocations,
     });
 
     return {
@@ -178,6 +193,7 @@ export async function refreshItineraryLocations(
       updated,
       skippedManualLocations,
       skippedConfirmedLocations,
+      skippedIgnoredLocations,
     };
   } catch (err: any) {
     logger.error('Falha ao atualizar localizações do roteiro', {
@@ -190,6 +206,7 @@ export async function refreshItineraryLocations(
       updated: 0,
       skippedManualLocations: 0,
       skippedConfirmedLocations: 0,
+      skippedIgnoredLocations: 0,
       error: 'Não foi possível atualizar as localizações agora.',
     };
   }

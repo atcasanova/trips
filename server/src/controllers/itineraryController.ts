@@ -438,4 +438,34 @@ export const itineraryController = {
       return res.status(500).json({ error: 'Não foi possível alterar a confirmação do ponto.' });
     }
   },
+
+  // 13. Include or exclude an itinerary item from the map and automatic lookup
+  async setMapMode(req: Request, res: Response) {
+    const { tripId, itemId } = req.params;
+    const { mapMode } = req.body || {};
+
+    if (mapMode !== 'AUTO' && mapMode !== 'SKIP') {
+      return res.status(400).json({ error: 'mapMode deve ser AUTO ou SKIP.' });
+    }
+
+    try {
+      const { rows } = await query(
+        `UPDATE itinerary_items
+         SET map_mode = $1,
+             updated_at = NOW()
+         WHERE id = $2 AND trip_id = $3
+         RETURNING *`,
+        [mapMode, itemId, tripId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Item não encontrado.' });
+      }
+
+      return res.json({ item: rows[0] });
+    } catch (err: any) {
+      logger.error('Erro ao alterar visibilidade do item no mapa:', { error: err.message, tripId, itemId });
+      return res.status(500).json({ error: 'Não foi possível alterar a visibilidade no mapa.' });
+    }
+  },
 };

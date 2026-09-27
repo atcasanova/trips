@@ -170,8 +170,8 @@ export const aiController = {
             const { rows: itemRows } = await query(
               `INSERT INTO itinerary_items (
                 trip_id, trip_day_id, title, category, start_time, end_time,
-                location_name, address, tips, order_index
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                location_name, address, tips, map_mode, order_index
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
               RETURNING id`,
               [
                 tripId,
@@ -183,6 +183,7 @@ export const aiController = {
                 item.locationName || null,
                 item.address || null,
                 item.tips || null,
+                item.mapMode === 'SKIP' || item.category === 'NOTE' ? 'SKIP' : 'AUTO',
                 j,
               ]
             );
