@@ -58,10 +58,23 @@ const toFiniteCoordinate = (value: unknown): number | null => {
   return Number.isFinite(coordinate) ? coordinate : null;
 };
 
+const hasMapCoordinates = (item: Pick<ItineraryItem, 'latitude' | 'longitude'>) => {
+  const latitude = toFiniteCoordinate(item.latitude);
+  const longitude = toFiniteCoordinate(item.longitude);
+
+  return (
+    latitude !== null && latitude >= -90 && latitude <= 90 &&
+    longitude !== null && longitude >= -180 && longitude <= 180 &&
+    !(latitude === 0 && longitude === 0)
+  );
+};
+
 export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefresh, canEdit }) => {
   const [localDays, setLocalDays] = useState<TripDay[]>(days);
   const [generatingDayId, setGeneratingDayId] = useState<string | null>(null);
   const [refreshingLocations, setRefreshingLocations] = useState(false);
+  const [locationRefreshMessage, setLocationRefreshMessage] = useState<string | null>(null);
+  const [locationRefreshError, setLocationRefreshError] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
 
   // Synchronize localDays when prop days changes
@@ -149,17 +162,69 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
   }, []);
 
   const handleRefreshLocations = async () => {
+    const daysToRefresh = localDays.filter((day) =>
+      (day.items || []).some(
+        (item) =>
+          item.category !== 'NOTE' &&
+          !item.location_confirmed_at &&
+          (!hasMapCoordinates(item) || item.location_source === 'OPENAI_WEB_SEARCH')
+      )
+    );
+
+    if (daysToRefresh.length === 0) {
+      setLocationRefreshError(null);
+      setLocationRefreshMessage('Todos os pontos localizados já foram confirmados ou informados manualmente.');
+      return;
+    }
+
     setRefreshingLocations(true);
+    setLocationRefreshError(null);
+    let updated = 0;
+    let resolved = 0;
+    const failedDays: string[] = [];
+
     try {
-      const { locationRefresh } = await api.days.refreshLocations(trip.id);
-      if (locationRefresh.error) {
-        alert(locationRefresh.error);
+      for (let index = 0; index < daysToRefresh.length; index += 1) {
+        const day = daysToRefresh[index];
+        const label = day.title || `Dia ${day.day_number}`;
+        setLocationRefreshMessage(`Localizando ${label} (${index + 1}/${daysToRefresh.length})…`);
+
+        try {
+          const { locationRefresh } = await api.days.refreshLocations(trip.id, day.id);
+          updated += locationRefresh.updated;
+          resolved += locationRefresh.resolved;
+          if (locationRefresh.error) failedDays.push(label);
+        } catch (err: any) {
+          failedDays.push(label);
+          console.error('Erro ao localizar pontos do dia:', { dayId: day.id, error: err?.message });
+        }
       }
+
       onRefresh();
-    } catch (err: any) {
-      alert(err.message || 'Erro ao atualizar os pontos do mapa');
+
+      if (failedDays.length > 0) {
+        setLocationRefreshError(
+          `Não foi possível concluir ${failedDays.length} dia(s): ${failedDays.join(', ')}. ` +
+          'Os demais dias foram atualizados; tente novamente apenas para os pendentes.'
+        );
+      }
+      setLocationRefreshMessage(
+        `${updated} ponto${updated === 1 ? '' : 's'} atualizado${updated === 1 ? '' : 's'} ` +
+        `em ${daysToRefresh.length - failedDays.length}/${daysToRefresh.length} dia(s). ` +
+        `${resolved} localização(ões) verificadas.`
+      );
     } finally {
       setRefreshingLocations(false);
+    }
+  };
+
+  const handleLocationConfirmation = async (item: ItineraryItem) => {
+    const confirmed = !item.location_confirmed_at;
+    try {
+      await api.days.setLocationConfirmation(trip.id, item.id, confirmed);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Não foi possível alterar a confirmação deste ponto.');
     }
   };
 
@@ -466,6 +531,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
         isRefreshing={refreshingLocations}
         canRefresh={canEdit}
         accentColor={primaryColor}
+        refreshMessage={locationRefreshMessage}
+        refreshError={locationRefreshError}
       />
 
       {/* Days List */}
@@ -764,6 +831,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                     </span>
                                   )}
                                   <span className="font-semibold text-xs text-slate-900">{item.title}</span>
+                                  {item.location_confirmed_at && (
+                                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200" title="Este ponto não será pesquisado novamente até a confirmação ser removida">
+                                      <CheckCircle className="h-3 w-3" /> Confirmado
+                                    </span>
+                                  )}
                                   {item.category && item.category !== 'ATTRACTION' && (
                                     <span className="text-[10px] font-medium text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
                                       {item.category}
@@ -786,21 +858,39 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                             </div>
 
                             {canEdit && (
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={() => setEditingItem({ dayId: day.id, item })}
-                                  className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200"
-                                  title="Editar atividade"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteItem(day.id, item.id)}
-                                  className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
-                                  title="Remover atividade"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                              <div className="flex items-center gap-1">
+                                {mapPointNumber && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleLocationConfirmation(item)}
+                                    aria-pressed={Boolean(item.location_confirmed_at)}
+                                    className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold transition-colors ${
+                                      item.location_confirmed_at
+                                        ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800'
+                                        : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
+                                    }`}
+                                    title={item.location_confirmed_at ? 'Remover confirmação e permitir nova pesquisa' : 'Confirmar ponto e evitar nova pesquisa'}
+                                  >
+                                    <CheckCircle className="h-3.5 w-3.5" />
+                                    <span className="hidden sm:inline">{item.location_confirmed_at ? 'Confirmado' : 'Confirmar'}</span>
+                                  </button>
+                                )}
+                                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                  <button
+                                    onClick={() => setEditingItem({ dayId: day.id, item })}
+                                    className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200"
+                                    title="Editar atividade"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteItem(day.id, item.id)}
+                                    className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
+                                    title="Remover atividade"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>

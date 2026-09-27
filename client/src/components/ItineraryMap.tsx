@@ -19,6 +19,8 @@ interface ItineraryMapProps {
   isRefreshing?: boolean;
   canRefresh?: boolean;
   accentColor?: string;
+  refreshMessage?: string | null;
+  refreshError?: string | null;
 }
 
 const initialView: L.LatLngExpression = [20, 0];
@@ -38,6 +40,8 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
   isRefreshing = false,
   canRefresh = false,
   accentColor = '#b94a5d',
+  refreshMessage = null,
+  refreshError = null,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -117,6 +121,8 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
                 ? `${points.length} parada${points.length === 1 ? '' : 's'} localizada${points.length === 1 ? '' : 's'} • clique em um número para abrir a atividade`
                 : 'As paradas com localização verificada aparecerão aqui.'}
             </p>
+            {refreshMessage && <p className="mt-1 text-xs font-medium text-sky-700" role="status">{refreshMessage}</p>}
+            {refreshError && <p className="mt-1 text-xs font-medium text-amber-700" role="alert">{refreshError}</p>}
           </div>
         </div>
 

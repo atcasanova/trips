@@ -196,11 +196,24 @@ export const api = {
       request<{ message: string }>(`/trips/${tripId}/days/${dayId}/items/${itemId}`, {
         method: 'DELETE',
       }),
-    refreshLocations: (tripId: string) =>
-      request<{ locationRefresh: { candidates: number; resolved: number; updated: number; error?: string } }>(
+    refreshLocations: (tripId: string, dayId?: string) =>
+      request<{
+        locationRefresh: {
+          candidates: number;
+          resolved: number;
+          updated: number;
+          skippedConfirmedLocations: number;
+          error?: string;
+        };
+      }>(
         `/trips/${tripId}/itinerary/locations/refresh`,
-        { method: 'POST' }
+        { method: 'POST', body: dayId ? JSON.stringify({ dayId }) : undefined }
       ),
+    setLocationConfirmation: (tripId: string, itemId: string, confirmed: boolean) =>
+      request<{ item: ItineraryItem }>(`/trips/${tripId}/itinerary/items/${itemId}/location-confirmation`, {
+        method: 'PUT',
+        body: JSON.stringify({ confirmed }),
+      }),
     reorder: (tripId: string, dayIds: string[]) =>
       request<{ days: TripDay[] }>(`/trips/${tripId}/days/reorder`, {
         method: 'PUT',

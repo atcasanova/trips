@@ -251,6 +251,10 @@ export const itineraryController = {
 
       if (setClauses.length === 0) return res.json({ message: 'Nenhuma alteração' });
 
+      const changesLocationIdentity = ['title', 'category', 'location_name', 'address'].some(
+        (field) => updates[field] !== undefined
+      );
+      if (changesLocationIdentity) setClauses.push('location_confirmed_at = NULL');
       setClauses.push(`updated_at = NOW()`);
       values.push(itemId, tripId);
 
@@ -265,7 +269,7 @@ export const itineraryController = {
           `UPDATE itinerary_items
            SET latitude = NULL, longitude = NULL, location_source = NULL,
                location_source_url = NULL, location_confidence = NULL,
-               location_verified_at = NULL, updated_at = NOW()
+               location_verified_at = NULL, location_confirmed_at = NULL, updated_at = NOW()
            WHERE id = $1 AND trip_id = $2`,
           [itemId, tripId]
         );
@@ -307,7 +311,7 @@ export const itineraryController = {
       const orderIdx = typeof newOrderIndex === 'number' ? newOrderIndex : 999;
       const { rows } = await query(
         `UPDATE itinerary_items
-         SET trip_day_id = $1, order_index = $2, updated_at = NOW()
+         SET trip_day_id = $1, order_index = $2, location_confirmed_at = NULL, updated_at = NOW()
          WHERE id = $3 AND trip_id = $4
          RETURNING *`,
         [targetDayId, orderIdx, itemId, tripId]
@@ -375,10 +379,52 @@ export const itineraryController = {
   // 11. Refresh map locations for existing itinerary entries on demand
   async refreshLocations(req: Request, res: Response) {
     const { tripId } = req.params;
+    const { dayId } = req.body || {};
+
+    if (dayId !== undefined && (typeof dayId !== 'string' || !dayId.trim())) {
+      return res.status(400).json({ error: 'dayId deve ser um identificador válido.' });
+    }
+
     const locationRefresh = await refreshItineraryLocations({
       tripId,
       userId: req.user?.id,
+      dayIds: dayId ? [dayId] : undefined,
     });
     return res.json({ locationRefresh });
+  },
+
+  // 12. Confirm or reopen a map point for future location refreshes
+  async setLocationConfirmation(req: Request, res: Response) {
+    const { tripId, itemId } = req.params;
+    const { confirmed } = req.body || {};
+
+    if (typeof confirmed !== 'boolean') {
+      return res.status(400).json({ error: 'confirmed deve ser verdadeiro ou falso.' });
+    }
+
+    try {
+      const { rows } = await query(
+        `UPDATE itinerary_items
+         SET location_confirmed_at = CASE WHEN $1 THEN NOW() ELSE NULL END,
+             updated_at = NOW()
+         WHERE id = $2
+           AND trip_id = $3
+           AND category <> 'NOTE'
+           AND latitude IS NOT NULL
+           AND longitude IS NOT NULL
+           AND NOT (latitude = 0 AND longitude = 0)
+         RETURNING *`,
+        [confirmed, itemId, tripId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(422).json({ error: 'Localize o ponto no mapa antes de confirmá-lo.' });
+      }
+
+      return res.json({ item: rows[0] });
+    } catch (err: any) {
+      logger.error('Erro ao confirmar ponto do mapa:', { error: err.message, tripId, itemId });
+      return res.status(500).json({ error: 'Não foi possível alterar a confirmação do ponto.' });
+    }
   },
 };
