@@ -51,6 +51,13 @@ const SAMPLE_ITINERARY_TEXT = `18/03 chegada em tokyo - Transfer In
 30 Dia livre em Tokyo (sugestão de visitar bairro Akihabara)
 31 Retorno ao Brasil - Transfer Out`;
 
+const toFiniteCoordinate = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+
+  const coordinate = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(coordinate) ? coordinate : null;
+};
+
 export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefresh, canEdit }) => {
   const [localDays, setLocalDays] = useState<TripDay[]>(days);
   const [generatingDayId, setGeneratingDayId] = useState<string | null>(null);
@@ -103,11 +110,12 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
     let number = 0;
     return localDays.flatMap((day) =>
       (day.items || []).flatMap((item) => {
-        const latitude = Number(item.latitude);
-        const longitude = Number(item.longitude);
+        const latitude = toFiniteCoordinate(item.latitude);
+        const longitude = toFiniteCoordinate(item.longitude);
         if (
-          !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
-          !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+          latitude === null || latitude < -90 || latitude > 90 ||
+          longitude === null || longitude < -180 || longitude > 180 ||
+          (latitude === 0 && longitude === 0)
         ) {
           return [];
         }

@@ -18,9 +18,20 @@ export interface ItineraryLocationRefreshResult {
 }
 
 const hasCoordinates = (item: { latitude?: unknown; longitude?: unknown }) => {
+  if (
+    item.latitude === null || item.latitude === undefined || item.latitude === '' ||
+    item.longitude === null || item.longitude === undefined || item.longitude === ''
+  ) {
+    return false;
+  }
+
   const latitude = Number(item.latitude);
   const longitude = Number(item.longitude);
-  return Number.isFinite(latitude) && Number.isFinite(longitude);
+  return (
+    Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180 &&
+    !(latitude === 0 && longitude === 0)
+  );
 };
 
 /**

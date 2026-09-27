@@ -654,16 +654,17 @@ Regras obrigatórias para evitar falsos positivos:
         for (const result of results) {
           if (!candidateIds.has(result?.id) || result?.resolved !== true) continue;
 
-          const latitude = Number(result.latitude);
-          const longitude = Number(result.longitude);
+          const latitude = result.latitude;
+          const longitude = result.longitude;
           const confidence = Number(result.confidence);
           const canonicalName = typeof result.canonical_name === 'string' ? result.canonical_name.trim() : '';
           const sourceUrl = typeof result.source_url === 'string' ? result.source_url.trim() : '';
 
           if (
             !canonicalName ||
-            !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
-            !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
+            typeof latitude !== 'number' || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+            typeof longitude !== 'number' || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
+            (latitude === 0 && longitude === 0) ||
             !Number.isFinite(confidence) || confidence < 0.8 || confidence > 1
           ) {
             continue;

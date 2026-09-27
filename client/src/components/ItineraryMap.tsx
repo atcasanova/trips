@@ -49,7 +49,7 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
     const map = L.map(containerRef.current, {
       center: initialView,
       zoom: 2,
-      scrollWheelZoom: false,
+      scrollWheelZoom: true,
       zoomControl: true,
     });
 
