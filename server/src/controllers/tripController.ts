@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { env } from '../config/env.js';
 import { emailService } from '../services/emailService.js';
+import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 import { TripRole } from '../types/index.js';
 
@@ -243,8 +244,14 @@ export const tripController = {
         return res.status(404).json({ error: 'Viagem não encontrada' });
       }
 
+      const locationRefresh = ['title', 'destination_summary', 'primary_country', 'cities'].some(
+        (field) => updates[field] !== undefined
+      )
+        ? await refreshItineraryLocations({ tripId: id, userId: req.user?.id })
+        : undefined;
+
       logger.info('Viagem atualizada', { tripId: id });
-      return res.json({ trip: rows[0] });
+      return res.json({ trip: rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao atualizar viagem:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao atualizar viagem' });

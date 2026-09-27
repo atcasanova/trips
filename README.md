@@ -93,6 +93,7 @@ O container executará automaticamente as migrations pendentes, realizará o boo
 | `TURNSTILE_SECRET` | Secret Key do Cloudflare Turnstile | *(opcional)* |
 | `OPENAI_API_KEY` | Chave de API da OpenAI para extração de documentos | *(opcional)* |
 | `OPENAI_MODEL` | Modelo padrão da OpenAI | `gpt-4o` |
+| `OPENAI_MAP_MODEL` | Modelo da Responses API com `web_search` para localizar as paradas do roteiro | `gpt-5.6-luna` |
 | `PEXELS_API_KEY` | Chave de API do Pexels para busca de capas | *(opcional)* |
 | `UPLOAD_PATH` | Diretório interno de arquivos persistentes | `/data/uploads` |
 | `MAX_UPLOAD_SIZE_MB` | Tamanho máximo por arquivo (em MB) | `25` |

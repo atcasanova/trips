@@ -140,6 +140,10 @@ export interface ItineraryItem {
   address?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  location_source?: string | null;
+  location_source_url?: string | null;
+  location_confidence?: number | null;
+  location_verified_at?: string | null;
   duration_text?: string | null;
   cost_amount?: number | null;
   cost_currency?: string | null;

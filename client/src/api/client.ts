@@ -196,6 +196,11 @@ export const api = {
       request<{ message: string }>(`/trips/${tripId}/days/${dayId}/items/${itemId}`, {
         method: 'DELETE',
       }),
+    refreshLocations: (tripId: string) =>
+      request<{ locationRefresh: { candidates: number; resolved: number; updated: number; error?: string } }>(
+        `/trips/${tripId}/itinerary/locations/refresh`,
+        { method: 'POST' }
+      ),
     reorder: (tripId: string, dayIds: string[]) =>
       request<{ days: TripDay[] }>(`/trips/${tripId}/days/reorder`, {
         method: 'PUT',

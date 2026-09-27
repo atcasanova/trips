@@ -2,6 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+.itinerary-map-marker-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.itinerary-map-marker {
+  display: flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid #ffffff;
+  border-radius: 9999px;
+  background: #b94a5d;
+  box-shadow: 0 3px 10px rgb(15 23 42 / 35%);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.leaflet-container {
+  font-family: inherit;
+}
+
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900;

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
+import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 
 export const itineraryController = {
   // 1. List all days and itinerary items for a trip
@@ -133,7 +134,12 @@ export const itineraryController = {
 
       if (rows.length === 0) return res.status(404).json({ error: 'Dia não encontrado' });
 
-      return res.json({ day: rows[0] });
+      const locationRefresh =
+        updates.base_location !== undefined
+          ? await refreshItineraryLocations({ tripId, dayIds: [dayId], userId: req.user?.id })
+          : undefined;
+
+      return res.json({ day: rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao atualizar dia do roteiro:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao atualizar dia' });
@@ -207,7 +213,13 @@ export const itineraryController = {
         ]
       );
 
-      return res.status(201).json({ item: rows[0] });
+      const locationRefresh = await refreshItineraryLocations({
+        tripId,
+        itemIds: [rows[0].id],
+        userId: req.user?.id,
+      });
+
+      return res.status(201).json({ item: rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao adicionar atividade ao roteiro:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao adicionar atividade' });
@@ -247,7 +259,25 @@ export const itineraryController = {
 
       if (rows.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
 
-      return res.json({ item: rows[0] });
+      let locationRefresh;
+      if (rows[0].category === 'NOTE') {
+        await query(
+          `UPDATE itinerary_items
+           SET latitude = NULL, longitude = NULL, location_source = NULL,
+               location_source_url = NULL, location_confidence = NULL,
+               location_verified_at = NULL, updated_at = NOW()
+           WHERE id = $1 AND trip_id = $2`,
+          [itemId, tripId]
+        );
+      } else if (['title', 'category', 'location_name', 'address'].some((field) => updates[field] !== undefined)) {
+        locationRefresh = await refreshItineraryLocations({
+          tripId,
+          itemIds: [itemId],
+          userId: req.user?.id,
+        });
+      }
+
+      return res.json({ item: rows[0], locationRefresh });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao atualizar atividade' });
     }
@@ -285,7 +315,13 @@ export const itineraryController = {
 
       if (rows.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
 
-      return res.json({ item: rows[0] });
+      const locationRefresh = await refreshItineraryLocations({
+        tripId,
+        itemIds: [itemId],
+        userId: req.user?.id,
+      });
+
+      return res.json({ item: rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao mover atividade:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao mover atividade' });
@@ -334,5 +370,15 @@ export const itineraryController = {
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao reordenar dias' });
     }
+  },
+
+  // 11. Refresh map locations for existing itinerary entries on demand
+  async refreshLocations(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const locationRefresh = await refreshItineraryLocations({
+      tripId,
+      userId: req.user?.id,
+    });
+    return res.json({ locationRefresh });
   },
 };

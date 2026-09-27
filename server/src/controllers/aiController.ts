@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { openaiService } from '../services/openaiService.js';
+import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 
 export const aiController = {
@@ -136,6 +137,7 @@ export const aiController = {
 
       let totalDaysCreated = 0;
       let totalItemsCreated = 0;
+      const createdItemIds: string[] = [];
 
       for (let i = 0; i < parsedResult.days.length; i++) {
         const d = parsedResult.days[i];
@@ -165,11 +167,12 @@ export const aiController = {
         if (Array.isArray(d.items)) {
           for (let j = 0; j < d.items.length; j++) {
             const item = d.items[j];
-            await query(
+            const { rows: itemRows } = await query(
               `INSERT INTO itinerary_items (
                 trip_id, trip_day_id, title, category, start_time, end_time,
                 location_name, address, tips, order_index
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              RETURNING id`,
               [
                 tripId,
                 dayId,
@@ -183,18 +186,26 @@ export const aiController = {
                 j,
               ]
             );
+            createdItemIds.push(itemRows[0].id);
             totalItemsCreated++;
           }
         }
       }
 
-      logger.info('Roteiro criado com sucesso via IA', { tripId, totalDaysCreated, totalItemsCreated });
+      const locationRefresh = await refreshItineraryLocations({
+        tripId,
+        itemIds: createdItemIds,
+        userId: req.user?.id,
+      });
+
+      logger.info('Roteiro criado com sucesso via IA', { tripId, totalDaysCreated, totalItemsCreated, locationRefresh });
 
       return res.status(201).json({
         success: true,
         daysCreated: totalDaysCreated,
         itemsCreated: totalItemsCreated,
         parsedDays: parsedResult.days,
+        locationRefresh,
       });
     } catch (err: any) {
       logger.error('Erro ao processar roteiro com IA:', { error: err.message });

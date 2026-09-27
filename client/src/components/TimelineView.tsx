@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Calendar,
   Clock,
@@ -24,6 +24,7 @@ import {
 import { Trip, TripDay, ItineraryItem } from '../types/index.js';
 import { api } from '../api/client.js';
 import { parseSafeDate } from '../utils/date.js';
+import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
 
 interface TimelineViewProps {
   trip: Trip;
@@ -53,6 +54,8 @@ const SAMPLE_ITINERARY_TEXT = `18/03 chegada em tokyo - Transfer In
 export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefresh, canEdit }) => {
   const [localDays, setLocalDays] = useState<TripDay[]>(days);
   const [generatingDayId, setGeneratingDayId] = useState<string | null>(null);
+  const [refreshingLocations, setRefreshingLocations] = useState(false);
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
 
   // Synchronize localDays when prop days changes
   useEffect(() => {
@@ -95,6 +98,62 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
   const [itemTips, setItemTips] = useState('');
 
   const primaryColor = trip.theme?.primary || '#b94a5d';
+
+  const mapPoints = useMemo<ItineraryMapPoint[]>(() => {
+    let number = 0;
+    return localDays.flatMap((day) =>
+      (day.items || []).flatMap((item) => {
+        const latitude = Number(item.latitude);
+        const longitude = Number(item.longitude);
+        if (
+          !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+          !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+        ) {
+          return [];
+        }
+
+        number += 1;
+        return [{
+          itemId: item.id,
+          number,
+          title: item.title,
+          dayLabel: day.title || `Dia ${day.day_number}`,
+          latitude,
+          longitude,
+        }];
+      })
+    );
+  }, [localDays]);
+
+  const mapPointNumbers = useMemo(
+    () => new Map(mapPoints.map((point) => [point.itemId, point.number])),
+    [mapPoints]
+  );
+
+  const handleMapPointSelect = useCallback((itemId: string) => {
+    setHighlightedItemId(itemId);
+    requestAnimationFrame(() => {
+      const itemElement = document.getElementById(`itinerary-item-${itemId}`);
+      itemElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      itemElement?.focus({ preventScroll: true });
+    });
+    window.setTimeout(() => setHighlightedItemId((current) => (current === itemId ? null : current)), 2200);
+  }, []);
+
+  const handleRefreshLocations = async () => {
+    setRefreshingLocations(true);
+    try {
+      const { locationRefresh } = await api.days.refreshLocations(trip.id);
+      if (locationRefresh.error) {
+        alert(locationRefresh.error);
+      }
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Erro ao atualizar os pontos do mapa');
+    } finally {
+      setRefreshingLocations(false);
+    }
+  };
 
   // Format short date
   const formatDateShort = (dStr: string) => {
@@ -308,6 +367,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
         newOrderIndex: insertIdx,
       });
       await api.days.reorderItems(trip.id, targetDayId, targetItems.map((it) => it.id));
+      onRefresh();
     } catch (err) {
       console.error('Erro ao salvar item no novo dia:', err);
       onRefresh();
@@ -390,6 +450,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
           </div>
         )}
       </div>
+
+      <ItineraryMap
+        points={mapPoints}
+        onPointSelect={handleMapPointSelect}
+        onRefresh={handleRefreshLocations}
+        isRefreshing={refreshingLocations}
+        canRefresh={canEdit}
+        accentColor={primaryColor}
+      />
 
       {/* Days List */}
       {localDays.length === 0 ? (
@@ -603,10 +672,13 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                       {day.items.map((item, itemIdx) => {
                         const isBeingDragged = draggedItem?.itemId === item.id;
                         const isDragOver = dragOverItemId === item.id;
+                        const mapPointNumber = mapPointNumbers.get(item.id);
 
                         return (
                           <div
                             key={item.id}
+                            id={`itinerary-item-${item.id}`}
+                            tabIndex={-1}
                             draggable={canEdit}
                             onDragStart={(e) => {
                               if (!canEdit) return;
@@ -650,8 +722,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                             className={`group flex items-start justify-between gap-3 p-3 rounded-xl transition-all ${
                               isBeingDragged
                                 ? 'opacity-40 bg-slate-100 border border-dashed border-slate-400'
-                                : isDragOver
+                              : isDragOver
                                 ? 'bg-indigo-50 border-2 border-indigo-400 scale-[1.01]'
+                                : highlightedItemId === item.id
+                                ? 'bg-brand-50 border-2 border-brand-400 ring-4 ring-brand-100'
                                 : 'bg-slate-50 hover:bg-slate-100/90 border border-slate-100'
                             }`}
                           >
@@ -673,6 +747,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
                               <div>
                                 <div className="flex items-center gap-2 flex-wrap">
+                                  {mapPointNumber && (
+                                    <span
+                                      className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-[10px] font-extrabold text-white"
+                                      title={`Ponto ${mapPointNumber} no mapa`}
+                                    >
+                                      {mapPointNumber}
+                                    </span>
+                                  )}
                                   <span className="font-semibold text-xs text-slate-900">{item.title}</span>
                                   {item.category && item.category !== 'ATTRACTION' && (
                                     <span className="text-[10px] font-medium text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
