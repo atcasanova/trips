@@ -117,7 +117,10 @@ export const reportService = {
   },
 
   // Generates standalone, editorial HTML ready for print & PDF
-  generateTripBookHtml(data: any): string {
+  generateTripBookHtml(
+    data: any,
+    options: { anonymize?: boolean; isPublicShare?: boolean; pdfDownloadUrl?: string } = {}
+  ): string {
     const { trip, days, transports, segments, hotels, climateGuides, checklists, expenses, members, travelers = [] } = data;
     const theme = trip.theme || {
       preset: 'sakura',
@@ -126,6 +129,38 @@ export const reportService = {
       accent: '#fdf2f4',
       text: '#2f3941',
     };
+
+    const toFiniteCoord = (val: any): number | null => {
+      if (val === null || val === undefined || val === '') return null;
+      const num = typeof val === 'number' ? val : Number(val);
+      if (!Number.isFinite(num)) return null;
+      return num;
+    };
+
+    let stopCounter = 0;
+    const dayMapsData: Record<string, Array<{ number: number; title: string; latitude: number; longitude: number }>> = {};
+
+    for (const d of (days || [])) {
+      const validPoints: Array<{ number: number; title: string; latitude: number; longitude: number }> = [];
+      for (const item of (d.items || [])) {
+        if (item.map_mode === 'SKIP') continue;
+        const lat = toFiniteCoord(item.latitude);
+        const lng = toFiniteCoord(item.longitude);
+        if (lat === null || lng === null || lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) {
+          continue;
+        }
+        stopCounter += 1;
+        validPoints.push({
+          number: stopCounter,
+          title: String(item.title || 'Atração'),
+          latitude: lat,
+          longitude: lng,
+        });
+      }
+      if (validPoints.length > 0) {
+        dayMapsData[d.day_number] = validPoints;
+      }
+    }
 
     const citiesList = Array.isArray(trip.cities) ? trip.cities.join(' • ') : (trip.destination_summary || '');
 
@@ -192,6 +227,9 @@ export const reportService = {
 
     // Extract passenger names from segment passenger_names or fallback
     const extractPassengerNames = (val: any): string[] => {
+      if (options?.anonymize) {
+        return ['Viajante(s)'];
+      }
       if (!val || (Array.isArray(val) && val.length === 0)) {
         if (travelers && travelers.length > 0) return travelers.map((t: any) => t.display_name);
         return [];
@@ -231,7 +269,11 @@ export const reportService = {
       const depDate = toDateStr(s.departure_date);
       const arrDate = toDateStr(s.arrival_date);
       const pax = extractPassengerNames(s.passenger_names);
-      const segWithPax = { ...s, passengerNames: pax };
+      const segWithPax = {
+        ...s,
+        passengerNames: pax,
+        seat: options?.anonymize ? '' : s.seat,
+      };
 
       if (depDate) {
         if (!segmentsByDate[depDate]) segmentsByDate[depDate] = [];
@@ -497,7 +539,7 @@ export const reportService = {
                     ${f.passengerNames && f.passengerNames.length > 0 ? `
                       <div class="table-flight-pax">
                         👤 Passageiro(s): <strong>${escapeHtml(f.passengerNames.join(', '))}</strong>
-                        ${f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
+                        ${!options?.anonymize && f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
                       </div>
                     ` : ''}
                   </div>
@@ -583,7 +625,14 @@ export const reportService = {
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>${trip.title} ${trip.subtitle || ''} — Trip Book</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  ${options?.anonymize || options?.isPublicShare ? `
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+  ` : ''}
+  <title>${escapeHtml(trip.title)} ${trip.subtitle ? escapeHtml(trip.subtitle) : ''} — Trip Book</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,400&display=swap');
 
@@ -1264,9 +1313,151 @@ export const reportService = {
       color: #1e3a8a;
       margin-bottom: 12px;
     }
+
+    /* Public Share Top Bar */
+    .public-share-top-bar {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 8.5pt;
+      position: sticky;
+      top: 0;
+      z-index: 9999;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      gap: 12px;
+    }
+    .public-share-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .public-share-badge {
+      background: #334155;
+      color: #38bdf8;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 8pt;
+      letter-spacing: 0.3px;
+    }
+    .public-share-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .public-share-btn {
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 8pt;
+      font-weight: 600;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .public-share-btn.print-btn {
+      background: #334155;
+      color: #ffffff;
+    }
+    .public-share-btn.print-btn:hover {
+      background: #475569;
+    }
+    .public-share-btn.pdf-btn {
+      background: ${theme.primary || '#b94a5d'};
+      color: #ffffff;
+    }
+    .public-share-btn.pdf-btn:hover {
+      filter: brightness(1.1);
+    }
+
+    /* Daily Mini-Map */
+    .day-minimap-wrapper {
+      margin: 10px 0 12px 0;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      overflow: hidden;
+      background: #f8fafc;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .day-minimap-header {
+      padding: 5px 10px;
+      background: #f1f5f9;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 8pt;
+      font-weight: 700;
+      color: #475569;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .day-minimap-canvas {
+      height: 135px;
+      width: 100%;
+      background: #e2e8f0;
+      position: relative;
+      z-index: 0;
+    }
+    .itinerary-mini-marker-wrap {
+      background: transparent;
+      border: 0;
+    }
+    .itinerary-mini-marker {
+      display: flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #ffffff;
+      border-radius: 9999px;
+      background: ${theme.primary || '#b94a5d'};
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      color: #ffffff;
+      font-size: 9px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    @media print {
+      .public-share-top-bar {
+        display: none !important;
+      }
+      .day-minimap-wrapper {
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .leaflet-tile {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
   </style>
 </head>
 <body>
+
+  ${options?.isPublicShare ? `
+  <div class="public-share-top-bar">
+    <div class="public-share-info">
+      <span class="public-share-badge">🔒 Link Compartilhado</span>
+      <span>Este roteiro foi compartilhado com dados pessoais e identificadores de reserva anonimizados.</span>
+    </div>
+    <div class="public-share-actions">
+      <button onclick="window.print()" class="public-share-btn print-btn">🖨️ Imprimir</button>
+      ${options.pdfDownloadUrl ? `<a href="${options.pdfDownloadUrl}" class="public-share-btn pdf-btn">📥 Baixar PDF</a>` : ''}
+    </div>
+  </div>
+  ` : ''}
 
   <!-- CAPA EDITORIAL -->
   <div class="cover-page">
@@ -1384,7 +1575,7 @@ export const reportService = {
                 ${escapeHtml(f.departure_station_code || f.departure_location || '')} (${f.departure_time || '—'}) ➔ 
                 ${escapeHtml(f.arrival_station_code || f.arrival_location || '')} (${f.arrival_time || '—'})
                 ${f.passengerNames && f.passengerNames.length > 0 ? ` • Passageiro(s): <strong>${escapeHtml(f.passengerNames.join(', '))}</strong>` : ''}
-                ${f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
+                ${!options?.anonymize && f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
               </div>
             `).join('')}
           </div>
@@ -1408,6 +1599,19 @@ export const reportService = {
           }
           ${day.included_services ? `<div class="meta-tag">✓ Incluído: <strong>${day.included_services}</strong></div>` : ''}
         </div>
+
+        ${
+          dayMapsData[day.day_number] && dayMapsData[day.day_number].length > 0
+            ? `
+          <div class="day-minimap-wrapper">
+            <div class="day-minimap-header">
+              <span>📍 Mapa do dia • ${dayMapsData[day.day_number].length} ${dayMapsData[day.day_number].length === 1 ? 'parada localizada' : 'paradas localizadas'}</span>
+            </div>
+            <div id="map-day-${day.day_number}" class="day-minimap-canvas"></div>
+          </div>
+        `
+            : ''
+        }
 
         ${
           day.items && day.items.length > 0
@@ -1481,7 +1685,7 @@ export const reportService = {
       <div style="margin-bottom: 20px;">
         <h2 class="subsection-title">
           ${tr.type === 'FLIGHT' ? '✈️ Reserva Aérea' : '🚆 Transporte'}: ${tr.provider_name || ''} 
-          ${tr.booking_code ? `<span style="color: ${theme.primary}; font-weight: bold;">(Localizador: ${tr.booking_code})</span>` : ''}
+          ${tr.booking_code ? `<span style="color: ${theme.primary}; font-weight: bold;">(Localizador: ${options?.anonymize ? '******' : tr.booking_code})</span>` : ''}
         </h2>
         <table class="data-table">
           <thead>
@@ -1509,7 +1713,7 @@ export const reportService = {
                     <td>${s.arrival_location} (${s.arrival_station_code || '—'})</td>
                     <td>${formatDateShort(s.arrival_date)} ${s.arrival_time || ''}</td>
                     <td>${s.duration_minutes ? Math.floor(s.duration_minutes / 60) + 'h' + (s.duration_minutes % 60) + 'm' : '—'} ${s.layover_minutes ? `(Conexão: ${Math.floor(s.layover_minutes / 60)}h${s.layover_minutes % 60}m)` : ''}</td>
-                    <td>${s.seat || '—'} / ${s.cabin_class || 'Econômica'}</td>
+                    <td>${options?.anonymize ? '—' : (s.seat || '—')} / ${s.cabin_class || 'Econômica'}</td>
                     <td><strong>${escapeHtml(extractPassengerNames(s.passenger_names).join(', ') || '—')}</strong></td>
                   </tr>
                 `
@@ -1555,7 +1759,7 @@ export const reportService = {
             <td>${h.city || ''}</td>
             <td>${formatDateBr(h.check_in_date)} ${h.check_in_time ? `às ${h.check_in_time}` : ''}</td>
             <td>${formatDateBr(h.check_out_date)} ${h.check_out_time ? `até ${h.check_out_time}` : ''}</td>
-            <td>${h.reservation_number || '—'}<br><small>${h.guest_names || ''}</small></td>
+            <td>${options?.anonymize ? 'Confirmada' : (h.reservation_number || '—')}<br><small>${options?.anonymize ? 'Viajante(s)' : (h.guest_names || '')}</small></td>
             <td>${h.room_type || 'Quarto Standard'}</td>
             <td><span style="color: green; font-weight: bold;">${h.payment_status || 'Confirmado'}</span></td>
           </tr>
@@ -1592,6 +1796,64 @@ export const reportService = {
       : ''
   }
 
+  <script>
+    (function() {
+      function initTripBookMaps() {
+        if (typeof L === 'undefined') return;
+        var dayMaps = ${JSON.stringify(dayMapsData)};
+        Object.keys(dayMaps).forEach(function(dayNum) {
+          var points = dayMaps[dayNum];
+          var el = document.getElementById('map-day-' + dayNum);
+          if (!el || !points || points.length === 0) return;
+          try {
+            var map = L.map(el, {
+              center: [points[0].latitude, points[0].longitude],
+              zoom: 13,
+              dragging: false,
+              touchZoom: false,
+              scrollWheelZoom: false,
+              doubleClickZoom: false,
+              boxZoom: false,
+              keyboard: false,
+              zoomControl: false,
+              attributionControl: false
+            });
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              maxZoom: 19
+            }).addTo(map);
+
+            var group = L.layerGroup().addTo(map);
+            points.forEach(function(p) {
+              var icon = L.divIcon({
+                className: 'itinerary-mini-marker-wrap',
+                html: '<span class="itinerary-mini-marker" style="background-color: ${theme.primary || '#b94a5d'}">' + p.number + '</span>',
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+              });
+              L.marker([p.latitude, p.longitude], { icon: icon })
+                .bindTooltip(p.number + '. ' + p.title, { direction: 'top', offset: [0, -10] })
+                .addTo(group);
+            });
+
+            if (points.length === 1) {
+              map.setView([points[0].latitude, points[0].longitude], 14, { animate: false });
+            } else {
+              var bounds = L.latLngBounds(points.map(function(p) { return [p.latitude, p.longitude]; }));
+              map.fitBounds(bounds.pad(0.28), { maxZoom: 15, animate: false });
+            }
+            setTimeout(function() { map.invalidateSize(); }, 200);
+          } catch (err) {
+            console.error('Error init map day ' + dayNum, err);
+          }
+        });
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initTripBookMaps);
+      } else {
+        initTripBookMaps();
+      }
+    })();
+  </script>
 </body>
 </html>`;
   },

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import routes from './routes/index.js';
+import { reportController } from './controllers/reportController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,16 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 // REST API routes
 app.use('/api', routes);
 
+// Search engine robots control (disallow indexing on private & shared links)
+app.get('/robots.txt', (_req: Request, res: Response) => {
+  res.type('text/plain');
+  res.send('User-agent: *\nDisallow: /share/\nDisallow: /api/\nDisallow: /uploads/\nDisallow: /tripbook/\n');
+});
+
+// Public shared TripBook routes (direct HTML & PDF)
+app.get('/share/tripbook/:shareToken', reportController.renderPublicSharedHtml);
+app.get('/share/tripbook/:shareToken/pdf', reportController.exportPublicSharedPdf);
+
 // Static uploads directory
 if (fs.existsSync(env.UPLOAD_PATH)) {
   app.use('/uploads', express.static(env.UPLOAD_PATH));
@@ -83,7 +94,7 @@ if (fs.existsSync(publicDir)) {
 
   // SPA fallback: return index.html for unknown routes
   app.get('*', (req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/share')) {
       return next();
     }
     const indexPath = path.join(publicDir, 'index.html');

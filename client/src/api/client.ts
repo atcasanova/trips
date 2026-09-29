@@ -326,6 +326,13 @@ export const api = {
     getData: (tripId: string) => request<any>(`/trips/${tripId}/report/data`),
     getHtmlUrl: (tripId: string) => `/api/trips/${tripId}/report/html`,
     getPdfUrl: (tripId: string) => `/api/trips/${tripId}/report/pdf`,
+    getShareStatus: (tripId: string) =>
+      request<{ share_token: string | null; share_enabled: boolean; share_url: string }>(`/trips/${tripId}/share`),
+    updateShare: (tripId: string, data: { enabled?: boolean; regenerate?: boolean }) =>
+      request<{ share_token: string; share_enabled: boolean; share_url: string }>(`/trips/${tripId}/share`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   // === EXPENSES ===

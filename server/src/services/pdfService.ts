@@ -20,10 +20,17 @@ export const pdfService = {
       });
 
       const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'load', timeout: 30000 });
+      try {
+        await page.setContent(html, { waitUntil: 'load', timeout: 35000 });
+      } catch (e) {
+        logger.warn('Puppeteer setContent load timed out, using current page state', { error: (e as any)?.message });
+      }
       try {
         await page.evaluateHandle('document.fonts.ready');
       } catch (e) {}
+
+      // Wait a moment for Leaflet tile images and layout to settle
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
       const pdfBuffer = await page.pdf({
         format: 'A4',

@@ -586,7 +586,7 @@ export const TripDetailPage: React.FC = () => {
           <ExpensesView tripId={trip.id} canEdit={canEdit} currentUserId={user?.id} />
         )}
 
-        {activeTab === 'report' && <ReportEditorView trip={trip} />}
+        {activeTab === 'report' && <ReportEditorView trip={trip} canEdit={canEdit} />}
       </main>
 
       {/* Modals */}

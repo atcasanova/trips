@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /share/
+Disallow: /api/
+Disallow: /uploads/
+Disallow: /tripbook/
