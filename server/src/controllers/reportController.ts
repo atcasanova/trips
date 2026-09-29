@@ -43,7 +43,9 @@ export const reportController = {
 
     try {
       const data = await reportService.getTripBookData(tripId);
-      const html = reportService.generateTripBookHtml(data);
+      const html = reportService.generateTripBookHtml(data, {
+        pdfDownloadUrl: `/api/trips/${tripId}/report/pdf`,
+      });
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.send(html);

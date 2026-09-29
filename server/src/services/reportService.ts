@@ -511,6 +511,7 @@ export const reportService = {
     // Google Calendar style agenda table generator
     const renderAgendaTable = () => {
       return `
+        <div class="table-responsive">
         <table class="agenda-table">
           <thead>
             <tr>
@@ -618,6 +619,7 @@ export const reportService = {
             }).join('')}
           </tbody>
         </table>
+        </div>
       `;
     };
 
@@ -653,55 +655,86 @@ export const reportService = {
       padding: 0;
     }
 
+    html {
+      background-color: #f1f5f9;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
     body {
       font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Noto Sans', 'Noto Sans CJK JP', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
       color: ${theme.text || '#2f3941'};
-      background-color: #ffffff;
+      background-color: #f1f5f9;
       line-height: 1.5;
       font-size: 9.5pt;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Screen Document Canvas / Sheet */
+    .tripbook-wrapper {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      padding: 32px 16px 64px 16px;
+      box-sizing: border-box;
+    }
+
+    .tripbook-sheet {
+      width: 100%;
+      max-width: 920px;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 20px 30px -10px rgba(0, 0, 0, 0.08);
+      padding: 40px 48px;
+      box-sizing: border-box;
+      position: relative;
+      overflow: hidden;
     }
 
     .page-break {
-      page-break-before: always;
-      break-before: page;
+      margin-top: 44px;
+      padding-top: 24px;
+      border-top: 1px dashed #e2e8f0;
     }
 
     /* Cover Page */
     .cover-page {
-      height: 100vh;
-      min-height: 250mm;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      padding: 20mm 15mm;
+      padding: 44px 36px 32px 36px;
+      margin: -40px -48px 36px -48px;
       background: linear-gradient(145deg, #ffffff 0%, ${theme.accent || '#fdf2f4'} 100%);
-      border: 1px solid rgba(0,0,0,0.06);
-      page-break-after: always;
+      border-bottom: 1px solid #e2e8f0;
+      border-radius: 15px 15px 0 0;
       position: relative;
     }
 
     .cover-top {
       text-align: center;
-      margin-top: 15mm;
+      margin-top: 10px;
     }
 
     .cover-title {
       font-family: 'Playfair Display', serif;
-      font-size: 38pt;
+      font-size: 36pt;
       font-weight: 700;
       letter-spacing: 2px;
       color: ${theme.primary || '#b94a5d'};
       text-transform: uppercase;
-      margin-bottom: 5px;
+      margin-bottom: 6px;
+      line-height: 1.15;
     }
 
     .cover-subtitle {
       font-family: 'Inter', sans-serif;
-      font-size: 16pt;
+      font-size: 14pt;
       font-weight: 300;
-      letter-spacing: 4px;
+      letter-spacing: 3px;
       color: #64748b;
-      margin-bottom: 25px;
+      margin-bottom: 20px;
     }
 
     .cover-period {
@@ -712,24 +745,24 @@ export const reportService = {
       border-radius: 20px;
       font-weight: 500;
       color: ${theme.primary || '#b94a5d'};
-      font-size: 11pt;
-      margin-bottom: 20px;
+      font-size: 10pt;
+      margin-bottom: 18px;
     }
 
     .cover-destinations {
-      font-size: 10pt;
+      font-size: 9.5pt;
       color: #475569;
       font-weight: 400;
       max-width: 85%;
       margin: 0 auto;
-      line-height: 1.8;
+      line-height: 1.7;
     }
 
     .cover-image-container {
-      margin: 25px auto;
+      margin: 22px auto;
       width: 100%;
-      max-width: 160mm;
-      height: 95mm;
+      max-width: 680px;
+      height: 320px;
       border-radius: 12px;
       overflow: hidden;
       box-shadow: 0 10px 25px rgba(0,0,0,0.12);
@@ -744,7 +777,8 @@ export const reportService = {
 
     .cover-bottom {
       text-align: center;
-      margin-bottom: 10mm;
+      margin-top: 10px;
+      margin-bottom: 10px;
     }
 
     .cover-tagline {
@@ -1314,11 +1348,11 @@ export const reportService = {
       margin-bottom: 12px;
     }
 
-    /* Public Share Top Bar */
-    .public-share-top-bar {
+    /* Top Action Bar (Public & Internal View) */
+    .tripbook-top-bar, .public-share-top-bar {
       background: #0f172a;
       color: #f8fafc;
-      padding: 10px 20px;
+      padding: 10px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -1328,15 +1362,25 @@ export const reportService = {
       top: 0;
       z-index: 9999;
       box-shadow: 0 2px 10px rgba(0,0,0,0.18);
-      gap: 12px;
+      width: 100%;
+      box-sizing: border-box;
     }
-    .public-share-info {
+    .tripbook-top-bar-inner, .public-share-inner {
+      max-width: 920px;
+      width: 100%;
+      margin: 0 auto;
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .tripbook-top-info, .public-share-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       flex-wrap: wrap;
     }
-    .public-share-badge {
+    .tripbook-badge, .public-share-badge {
       background: #334155;
       color: #38bdf8;
       padding: 3px 8px;
@@ -1345,13 +1389,21 @@ export const reportService = {
       font-size: 8pt;
       letter-spacing: 0.3px;
     }
-    .public-share-actions {
+    .tripbook-badge.admin-badge, .public-share-badge.admin-badge {
+      background: #1e3a5f;
+      color: #60a5fa;
+    }
+    .tripbook-subtitle-text {
+      color: #94a3b8;
+      font-size: 8.5pt;
+    }
+    .tripbook-top-actions, .public-share-actions {
       display: flex;
       align-items: center;
       gap: 8px;
       flex-shrink: 0;
     }
-    .public-share-btn {
+    .tripbook-btn, .public-share-btn {
       padding: 6px 14px;
       border-radius: 8px;
       font-size: 8pt;
@@ -1364,19 +1416,30 @@ export const reportService = {
       gap: 5px;
       transition: all 0.15s ease;
     }
-    .public-share-btn.print-btn {
+    .tripbook-btn.print-btn, .public-share-btn.print-btn {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+    }
+    .tripbook-btn.print-btn:hover, .public-share-btn.print-btn:hover {
       background: #334155;
       color: #ffffff;
     }
-    .public-share-btn.print-btn:hover {
-      background: #475569;
-    }
-    .public-share-btn.pdf-btn {
+    .tripbook-btn.pdf-btn, .public-share-btn.pdf-btn {
       background: ${theme.primary || '#b94a5d'};
       color: #ffffff;
     }
-    .public-share-btn.pdf-btn:hover {
+    .tripbook-btn.pdf-btn:hover, .public-share-btn.pdf-btn:hover {
       filter: brightness(1.1);
+    }
+
+    /* Table Responsive Wrapper */
+    .table-responsive {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin: 10px 0 18px 0;
+      border-radius: 8px;
     }
 
     /* Daily Mini-Map */
@@ -1429,35 +1492,164 @@ export const reportService = {
       line-height: 1;
     }
 
+    /* Responsive Mobile Styles */
+    @media screen and (max-width: 768px) {
+      .tripbook-wrapper {
+        padding: 12px 8px 48px 8px;
+      }
+      .tripbook-sheet {
+        padding: 24px 16px;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      }
+      .cover-page {
+        margin: -24px -16px 24px -16px;
+        padding: 24px 14px 18px 14px;
+        border-radius: 11px 11px 0 0;
+      }
+      .cover-title {
+        font-size: 22pt;
+        letter-spacing: 1px;
+      }
+      .cover-subtitle {
+        font-size: 11pt;
+        letter-spacing: 2px;
+        margin-bottom: 14px;
+      }
+      .cover-period {
+        font-size: 8.5pt;
+        padding: 4px 12px;
+      }
+      .cover-destinations {
+        max-width: 100%;
+        font-size: 8.5pt;
+      }
+      .cover-image-container {
+        height: 180px;
+        max-width: 100%;
+        margin: 16px auto;
+      }
+      .page-break {
+        margin-top: 32px;
+        padding-top: 16px;
+      }
+      h1.section-title {
+        font-size: 15pt;
+        margin-top: 18px;
+      }
+      h2.subsection-title {
+        font-size: 11pt;
+      }
+      .day-card {
+        padding: 12px;
+        margin-bottom: 14px;
+      }
+      .day-header {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .tripbook-top-bar, .public-share-top-bar {
+        padding: 8px 12px;
+      }
+      .tripbook-subtitle-text, .public-share-info span:not(.public-share-badge) {
+        display: none;
+      }
+    }
+
+    /* Print & PDF Export Rules */
     @media print {
-      .public-share-top-bar {
+      html, body {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+      }
+      .tripbook-top-bar, .public-share-top-bar {
         display: none !important;
       }
+      .tripbook-wrapper {
+        padding: 0 !important;
+        margin: 0 !important;
+        display: block !important;
+        width: 100% !important;
+        background: transparent !important;
+      }
+      .tripbook-sheet {
+        max-width: 100% !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        overflow: visible !important;
+      }
+      .cover-page {
+        height: 100vh !important;
+        min-height: 250mm !important;
+        margin: 0 !important;
+        padding: 20mm 15mm !important;
+        border-radius: 0 !important;
+        border: 1px solid rgba(0,0,0,0.06) !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        background: linear-gradient(145deg, #ffffff 0%, ${theme.accent || '#fdf2f4'} 100%) !important;
+      }
+      .cover-title {
+        font-size: 38pt !important;
+      }
+      .cover-subtitle {
+        font-size: 16pt !important;
+        margin-bottom: 25px !important;
+      }
+      .cover-image-container {
+        height: 95mm !important;
+        max-width: 160mm !important;
+        margin: 25px auto !important;
+      }
+      .page-break {
+        page-break-before: always !important;
+        break-before: page !important;
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+        border-top: none !important;
+      }
       .day-minimap-wrapper {
-        page-break-inside: avoid;
-        break-inside: avoid;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .leaflet-tile {
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .table-responsive {
+        overflow-x: visible !important;
+        border: none !important;
       }
     }
   </style>
 </head>
 <body>
 
-  ${options?.isPublicShare ? `
-  <div class="public-share-top-bar">
-    <div class="public-share-info">
-      <span class="public-share-badge">🔒 Link Compartilhado</span>
-      <span>Este roteiro foi compartilhado com dados pessoais e identificadores de reserva anonimizados.</span>
-    </div>
-    <div class="public-share-actions">
-      <button onclick="window.print()" class="public-share-btn print-btn">🖨️ Imprimir</button>
-      ${options.pdfDownloadUrl ? `<a href="${options.pdfDownloadUrl}" class="public-share-btn pdf-btn">📥 Baixar PDF</a>` : ''}
+  <div class="tripbook-top-bar public-share-top-bar">
+    <div class="tripbook-top-bar-inner public-share-inner">
+      <div class="tripbook-top-info public-share-info">
+        ${options?.isPublicShare ? `
+          <span class="tripbook-badge public-share-badge">🔒 Link Compartilhado</span>
+          <span class="tripbook-subtitle-text">Este roteiro foi compartilhado com dados pessoais e identificadores de reserva anonimizados.</span>
+        ` : `
+          <span class="tripbook-badge public-share-badge admin-badge">📖 Trip Book Oficial</span>
+          <span class="tripbook-subtitle-text">${escapeHtml(trip.title)} • Modo Visualização</span>
+        `}
+      </div>
+      <div class="tripbook-top-actions public-share-actions">
+        <button onclick="window.print()" class="tripbook-btn public-share-btn print-btn">🖨️ Imprimir</button>
+        ${options.pdfDownloadUrl ? `<a href="${options.pdfDownloadUrl}" class="tripbook-btn public-share-btn pdf-btn">📥 Baixar PDF</a>` : ''}
+      </div>
     </div>
   </div>
-  ` : ''}
+
+  <div class="tripbook-wrapper">
+    <div class="tripbook-sheet">
 
   <!-- CAPA EDITORIAL -->
   <div class="cover-page">
@@ -1515,6 +1707,7 @@ export const reportService = {
   <div class="page-break">
     <h1 class="section-title">Clima, Mala & Recomendações</h1>
     <p style="margin-bottom: 12px; color: #64748b; font-size: 8.5pt;">Temperaturas médias históricas e itens essenciais recomendados para a bagagem:</p>
+    <div class="table-responsive">
     <table class="data-table">
       <thead>
         <tr>
@@ -1537,6 +1730,7 @@ export const reportService = {
           .join('')}
       </tbody>
     </table>
+    </div>
   </div>
   `
       : ''
@@ -1687,6 +1881,7 @@ export const reportService = {
           ${tr.type === 'FLIGHT' ? '✈️ Reserva Aérea' : '🚆 Transporte'}: ${tr.provider_name || ''} 
           ${tr.booking_code ? `<span style="color: ${theme.primary}; font-weight: bold;">(Localizador: ${options?.anonymize ? '******' : tr.booking_code})</span>` : ''}
         </h2>
+        <div class="table-responsive">
         <table class="data-table">
           <thead>
             <tr>
@@ -1723,6 +1918,7 @@ export const reportService = {
             }
           </tbody>
         </table>
+        </div>
       </div>
     `
       )
@@ -1738,6 +1934,7 @@ export const reportService = {
   <!-- HOSPEDAGENS -->
   <div class="page-break">
     <h1 class="section-title">Hospedagens & Vouchers</h1>
+    <div class="table-responsive">
     <table class="data-table">
       <thead>
         <tr>
@@ -1768,6 +1965,7 @@ export const reportService = {
           .join('')}
       </tbody>
     </table>
+    </div>
   </div>
   `
       : ''
@@ -1795,6 +1993,9 @@ export const reportService = {
   `
       : ''
   }
+
+    </div><!-- /tripbook-sheet -->
+  </div><!-- /tripbook-wrapper -->
 
   <script>
     (function() {
