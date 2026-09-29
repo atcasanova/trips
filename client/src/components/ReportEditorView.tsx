@@ -10,10 +10,7 @@ import {
   Copy,
   Check,
   RefreshCw,
-  Lock,
   Globe,
-  ShieldCheck,
-  EyeOff,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
@@ -264,29 +261,6 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
                 </div>
               </div>
 
-              {/* Privacy guarantees grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                <div className="p-3 bg-emerald-50/60 border border-emerald-200/70 rounded-xl flex items-start gap-2.5">
-                  <EyeOff className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                  <div className="text-[11px] leading-relaxed text-emerald-950">
-                    <strong>Dados Anonimizados:</strong> Nomes de passageiros e localizadores de voo/hotel são ocultados ou mascarados como <code>Viajante(s)</code> e <code>******</code>.
-                  </div>
-                </div>
-
-                <div className="p-3 bg-sky-50/60 border border-sky-200/70 rounded-xl flex items-start gap-2.5">
-                  <ShieldCheck className="w-4 h-4 text-sky-700 shrink-0 mt-0.5" />
-                  <div className="text-[11px] leading-relaxed text-sky-950">
-                    <strong>Não Indexável no Google:</strong> Possui meta tag <code>noindex, nofollow</code> e cabeçalho <code>X-Robots-Tag</code> para impedir busca pública.
-                  </div>
-                </div>
-
-                <div className="p-3 bg-purple-50/60 border border-purple-200/70 rounded-xl flex items-start gap-2.5">
-                  <Lock className="w-4 h-4 text-purple-700 shrink-0 mt-0.5" />
-                  <div className="text-[11px] leading-relaxed text-purple-950">
-                    <strong>Link Criptográfico Único:</strong> Acesso somente por quem tiver a URL completa gerada aleatoriamente. Pode ser revogado a qualquer momento.
-                  </div>
-                </div>
-              </div>
             </div>
           ) : (
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
