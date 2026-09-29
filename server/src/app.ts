@@ -52,10 +52,14 @@ app.use('/api', routes);
 // Search engine robots control (disallow indexing on private & shared links)
 app.get('/robots.txt', (_req: Request, res: Response) => {
   res.type('text/plain');
-  res.send('User-agent: *\nDisallow: /share/\nDisallow: /api/\nDisallow: /uploads/\nDisallow: /tripbook/\n');
+  res.send('User-agent: *\nDisallow: /s/\nDisallow: /share/\nDisallow: /api/\nDisallow: /uploads/\nDisallow: /tripbook/\n');
 });
 
-// Public shared TripBook routes (direct HTML & PDF)
+// Short friendly share links (bit.ly style: /s/:code)
+app.get('/s/:shareToken', reportController.renderPublicSharedHtml);
+app.get('/s/:shareToken/pdf', reportController.exportPublicSharedPdf);
+
+// Legacy share routes (for backwards compatibility)
 app.get('/share/tripbook/:shareToken', reportController.renderPublicSharedHtml);
 app.get('/share/tripbook/:shareToken/pdf', reportController.exportPublicSharedPdf);
 
@@ -94,7 +98,12 @@ if (fs.existsSync(publicDir)) {
 
   // SPA fallback: return index.html for unknown routes
   app.get('*', (req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/share')) {
+    if (
+      req.path.startsWith('/api') ||
+      req.path.startsWith('/uploads') ||
+      req.path.startsWith('/share') ||
+      req.path.startsWith('/s/')
+    ) {
       return next();
     }
     const indexPath = path.join(publicDir, 'index.html');

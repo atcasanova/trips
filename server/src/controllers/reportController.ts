@@ -6,6 +6,23 @@ import { query } from '../db/pool.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
+const SHORT_TOKEN_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ';
+
+async function generateShortToken(length = 7): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const bytes = crypto.randomBytes(length);
+    let token = '';
+    for (let i = 0; i < length; i++) {
+      token += SHORT_TOKEN_ALPHABET[bytes[i] % SHORT_TOKEN_ALPHABET.length];
+    }
+    const { rows } = await query('SELECT id FROM trips WHERE share_token = $1', [token]);
+    if (rows.length === 0) {
+      return token;
+    }
+  }
+  return crypto.randomBytes(6).toString('base64url').replace(/[-_]/g, 'a').slice(0, 8);
+}
+
 export const reportController = {
   // 1. Get structured data for Report Editor
   async getReportData(req: Request, res: Response) {
@@ -74,7 +91,7 @@ export const reportController = {
 
       let trip = rows[0];
       if (!trip.share_token) {
-        const token = crypto.randomBytes(24).toString('hex');
+        const token = await generateShortToken(7);
         const updateRes = await query(
           'UPDATE trips SET share_token = $1, share_enabled = FALSE WHERE id = $2 RETURNING id, share_token, share_enabled',
           [token, tripId]
@@ -83,7 +100,7 @@ export const reportController = {
       }
 
       const baseUrl = env.APP_URL || `${req.protocol}://${req.get('host')}`;
-      const shareUrl = `${baseUrl}/share/tripbook/${trip.share_token}`;
+      const shareUrl = `${baseUrl}/s/${trip.share_token}`;
 
       return res.json({
         share_token: trip.share_token,
@@ -114,7 +131,7 @@ export const reportController = {
       let trip = rows[0];
       let newToken = trip.share_token;
       if (!newToken || regenerate) {
-        newToken = crypto.randomBytes(24).toString('hex');
+        newToken = await generateShortToken(7);
       }
 
       const newEnabled = enabled !== undefined ? Boolean(enabled) : Boolean(trip.share_enabled);
@@ -126,7 +143,7 @@ export const reportController = {
       trip = updateRes.rows[0];
 
       const baseUrl = env.APP_URL || `${req.protocol}://${req.get('host')}`;
-      const shareUrl = `${baseUrl}/share/tripbook/${trip.share_token}`;
+      const shareUrl = `${baseUrl}/s/${trip.share_token}`;
 
       return res.json({
         share_token: trip.share_token,
@@ -178,7 +195,7 @@ export const reportController = {
 
       const trip = rows[0];
       const data = await reportService.getTripBookData(trip.id);
-      const pdfUrl = `/share/tripbook/${shareToken}/pdf`;
+      const pdfUrl = `/s/${shareToken}/pdf`;
       const html = reportService.generateTripBookHtml(data, {
         anonymize: true,
         isPublicShare: true,
