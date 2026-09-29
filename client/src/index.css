@@ -23,8 +23,37 @@
   line-height: 1;
 }
 
+.itinerary-mini-marker-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.itinerary-mini-marker {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  background: #b94a5d;
+  box-shadow: 0 2px 6px rgb(15 23 42 / 30%);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.itinerary-mini-marker:hover {
+  transform: scale(1.15);
+}
+
 .leaflet-container {
   font-family: inherit;
+  z-index: 0 !important;
+  isolation: isolate;
 }
 
 @layer base {

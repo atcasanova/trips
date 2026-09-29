@@ -28,6 +28,7 @@ import { api } from '../api/client.js';
 import { parseSafeDate } from '../utils/date.js';
 import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
 import { GoogleMapsIcon } from './GoogleMapsIcon.js';
+import { DayMiniMap } from './DayMiniMap.js';
 
 interface TimelineViewProps {
   trip: Trip;
@@ -583,6 +584,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
         <div className="space-y-6">
           {localDays.map((day, dayIndex) => {
             const isDayDragTarget = dragOverDayId === day.id;
+            const dayItemIds = new Set((day.items || []).map((i) => i.id));
+            const dayPoints = mapPoints
+              .filter((p) => dayItemIds.has(p.itemId))
+              .map((p) => ({
+                itemId: p.itemId,
+                number: p.number,
+                title: p.title,
+                latitude: p.latitude,
+                longitude: p.longitude,
+              }));
 
             return (
               <div
@@ -740,6 +751,20 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                     </span>
                   )}
                 </div>
+                {/* Day Mini Map */}
+                <DayMiniMap
+                  dayNumber={day.day_number}
+                  dayTitle={day.title || `Dia ${day.day_number}`}
+                  points={dayPoints}
+                  accentColor={primaryColor}
+                  onSelectPoint={handleMapPointSelect}
+                  onExpandToMainMap={() => {
+                    const el = document.getElementById('itinerary-map-card');
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }}
+                />
 
                 {/* Itinerary items / activities */}
                 <div className="mt-4 pt-4 border-t border-slate-100">
@@ -1080,7 +1105,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
       {/* MODAL: ASSISTENTE DE ROTEIRO COM IA */}
       {showAiModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
             {/* Modal Header */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-purple-50 to-indigo-50">
@@ -1282,7 +1307,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
       {/* MODAL: EDITAR DIA */}
       {editingDay && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 p-6 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <h3 className="text-base font-bold text-slate-900">Editar Dia do Roteiro</h3>
@@ -1439,7 +1464,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
       {/* MODAL: EDITAR ATIVIDADE */}
       {editingItem && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 p-6">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <h3 className="text-base font-bold text-slate-900">Editar Atividade</h3>
@@ -1580,7 +1605,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
       {/* MODAL: ADICIONAR DIA MANUALMENTE */}
       {showAddDayModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 p-6">
             <h3 className="text-base font-bold text-slate-900 mb-4">Adicionar Dia ao Roteiro</h3>
             <form onSubmit={handleCreateDay} className="space-y-3">
@@ -1673,7 +1698,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
 
       {/* MODAL: ADICIONAR ATIVIDADE */}
       {showAddItemModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 p-6">
             <h3 className="text-base font-bold text-slate-900 mb-4">Adicionar Atividade ao Roteiro</h3>
             <form onSubmit={handleCreateItem} className="space-y-3">

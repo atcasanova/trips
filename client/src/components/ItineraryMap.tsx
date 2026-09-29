@@ -105,7 +105,7 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
   }, [points, onPointSelect]);
 
   return (
-    <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" aria-label="Mapa do roteiro">
+    <section id="itinerary-map-card" className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden relative z-0 isolate" aria-label="Mapa do roteiro">
       <div className="flex flex-col gap-3 px-5 py-4 border-b border-slate-100 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-2.5">
           <span
