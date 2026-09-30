@@ -282,6 +282,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   const [showAddItemModal, setShowAddItemModal] = useState<string | null>(null); // dayId
   const [editingDay, setEditingDay] = useState<TripDay | null>(null);
   const [editingItem, setEditingItem] = useState<{ dayId: string; item: ItineraryItem } | null>(null);
+  const [isSavingDay, setIsSavingDay] = useState(false);
+  const [isSavingItem, setIsSavingItem] = useState(false);
 
   // AI Assistant Modal state
   const [showAiModal, setShowAiModal] = useState(false);
@@ -458,6 +460,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   // Create Day
   const handleCreateDay = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingDay) return;
+    setIsSavingDay(true);
     try {
       await api.days.create(trip.id, {
         date: newDayDate,
@@ -471,13 +475,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'Erro ao criar dia');
+    } finally {
+      setIsSavingDay(false);
     }
   };
 
   // Update Day
   const handleUpdateDay = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingDay) return;
+    if (!editingDay || isSavingDay) return;
+    setIsSavingDay(true);
     try {
       await api.days.update(trip.id, editingDay.id, {
         title: editingDay.title,
@@ -497,6 +504,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'Erro ao atualizar dia');
+    } finally {
+      setIsSavingDay(false);
     }
   };
 
@@ -534,7 +543,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   // Create Item
   const handleCreateItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!showAddItemModal) return;
+    if (!showAddItemModal || isSavingItem) return;
+    setIsSavingItem(true);
     try {
       await api.days.createItem(trip.id, showAddItemModal, {
         title: itemTitle,
@@ -551,13 +561,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'Erro ao criar atividade');
+    } finally {
+      setIsSavingItem(false);
     }
   };
 
   // Update Item
   const handleUpdateItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingItem) return;
+    if (!editingItem || isSavingItem) return;
+    setIsSavingItem(true);
     try {
       await api.days.updateItem(trip.id, editingItem.dayId, editingItem.item.id, {
         title: editingItem.item.title,
@@ -572,6 +585,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'Erro ao atualizar atividade');
+    } finally {
+      setIsSavingItem(false);
     }
   };
 
@@ -1942,9 +1957,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold"
+                  disabled={isSavingDay}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow-xs"
                 >
-                  Salvar Alterações
+                  {isSavingDay ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Salvando e atualizando...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Alterações</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2102,9 +2125,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold"
+                  disabled={isSavingItem}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow-xs"
                 >
-                  Salvar Atividade
+                  {isSavingItem ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Localizando no mapa e salvando...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Atividade</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2195,9 +2226,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold"
+                  disabled={isSavingDay}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow-xs"
                 >
-                  Salvar Dia
+                  {isSavingDay ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Salvando dia...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Dia</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2284,9 +2323,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold"
+                  disabled={isSavingItem}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow-xs"
                 >
-                  Salvar Atividade
+                  {isSavingItem ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Localizando no mapa e salvando...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Atividade</span>
+                  )}
                 </button>
               </div>
             </form>
