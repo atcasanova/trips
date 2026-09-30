@@ -105,6 +105,10 @@ export interface ItineraryItem {
   tips?: string | null;
   notes?: string | null;
   order_index: number;
+  document_id?: string | null;
+  document_name?: string | null;
+  document_mime_type?: string | null;
+  document_size?: number | null;
 }
 
 export interface TransportReservation {

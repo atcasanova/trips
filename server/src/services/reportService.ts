@@ -25,7 +25,13 @@ export const reportService = {
     );
 
     const { rows: items } = await query(
-      `SELECT * FROM itinerary_items WHERE trip_id = $1 ORDER BY order_index ASC, start_time ASC`,
+      `SELECT i.*,
+              COALESCE(i.document_id, doc.id) AS document_id,
+              doc.original_name AS document_name
+       FROM itinerary_items i
+       LEFT JOIN documents doc ON doc.id = COALESCE(i.document_id, (substring(i.notes from '\\[DocID: ([0-9a-fA-F-]{36})\\]'))::uuid) AND doc.deleted_at IS NULL
+       WHERE i.trip_id = $1
+       ORDER BY i.order_index ASC, i.start_time ASC`,
       [tripId]
     );
 
@@ -1823,6 +1829,14 @@ export const reportService = {
                       item.latitude && item.longitude && !(Number(item.latitude) === 0 && Number(item.longitude) === 0)
                         ? `<a href="https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}" target="_blank" rel="noopener noreferrer" style="text-decoration: none; margin-left: 5px; vertical-align: middle; display: inline-flex;" title="Abrir no Google Maps">
                             <span style="font-size: 8.5pt;">📍</span>
+                          </a>`
+                        : ''
+                    }
+                    ${
+                      item.document_id
+                        ? `<a href="/api/documents/${item.document_id}/file" target="_blank" rel="noopener noreferrer" style="text-decoration: none; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 7pt; color: #92400e; background: #fef3c7; padding: 1px 5px; border-radius: 4px; border: 1px solid #fde68a; vertical-align: middle;" title="Abrir documento importado: ${item.document_name || 'Arquivo'}">
+                            <span>📄</span>
+                            <span style="max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.document_name || 'Arquivo'}</span>
                           </a>`
                         : ''
                     }

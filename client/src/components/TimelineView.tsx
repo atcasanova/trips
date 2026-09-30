@@ -912,6 +912,22 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                       {item.category}
                                     </span>
                                   )}
+                                  {item.document_id && (
+                                    <a
+                                      href={api.documents.viewUrl(item.document_id)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 hover:text-amber-950 border border-amber-200/90 text-[10px] font-semibold transition-all shadow-2xs shrink-0 cursor-pointer group/doc"
+                                      title={`Documento importado: ${item.document_name || 'Abrir arquivo'}`}
+                                    >
+                                      <FileText className="w-3 h-3 text-amber-600 group-hover/doc:text-amber-700 shrink-0" />
+                                      <span className="max-w-[110px] sm:max-w-[160px] truncate">
+                                        {item.document_name || 'Arquivo'}
+                                      </span>
+                                      <ExternalLink className="w-2.5 h-2.5 text-amber-500/70 group-hover/doc:text-amber-700 shrink-0" />
+                                    </a>
+                                  )}
                                 </div>
 
                                 {item.address && (
@@ -1579,6 +1595,25 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                     title="Abrir coordenadas no Google Maps"
                   >
                     Ver no Google Maps <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+
+              {editingItem.item.document_id && (
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs">
+                  <div className="flex items-center gap-1.5 text-amber-900 min-w-0">
+                    <FileText className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span className="font-semibold truncate">
+                      {editingItem.item.document_name || 'Documento original importado'}
+                    </span>
+                  </div>
+                  <a
+                    href={api.documents.viewUrl(editingItem.item.document_id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-amber-800 hover:text-amber-950 font-bold hover:underline flex items-center gap-1 shrink-0 text-[11px]"
+                  >
+                    Abrir Arquivo <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
               )}

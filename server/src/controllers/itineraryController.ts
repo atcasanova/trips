@@ -15,7 +15,15 @@ export const itineraryController = {
       );
 
       const { rows: items } = await query(
-        `SELECT * FROM itinerary_items WHERE trip_id = $1 ORDER BY order_index ASC, start_time ASC`,
+        `SELECT i.*,
+                COALESCE(i.document_id, doc.id) AS document_id,
+                doc.original_name AS document_name,
+                doc.mime_type AS document_mime_type,
+                doc.file_size AS document_size
+         FROM itinerary_items i
+         LEFT JOIN documents doc ON doc.id = COALESCE(i.document_id, (substring(i.notes from '\\[DocID: ([0-9a-fA-F-]{36})\\]'))::uuid) AND doc.deleted_at IS NULL
+         WHERE i.trip_id = $1
+         ORDER BY i.order_index ASC, i.start_time ASC`,
         [tripId]
       );
 
@@ -235,7 +243,7 @@ export const itineraryController = {
       const allowed = [
         'title', 'category', 'start_time', 'end_time', 'timezone',
         'location_name', 'address', 'latitude', 'longitude', 'duration_text',
-        'cost_amount', 'cost_currency', 'booking_reference', 'url', 'tips', 'notes', 'order_index'
+        'cost_amount', 'cost_currency', 'booking_reference', 'url', 'tips', 'notes', 'order_index', 'document_id'
       ];
 
       const setClauses: string[] = [];
@@ -292,7 +300,19 @@ export const itineraryController = {
         });
       }
 
-      return res.json({ item: rows[0], locationRefresh });
+      const { rows: fullItem } = await query(
+        `SELECT i.*,
+                COALESCE(i.document_id, doc.id) AS document_id,
+                doc.original_name AS document_name,
+                doc.mime_type AS document_mime_type,
+                doc.file_size AS document_size
+         FROM itinerary_items i
+         LEFT JOIN documents doc ON doc.id = COALESCE(i.document_id, (substring(i.notes from '\\[DocID: ([0-9a-fA-F-]{36})\\]'))::uuid) AND doc.deleted_at IS NULL
+         WHERE i.id = $1`,
+        [itemId]
+      );
+
+      return res.json({ item: fullItem[0] || rows[0], locationRefresh });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao atualizar atividade' });
     }

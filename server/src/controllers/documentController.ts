@@ -656,8 +656,9 @@ export const documentController = {
                    notes = $18,
                    cost_amount = $19,
                    cost_currency = $20,
+                   document_id = $21,
                    updated_at = NOW()
-               WHERE id = $21`,
+               WHERE id = $22`,
               [
                 targetDayId,
                 eventTitle,
@@ -679,6 +680,7 @@ export const documentController = {
                 notes,
                 costAmount,
                 costCurrency,
+                documentId,
                 existingItems[0].id,
               ]
             );
@@ -695,8 +697,8 @@ export const documentController = {
                 location_name, address, latitude, longitude,
                 location_source, location_source_url, location_confidence, location_verified_at,
                 location_kind, location_anchor_name, map_mode,
-                booking_reference, tips, notes, cost_amount, cost_currency, order_index
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'AUTO', $17, $18, $19, $20, $21, $22)`,
+                booking_reference, tips, notes, cost_amount, cost_currency, order_index, document_id
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'AUTO', $17, $18, $19, $20, $21, $22, $23)`,
               [
                 tripId,
                 targetDayId,
@@ -720,6 +722,7 @@ export const documentController = {
                 costAmount,
                 costCurrency,
                 orderIndex,
+                documentId,
               ]
             );
           }
