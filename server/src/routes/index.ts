@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { healthController } from '../controllers/healthController.js';
 import { authController } from '../controllers/authController.js';
 import { userController } from '../controllers/userController.js';
@@ -11,6 +11,7 @@ import { pexelsController } from '../controllers/pexelsController.js';
 import { reportController } from '../controllers/reportController.js';
 import { expenseController } from '../controllers/expenseController.js';
 import { inviteController } from '../controllers/inviteController.js';
+import { inboundEmailController } from '../controllers/inboundEmailController.js';
 
 import { requireAuth, requireAdmin, requireTripRole } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimit.js';
@@ -123,5 +124,12 @@ router.get('/trips/:tripId/expenses', requireAuth, requireTripRole('VIEWER'), ex
 router.post('/trips/:tripId/expenses', requireAuth, requireTripRole('EDITOR'), expenseController.createExpense);
 router.put('/trips/:tripId/expenses/:expenseId', requireAuth, requireTripRole('EDITOR'), expenseController.updateExpense);
 router.delete('/trips/:tripId/expenses/:expenseId', requireAuth, requireTripRole('EDITOR'), expenseController.deleteExpense);
+
+// 12. Inbound Email Ingestion (Protected by X-Inbound-Secret)
+router.post(
+  '/inbound/email',
+  express.raw({ type: () => true, limit: '50mb' }),
+  inboundEmailController.handleInboundEmail
+);
 
 export default router;

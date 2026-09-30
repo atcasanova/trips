@@ -39,4 +39,5 @@ export const env = {
   MAX_UPLOAD_SIZE_MB: parseInt(process.env.MAX_UPLOAD_SIZE_MB || '25', 10),
   
   SEED_DEMO: process.env.SEED_DEMO === 'true',
+  INBOUND_EMAIL_SECRET: process.env.INBOUND_EMAIL_SECRET || 'trips_inbound_secure_email_token_2026',
 };

@@ -33,6 +33,12 @@ app.use(
 );
 
 // Parsers
+app.use(
+  express.raw({
+    type: ['message/rfc822', 'application/octet-stream', 'multipart/mixed'],
+    limit: '50mb',
+  })
+);
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(cookieParser());

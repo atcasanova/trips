@@ -162,4 +162,104 @@ export const emailService = {
       return false;
     }
   },
+
+  async sendInboundProcessedEmail(params: {
+    to: string;
+    userName: string;
+    tripTitle: string;
+    tripId: string;
+    itemSummary: string;
+    itemTypeLabel: string;
+    isNewTrip: boolean;
+  }) {
+    try {
+      const tripUrl = `${env.APP_URL}/trips/${params.tripId}`;
+      const subject = params.isNewTrip
+        ? `🎉 Nova viagem criada: ${params.tripTitle}`
+        : `✅ Reserva adicionada: ${params.tripTitle}`;
+
+      const info = await transporter.sendMail({
+        from: env.MAIL_FROM,
+        to: params.to,
+        subject,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+              <span style="font-size: 24px;">${params.isNewTrip ? '✨' : '📋'}</span>
+              <h2 style="color: #b94a5d; margin: 0; font-size: 18px;">
+                ${params.isNewTrip ? 'Criamos uma nova viagem para você!' : 'Sua reserva foi processada com sucesso!'}
+              </h2>
+            </div>
+
+            <p style="font-size: 14px; line-height: 1.5; color: #334155;">
+              Olá, <strong>${params.userName}</strong>. Recebemos o seu e-mail de confirmação e nossa IA organizou tudo na plataforma Trips:
+            </p>
+
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+              <div style="font-size: 12px; font-weight: bold; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">
+                ${params.itemTypeLabel}
+              </div>
+              <div style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">
+                ${params.itemSummary}
+              </div>
+              <div style="font-size: 13px; color: #475569;">
+                📍 <strong>Viagem:</strong> ${params.tripTitle} ${params.isNewTrip ? '(Nova viagem gerada automaticamente)' : '(Viagem existente)'}
+              </div>
+            </div>
+
+            <p style="margin: 28px 0; text-align: center;">
+              <a href="${tripUrl}" style="background: #b94a5d; color: white; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(185,74,93,0.25);">
+                Visualizar Viagem no Trips
+              </a>
+            </p>
+
+            <p style="font-size: 12px; color: #94a3b8; text-align: center;">
+              Você pode continuar enviando ou encaminhando passagens, hotéis e ingressos para este endereço a qualquer momento.
+            </p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+            <small style="color: #94a3b8; display: block; text-align: center;">Trips — Gestão Inteligente de Viagens</small>
+          </div>
+        `,
+      });
+      logger.info('E-mail de confirmação de inbound enviado com sucesso', { messageId: info.messageId, to: params.to });
+      return true;
+    } catch (err: any) {
+      logger.error('Falha ao enviar e-mail de confirmação de inbound (SMTP)', { error: err.message, to: params.to });
+      return false;
+    }
+  },
+
+  async sendInboundUnknownSenderEmail(to: string) {
+    try {
+      const registerUrl = `${env.APP_URL}/login`;
+      const info = await transporter.sendMail({
+        from: env.MAIL_FROM,
+        to,
+        subject: 'Trips — E-mail não associado a uma conta ativa',
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">
+            <h2 style="color: #b94a5d; margin-top: 0;">Recebemos sua mensagem!</h2>
+            <p style="font-size: 14px; line-height: 1.5; color: #334155;">
+              Recebemos um e-mail de reserva enviado a partir deste endereço (<strong>${to}</strong>), porém não localizamos uma conta ativa no Trips com esse e-mail.
+            </p>
+            <p style="font-size: 14px; line-height: 1.5; color: #475569;">
+              Para que suas reservas e passagens sejam importadas automaticamente para o seu roteiro, por favor envie as confirmações através do mesmo endereço de e-mail cadastrado na plataforma Trips, ou acesse o sistema:
+            </p>
+            <p style="margin: 28px 0; text-align: center;">
+              <a href="${registerUrl}" style="background: #b94a5d; color: white; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block;">
+                Acessar Plataforma Trips
+              </a>
+            </p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+            <small style="color: #94a3b8; display: block; text-align: center;">Trips — Gestão Inteligente de Viagens</small>
+          </div>
+        `,
+      });
+      logger.info('E-mail de remetente desconhecido enviado', { messageId: info.messageId, to });
+      return true;
+    } catch (err: any) {
+      logger.error('Falha ao enviar e-mail de remetente desconhecido (SMTP)', { error: err.message, to });
+      return false;
+    }
+  },
 };
