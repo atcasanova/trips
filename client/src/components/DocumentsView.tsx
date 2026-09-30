@@ -19,6 +19,7 @@ import {
   UserPlus,
   Plus,
   AlertTriangle,
+  MapPin,
 } from 'lucide-react';
 import { DocumentItem, TripTraveler } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -55,6 +56,13 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
     targetTravelerId?: string;
     newCompanionName?: string;
   }>>([]);
+
+  let currentParsedData: any = {};
+  try {
+    currentParsedData = editDataJson ? JSON.parse(editDataJson) : {};
+  } catch {
+    currentParsedData = {};
+  }
 
   const cleanTicketName = (raw: string): string => {
     if (!raw) return '';
@@ -222,6 +230,16 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
 
     if (initialData.attendeeName) {
       addPersonCandidate(initialData.attendeeName);
+    }
+
+    if (Array.isArray(initialData.attendees)) {
+      initialData.attendees.forEach((a: any) => {
+        if (typeof a === 'object' && a !== null) {
+          addPersonCandidate(a.name, a.name, a.seat, a.ticketCode);
+        } else if (typeof a === 'string') {
+          addPersonCandidate(a);
+        }
+      });
     }
 
     // If none detected, add default candidate for current user
@@ -410,7 +428,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                   Enviando arquivo & interpretando dados com OpenAI...
                 </p>
                 <p className="text-xs text-slate-500">
-                  Identificando passagens aéreas, reservas de hotéis e vouchers...
+                  Identificando eventos, shows, jogos, passagens aéreas e hotéis com busca web de coordenadas...
                 </p>
               </div>
             ) : (
@@ -420,7 +438,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                 </div>
                 <h3 className="text-base font-bold text-slate-900">Arraste seu documento ou comprovante aqui</h3>
                 <p className="text-xs text-slate-500 mt-1 mb-4">
-                  Suporte para PDF, JPG, PNG e DOCX (passagens aéreas, vouchers de hotéis, ingressos)
+                  Suporte para PDF, JPG, PNG e impressões de e-mail (shows, jogos, ingressos, passagens e hotéis)
                 </p>
                 <label
                   htmlFor="file-upload"
@@ -598,6 +616,116 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                     </select>
                   </div>
 
+                  {/* EVENT PREVIEW CARD (When confirmedType === 'activity_ticket') */}
+                  {confirmedType === 'activity_ticket' && (
+                    <div className="mb-5 p-4 bg-gradient-to-br from-amber-50 to-orange-50/60 border border-amber-200/80 rounded-2xl shadow-xs">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">
+                            {currentParsedData.eventType === 'CONCERT' || currentParsedData.artistOrPerformer ? '🎸' :
+                             currentParsedData.eventType === 'SPORTS_MATCH' || currentParsedData.teams ? '⚽' :
+                             currentParsedData.eventType === 'THEATER_SHOW' ? '🎭' :
+                             currentParsedData.eventType === 'FESTIVAL' ? '🎪' : '🎟️'}
+                          </span>
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                              {currentParsedData.title || currentParsedData.activityName || 'Evento Identificado'}
+                            </h4>
+                            <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                              {currentParsedData.eventType === 'CONCERT' ? 'Show / Apresentação Musical' :
+                               currentParsedData.eventType === 'SPORTS_MATCH' ? 'Partida Esportiva' :
+                               currentParsedData.eventType === 'THEATER_SHOW' ? 'Espetáculo Teatral' :
+                               currentParsedData.eventType === 'FESTIVAL' ? 'Festival' :
+                               'Ingresso / Atração'}
+                            </span>
+                          </div>
+                        </div>
+                        {currentParsedData.latitude && currentParsedData.longitude ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            <MapPin className="w-3 h-3 text-emerald-600" />
+                            GPS Localizado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                            <MapPin className="w-3 h-3 text-slate-400" />
+                            Geocodificação Automática
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Event details grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-700 bg-white/90 p-3 rounded-xl border border-amber-100 mb-3">
+                        {(currentParsedData.artistOrPerformer || currentParsedData.teams) && (
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Atração / Partida</span>
+                            <p className="font-semibold text-slate-800">
+                              {currentParsedData.artistOrPerformer ||
+                               (currentParsedData.teams ? `${currentParsedData.teams.homeTeam || ''} x ${currentParsedData.teams.awayTeam || ''}` : '')}
+                              {currentParsedData.competition ? ` (${currentParsedData.competition})` : ''}
+                            </p>
+                          </div>
+                        )}
+
+                        {(currentParsedData.venueName || currentParsedData.city) && (
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Local / Estádio / Arena</span>
+                            <p className="font-semibold text-slate-800">
+                              {currentParsedData.venueName || 'Local não informado'}
+                              {currentParsedData.city ? ` — ${currentParsedData.city}` : ''}
+                            </p>
+                          </div>
+                        )}
+
+                        {currentParsedData.eventDate && (
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Data e Horário</span>
+                            <p className="font-semibold text-slate-800">
+                              📅 {currentParsedData.eventDate}
+                              {currentParsedData.startTime ? ` às ${currentParsedData.startTime}` : ''}
+                              {currentParsedData.doorsOpenTime ? ` (Portões: ${currentParsedData.doorsOpenTime})` : ''}
+                            </p>
+                          </div>
+                        )}
+
+                        {(currentParsedData.sector || currentParsedData.gate || currentParsedData.seat) && (
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Acesso e Assentos</span>
+                            <p className="font-semibold text-slate-800">
+                              {[
+                                currentParsedData.sector ? `Setor: ${currentParsedData.sector}` : '',
+                                currentParsedData.gate ? `Portão: ${currentParsedData.gate}` : '',
+                                currentParsedData.seat ? `Assento: ${currentParsedData.seat}` : '',
+                              ].filter(Boolean).join(' | ')}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Location coordinates line */}
+                      {currentParsedData.address && (
+                        <div className="flex items-start gap-1.5 text-xs text-slate-600 mb-2">
+                          <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-medium">{currentParsedData.address}</span>
+                            {currentParsedData.latitude && currentParsedData.longitude && (
+                              <span className="text-[10px] font-mono text-emerald-700 ml-2 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                📍 Lat: {Number(currentParsedData.latitude).toFixed(4)}, Lng: {Number(currentParsedData.longitude).toFixed(4)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Instructions / notice */}
+                      <div className="text-[11px] text-amber-900/90 bg-amber-100/70 p-2.5 rounded-lg flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>
+                          Ao confirmar, este evento será programado automaticamente no dia correspondente do <strong>Roteiro</strong>, com marcador cartográfico no mapa e despesa registrada.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* PASSAGEIROS E ACOMPANHANTES DETECTADOS */}
                   <div className="mb-5 p-4 bg-purple-50/70 border border-purple-200/80 rounded-2xl">
                     <div className="flex items-center justify-between mb-2">
@@ -758,7 +886,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                     className="px-5 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-2"
                   >
                     {savingConfirmation ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    Confirmar e Gravar Reserva
+                    {confirmedType === 'activity_ticket' ? 'Confirmar e Adicionar ao Roteiro' : 'Confirmar e Gravar Reserva'}
                   </button>
                 </div>
               </div>

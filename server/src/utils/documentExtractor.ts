@@ -21,24 +21,54 @@ export async function extractDocumentContent(
       return { base64Image: `data:${mimeType};base64,${b64}` };
     }
 
-    // 2. PDF -> Extract text using pdf-parse or fallback
+    // 2. PDF -> Extract text using pdf-parse or fallback to Vision screenshot
     if (mimeType === 'application/pdf') {
+      let extractedText = '';
       try {
         const pdfParse = require('pdf-parse');
         const dataBuffer = fs.readFileSync(filePath);
         const data = await pdfParse(dataBuffer);
         if (data && data.text && data.text.trim().length > 0) {
-          logger.info(`Texto extraído do PDF com sucesso (${data.text.trim().length} caracteres)`);
-          return { textContent: data.text.trim() };
+          extractedText = data.text.trim();
+          logger.info(`Texto extraído do PDF com sucesso (${extractedText.length} caracteres)`);
         }
       } catch (err: any) {
-        logger.warn('pdf-parse falhou, tentando extração de strings brutas do PDF', { error: err.message });
+        logger.warn('pdf-parse falhou ao extrair texto do PDF', { error: err.message });
       }
 
-      // Fallback: extract ASCII/UTF-8 streams from PDF
+      // If text extraction yielded good content (digital PDFs, email prints), return it
+      if (extractedText.length >= 40) {
+        return { textContent: extractedText };
+      }
+
+      // If text is short or empty (scanned ticket, flyer, pure graphic PDF), try extracting strings or render page with Puppeteer
       const buf = fs.readFileSync(filePath);
-      const text = buf.toString('latin1').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
-      return { textContent: text.slice(0, 10000) };
+      const rawStrings = buf.toString('latin1').replace(/[^\x20-\x7E\n\r\t]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (rawStrings.length > 250) {
+        return { textContent: rawStrings.slice(0, 15000) };
+      }
+
+      // Puppeteer fallback for scanned/graphic PDF tickets
+      try {
+        const puppeteerModule = await import('puppeteer');
+        const puppeteer = puppeteerModule.default || puppeteerModule;
+        const browser = await puppeteer.launch({
+          headless: true,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+        });
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1200, height: 1600 });
+        await page.goto(`file://${path.resolve(filePath)}`, { waitUntil: 'load', timeout: 15000 });
+        const screenshotBuf = await page.screenshot({ type: 'png', fullPage: false });
+        await browser.close();
+        const b64 = Buffer.from(screenshotBuf).toString('base64');
+        logger.info('PDF renderizado como imagem para Vision com sucesso');
+        return { base64Image: `data:image/png;base64,${b64}`, textContent: extractedText || undefined };
+      } catch (renderErr: any) {
+        logger.warn('Renderização de PDF para imagem via Puppeteer não disponível:', { error: renderErr.message });
+      }
+
+      return { textContent: extractedText || rawStrings.slice(0, 10000) };
     }
 
     // 3. DOCX -> extract text from word/document.xml

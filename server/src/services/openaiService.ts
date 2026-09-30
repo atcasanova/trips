@@ -228,19 +228,48 @@ Estrutura para "hotel_reservation":
 
 Estrutura para "activity_ticket":
 {
-  "activityName": "Nome da atração ou evento",
-  "venueName": "Local / Estádio / Centro de Convenções",
-  "address": "Endereço",
-  "city": "Cidade",
+  "activityName": "Nome completo da atração, show ou evento",
+  "eventType": "CONCERT" | "SPORTS_MATCH" | "THEATER_SHOW" | "FESTIVAL" | "CONFERENCE" | "ATTRACTION" | "OTHER",
+  "title": "Título formatado para o roteiro com emoji temático (Ex: '🎸 Show: Coldplay - Music of the Spheres', '⚽ Futebol: Flamengo x Fluminense', '🎪 Cirque du Soleil', '🏎️ F1: GP de São Paulo')",
+  "artistOrPerformer": "Nome da banda, cantor ou artistas (Ex: 'Coldplay', 'Iron Maiden', 'Taylor Swift')",
+  "teams": {
+    "homeTeam": "Time mandante se for partida esportiva (Ex: 'Flamengo', 'Tokyo Verdy')",
+    "awayTeam": "Time visitante se for partida esportiva (Ex: 'Fluminense', 'Yokohama F. Marinos')"
+  },
+  "competition": "Campeonato ou torneio se for esporte (Ex: 'Brasileirão', 'Champions League', 'J-League')",
+  "venueName": "Nome do estádio, arena, casa de show, teatro ou local (Ex: 'Allianz Parque', 'Tokyo Dome', 'Estádio do Maracanã', 'Saitama Stadium 2002')",
+  "address": "Endereço completo ou bairro/cidade do local do evento",
+  "city": "Cidade onde o evento acontecerá",
+  "country": "País onde o evento acontecerá",
   "eventDate": "AAAA-MM-DD",
-  "startTime": "HH:MM",
-  "endTime": "HH:MM",
-  "ticketCode": "Código de barras / ingresso",
-  "attendeeName": "Nome do titular",
-  "totalAmount": 100.00,
-  "currency": "JPY" | "USD" | "BRL",
-  "instructions": "Regras de entrada, portão, dicas"
+  "startTime": "HH:MM (horário oficial de início do show, partida ou evento)",
+  "endTime": "HH:MM (horário previsto de término se constar)",
+  "doorsOpenTime": "HH:MM (horário de abertura dos portões se informado)",
+  "sector": "Setor / arquibancada / pista / camarote (Ex: 'Pista Premium', 'Cadeira Superior Leste')",
+  "gate": "Portão de entrada (Ex: 'Portão B', 'Gate 3')",
+  "seat": "Assento / fila / cadeira (Ex: 'Fila 12, Assento 4B')",
+  "ticketCode": "Código do ingresso, localizador, número do bilhete ou pedido",
+  "attendeeName": "Nome do titular do ingresso ou comprador",
+  "attendees": [
+    {
+      "name": "Nome da pessoa",
+      "ticketCode": "Código individual se constar",
+      "seat": "Assento individual se constar",
+      "sector": "Setor individual se constar"
+    }
+  ],
+  "totalAmount": 150.00,
+  "currency": "BRL" | "USD" | "EUR" | "JPY",
+  "instructions": "Dicas e regras de entrada, itens proibidos, transporte recomendado",
+  "notes": "Observações adicionais extraídas do ingresso ou e-mail"
 }
+
+ATENÇÃO ESPECIAL PARA INGRESSOS DE EVENTOS E IMPRESSÕES DE E-MAIL:
+1. Muitas vezes o documento é uma impressão simples em PDF de um e-mail de confirmação de compra (Sympla, Eventim, Ticketmaster, Ingresse, StubHub, FIFA, etc.).
+2. Identifique com precisão nomes de bandas, cantores e turnês musicais (ex: Coldplay, Iron Maiden, Paul McCartney, Taylor Swift).
+3. Identifique partidas de futebol e outros esportes com os dois times e campeonato (ex: Flamengo x Fluminense pelo Brasileirão, Real Madrid x Barcelona).
+4. Extraia a data exata ("eventDate" no formato AAAA-MM-DD), horário de início ("startTime"), abertura de portões ("doorsOpenTime"), estádio/arena ("venueName"), setor ("sector"), portão ("gate") e assento ("seat").
+5. O campo "title" DEVE ser limpo, amigável e iniciado com emoji representativo (🎸 para show/banda, ⚽ para futebol/esporte, 🎭 para teatro, 🎪 para festival, 🎟️ para atração/museu).
 
 Estrutura para "expense_receipt":
 {
@@ -352,6 +381,59 @@ Estrutura para "expense_receipt":
         responseMeta: { detectedType, summary: parsed.summary },
       });
 
+      // If an activity/event ticket was detected, enrich with web_search coordinates & address if needed
+      if (detectedType === 'activity_ticket' && parsed.data) {
+        const venueCandidate = parsed.data.venueName || parsed.data.activityName;
+        if (venueCandidate && (!parsed.data.latitude || !parsed.data.longitude)) {
+          try {
+            logger.info(`Buscando localização e coordenadas via web_search para o evento: "${venueCandidate}"...`);
+            let contextCity = parsed.data.city;
+            let contextCountry = parsed.data.country;
+
+            if (params.tripId && (!contextCity || !contextCountry)) {
+              const { rows: tRows } = await query(
+                'SELECT title, primary_country, cities FROM trips WHERE id = $1',
+                [params.tripId]
+              );
+              if (tRows.length > 0) {
+                if (!contextCountry) contextCountry = tRows[0].primary_country || undefined;
+                if (!contextCity && Array.isArray(tRows[0].cities) && tRows[0].cities.length > 0) {
+                  contextCity = tRows[0].cities[0];
+                }
+              }
+            }
+
+            const geo = await openaiService.resolveEventLocationWithWebSearch({
+              venueName: venueCandidate,
+              city: contextCity,
+              country: contextCountry,
+              eventTitle: parsed.data.title || parsed.data.activityName,
+            });
+
+            if (geo && geo.latitude && geo.longitude) {
+              parsed.data.latitude = geo.latitude;
+              parsed.data.longitude = geo.longitude;
+              if (geo.address && (!parsed.data.address || parsed.data.address.length < 10)) {
+                parsed.data.address = geo.address;
+              }
+              if (geo.venueName && (!parsed.data.venueName || parsed.data.venueName.length < 3)) {
+                parsed.data.venueName = geo.venueName;
+              }
+              parsed.data.locationSource = 'OPENAI_WEB_SEARCH';
+              parsed.data.locationSourceUrl = geo.sourceUrl;
+              parsed.data.locationConfidence = geo.confidence || 0.95;
+              logger.info(`Localização do evento resolvida com sucesso via web_search:`, {
+                venue: parsed.data.venueName,
+                lat: geo.latitude,
+                lng: geo.longitude,
+              });
+            }
+          } catch (searchErr: any) {
+            logger.warn(`Falha na busca web de coordenadas do evento: ${searchErr.message}`);
+          }
+        }
+      }
+
       logger.info('Interpretação de documento pela OpenAI concluída com sucesso', {
         detectedType,
         totalTokens,
@@ -390,6 +472,86 @@ Estrutura para "expense_receipt":
         tokensUsed: 0,
         error: `Falha na interpretação da OpenAI: ${err.message}`,
       };
+    }
+  },
+
+  // 1.5. Resolve event location using OpenAI Responses API with web search
+  async resolveEventLocationWithWebSearch(params: {
+    venueName: string;
+    city?: string | null;
+    country?: string | null;
+    eventTitle?: string | null;
+  }): Promise<{
+    venueName: string;
+    address: string;
+    latitude: number;
+    longitude: number;
+    confidence: number;
+    sourceUrl?: string;
+  } | null> {
+    const client = getClient();
+    if (!client) return null;
+
+    const model = normalizeModelName(env.OPENAI_MAP_MODEL || env.OPENAI_MODEL || 'gpt-5.6-luna');
+    const locationQuery = [params.venueName, params.city, params.country].filter(Boolean).join(', ');
+
+    const prompt = `Você é um assistente especialista em geolocalização de estádios, arenas e locais de eventos esportivos e culturais.
+Use obrigatoriamente a ferramenta de busca na web (web_search) para pesquisar na internet e encontrar o estádio/local exato, seu endereço oficial completo e suas coordenadas geográficas (latitude e longitude decimais WGS84) para:
+"${locationQuery}" ${params.eventTitle ? `(Evento: ${params.eventTitle})` : ''}
+
+Retorne SOMENTE o JSON no formato:
+{
+  "venueName": "Nome canônico oficial do estádio, arena ou casa de show",
+  "address": "Endereço completo oficial com rua, número, bairro, cidade, estado e CEP",
+  "latitude": 0.000000,
+  "longitude": 0.000000,
+  "confidence": 0.95,
+  "sourceUrl": "URL de referência encontrada na busca"
+}`;
+
+    try {
+      const response = await client.responses.create({
+        model,
+        store: false,
+        input: prompt,
+        tools: [{ type: 'web_search', search_context_size: 'medium' }],
+        tool_choice: 'required',
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'event_venue_coordinates',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['venueName', 'address', 'latitude', 'longitude', 'confidence', 'sourceUrl'],
+              properties: {
+                venueName: { type: 'string' },
+                address: { type: 'string' },
+                latitude: { type: 'number', minimum: -90, maximum: 90 },
+                longitude: { type: 'number', minimum: -180, maximum: 180 },
+                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                sourceUrl: { type: 'string' },
+              },
+            },
+          },
+        },
+      });
+
+      const output = response.output_text;
+      if (!output) return null;
+      const parsed = JSON.parse(output);
+      if (
+        typeof parsed.latitude === 'number' &&
+        typeof parsed.longitude === 'number' &&
+        !(parsed.latitude === 0 && parsed.longitude === 0)
+      ) {
+        return parsed;
+      }
+      return null;
+    } catch (err: any) {
+      logger.warn(`Erro no resolveEventLocationWithWebSearch: ${err.message}`);
+      return null;
     }
   },
 

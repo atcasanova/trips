@@ -4,6 +4,7 @@ import path from 'path';
 import { query } from '../db/pool.js';
 import { computeFileHash } from '../middleware/upload.js';
 import { openaiService } from '../services/openaiService.js';
+import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 
 export const documentController = {
@@ -485,13 +486,259 @@ export const documentController = {
 
         await query(`UPDATE documents SET category = 'HOTEL' WHERE id = $1`, [documentId]);
       } else if (confirmedType === 'activity_ticket' || confirmedType === 'TICKET') {
+        const eventTitle = data.title || data.activityName || 'Evento / Show';
+        const eventDate = data.eventDate || null;
+        const startTime = data.startTime || '20:00';
+        const endTime = data.endTime || null;
+        const venueName = data.venueName || data.activityName || null;
+        let address = data.address || null;
+        let lat = data.latitude !== undefined && data.latitude !== null && data.latitude !== '' ? parseFloat(data.latitude) : null;
+        let lng = data.longitude !== undefined && data.longitude !== null && data.longitude !== '' ? parseFloat(data.longitude) : null;
+        let locationSource = data.locationSource || (lat && lng ? 'OPENAI_WEB_SEARCH' : null);
+        let locationSourceUrl = data.locationSourceUrl || null;
+        let locationConfidence = data.locationConfidence ? parseFloat(data.locationConfidence) : (lat && lng ? 0.95 : null);
+
+        // Se latitude ou longitude estiverem vazios e houver venueName, tenta geocodificar com web search
+        if ((!lat || !lng) && venueName) {
+          try {
+            logger.info(`Tentando geocodificar local do evento "${venueName}" via web search antes de salvar no roteiro...`);
+            let contextCity = data.city;
+            let contextCountry = data.country;
+            if (!contextCity || !contextCountry) {
+              const { rows: tRows } = await query('SELECT primary_country, cities FROM trips WHERE id = $1', [tripId]);
+              if (tRows.length > 0) {
+                if (!contextCountry) contextCountry = tRows[0].primary_country;
+                if (!contextCity && Array.isArray(tRows[0].cities) && tRows[0].cities.length > 0) contextCity = tRows[0].cities[0];
+              }
+            }
+            const geo = await openaiService.resolveEventLocationWithWebSearch({
+              venueName,
+              city: contextCity,
+              country: contextCountry,
+              eventTitle,
+            });
+            if (geo && geo.latitude && geo.longitude) {
+              lat = geo.latitude;
+              lng = geo.longitude;
+              if (!address && geo.address) address = geo.address;
+              locationSource = 'OPENAI_WEB_SEARCH';
+              locationSourceUrl = geo.sourceUrl || null;
+              locationConfidence = geo.confidence || 0.95;
+            }
+          } catch (geoErr: any) {
+            logger.warn(`Falha na busca web de coordenadas do evento: ${geoErr.message}`);
+          }
+        }
+
+        // Localiza ou cria o dia da viagem (trip_days) correspondente à data do evento
+        let targetDayId: string | null = null;
+        if (eventDate) {
+          const { rows: existingDays } = await query(
+            'SELECT id FROM trip_days WHERE trip_id = $1 AND date = $2',
+            [tripId, eventDate]
+          );
+
+          if (existingDays.length > 0) {
+            targetDayId = existingDays[0].id;
+          } else {
+            let dayIcon = '🎟️';
+            if (data.eventType === 'CONCERT' || data.artistOrPerformer) dayIcon = '🎸';
+            else if (data.eventType === 'SPORTS_MATCH' || data.teams) dayIcon = '⚽';
+            else if (data.eventType === 'THEATER_SHOW') dayIcon = '🎭';
+            else if (data.eventType === 'FESTIVAL') dayIcon = '🎪';
+
+            const dayTitle = data.city ? `Dia em ${data.city}` : (venueName || eventTitle);
+
+            const { rows: tripRows } = await query('SELECT start_date FROM trips WHERE id = $1', [tripId]);
+            let dayNumber = 1;
+            if (tripRows.length > 0 && tripRows[0].start_date) {
+              const tripStart = new Date(tripRows[0].start_date).getTime();
+              const evDateMs = new Date(eventDate).getTime();
+              const diff = Math.round((evDateMs - tripStart) / (1000 * 60 * 60 * 24)) + 1;
+              dayNumber = diff > 0 ? diff : 1;
+            } else {
+              const { rows: maxRows } = await query(
+                'SELECT COALESCE(MAX(day_number), 0) + 1 AS next_num FROM trip_days WHERE trip_id = $1',
+                [tripId]
+              );
+              dayNumber = parseInt(maxRows[0].next_num, 10);
+            }
+
+            const { rows: newDayRows } = await query(
+              `INSERT INTO trip_days (
+                trip_id, date, day_number, title, icon, order_index
+              ) VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING id`,
+              [tripId, eventDate, dayNumber, dayTitle, dayIcon, dayNumber]
+            );
+            targetDayId = newDayRows[0].id;
+
+            // Reordena e renumera os dias conforme a cronologia
+            const { rows: allTripDays } = await query(
+              'SELECT id FROM trip_days WHERE trip_id = $1 ORDER BY date ASC',
+              [tripId]
+            );
+            for (let i = 0; i < allTripDays.length; i++) {
+              await query(
+                'UPDATE trip_days SET day_number = $1, order_index = $2 WHERE id = $3',
+                [i + 1, i + 1, allTripDays[i].id]
+              );
+            }
+          }
+        } else {
+          const { rows: firstDay } = await query(
+            'SELECT id FROM trip_days WHERE trip_id = $1 ORDER BY date ASC LIMIT 1',
+            [tripId]
+          );
+          if (firstDay.length > 0) {
+            targetDayId = firstDay[0].id;
+          }
+        }
+
+        // Insere ou atualiza o item no roteiro
+        if (targetDayId) {
+          const tipsParts: string[] = [];
+          if (data.sector) tipsParts.push(`Setor: ${data.sector}`);
+          if (data.gate) tipsParts.push(`Portão: ${data.gate}`);
+          if (data.seat) tipsParts.push(`Assento: ${data.seat}`);
+          if (data.doorsOpenTime) tipsParts.push(`Abertura dos portões: ${data.doorsOpenTime}`);
+          if (data.attendeeName) tipsParts.push(`Titular: ${data.attendeeName}`);
+          if (data.instructions) tipsParts.push(`Orientações: ${data.instructions}`);
+          const tips = tipsParts.length > 0 ? tipsParts.join(' | ') : null;
+
+          const notesParts: string[] = [];
+          if (data.competition) notesParts.push(`Competição: ${data.competition}`);
+          if (data.artistOrPerformer) notesParts.push(`Artista/Banda: ${data.artistOrPerformer}`);
+          if (data.teams && (data.teams.homeTeam || data.teams.awayTeam)) {
+            notesParts.push(`Partida: ${data.teams.homeTeam || ''} x ${data.teams.awayTeam || ''}`);
+          }
+          if (Array.isArray(data.attendees) && data.attendees.length > 0) {
+            const attList = data.attendees
+              .map((a: any) => `${a.name || 'Participante'}${a.seat ? ` (${a.seat})` : ''}${a.ticketCode ? ` [${a.ticketCode}]` : ''}`)
+              .join(', ');
+            notesParts.push(`Ingressos: ${attList}`);
+          }
+          if (data.notes) notesParts.push(data.notes);
+          notesParts.push(`[DocID: ${documentId}]`);
+          const notes = notesParts.join('\n\n');
+
+          const itemCategory = 'EVENT';
+          const bookingRef = data.ticketCode || null;
+          const costAmount = data.totalAmount && parseFloat(data.totalAmount) > 0 ? parseFloat(data.totalAmount) : null;
+          const costCurrency = data.currency || 'BRL';
+
+          const { rows: existingItems } = await query(
+            `SELECT id FROM itinerary_items WHERE trip_id = $1 AND notes LIKE $2`,
+            [tripId, `%[DocID: ${documentId}]%`]
+          );
+
+          if (existingItems.length > 0) {
+            await query(
+              `UPDATE itinerary_items
+               SET trip_day_id = $1,
+                   title = $2,
+                   category = $3,
+                   start_time = $4,
+                   end_time = $5,
+                   location_name = $6,
+                   address = $7,
+                   latitude = $8,
+                   longitude = $9,
+                   location_source = $10,
+                   location_source_url = $11,
+                   location_confidence = $12,
+                   location_verified_at = $13,
+                   location_kind = $14,
+                   location_anchor_name = $15,
+                   map_mode = 'AUTO',
+                   booking_reference = $16,
+                   tips = $17,
+                   notes = $18,
+                   cost_amount = $19,
+                   cost_currency = $20,
+                   updated_at = NOW()
+               WHERE id = $21`,
+              [
+                targetDayId,
+                eventTitle,
+                itemCategory,
+                startTime,
+                endTime,
+                venueName,
+                address,
+                lat,
+                lng,
+                locationSource,
+                locationSourceUrl,
+                locationConfidence,
+                lat && lng ? new Date() : null,
+                lat && lng ? 'PLACE' : null,
+                venueName,
+                bookingRef,
+                tips,
+                notes,
+                costAmount,
+                costCurrency,
+                existingItems[0].id,
+              ]
+            );
+          } else {
+            const { rows: orderRows } = await query(
+              `SELECT COALESCE(MAX(order_index), 0) + 1 AS next_order FROM itinerary_items WHERE trip_day_id = $1`,
+              [targetDayId]
+            );
+            const orderIndex = parseInt(orderRows[0].next_order, 10);
+
+            await query(
+              `INSERT INTO itinerary_items (
+                trip_id, trip_day_id, title, category, start_time, end_time,
+                location_name, address, latitude, longitude,
+                location_source, location_source_url, location_confidence, location_verified_at,
+                location_kind, location_anchor_name, map_mode,
+                booking_reference, tips, notes, cost_amount, cost_currency, order_index
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'AUTO', $17, $18, $19, $20, $21, $22)`,
+              [
+                tripId,
+                targetDayId,
+                eventTitle,
+                itemCategory,
+                startTime,
+                endTime,
+                venueName,
+                address,
+                lat,
+                lng,
+                locationSource,
+                locationSourceUrl,
+                locationConfidence,
+                lat && lng ? new Date() : null,
+                lat && lng ? 'PLACE' : null,
+                venueName,
+                bookingRef,
+                tips,
+                notes,
+                costAmount,
+                costCurrency,
+                orderIndex,
+              ]
+            );
+          }
+
+          // Se ainda não tiver coordenadas, dispara a busca do roteiro em background
+          if (!lat || !lng) {
+            refreshItineraryLocations({ tripId }).catch((err: any) =>
+              logger.warn(`Erro no refreshItineraryLocations para trip ${tripId}: ${err.message}`)
+            );
+          }
+        }
+
         // Lança/atualiza despesa de atração se houver valor
         if (data.totalAmount && parseFloat(data.totalAmount) > 0) {
           const expenseDate = data.eventDate || new Date().toISOString().split('T')[0];
-          const desc = `Ingresso / Atração: ${data.activityName || 'Atração'}`;
+          const desc = `Ingresso / Evento: ${eventTitle}${data.ticketCode ? ` (${data.ticketCode})` : ''}`;
           const amount = parseFloat(data.totalAmount);
           const curr = data.currency || 'BRL';
-          const notes = data.ticketCode ? `Código: ${data.ticketCode}` : null;
+          const expNotes = data.ticketCode ? `Código / Ingresso: ${data.ticketCode}` : null;
 
           const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
           if (existingExp.length > 0) {
@@ -499,7 +746,7 @@ export const documentController = {
               `UPDATE expenses 
                SET category = 'TICKETS', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
                WHERE id = $6`,
-              [desc, amount, curr, expenseDate, notes, existingExp[0].id]
+              [desc, amount, curr, expenseDate, expNotes, existingExp[0].id]
             );
           } else {
             await query(
@@ -507,7 +754,7 @@ export const documentController = {
                 trip_id, category, description, amount, currency,
                 payment_method, date, document_id, paid_by_user_id, notes
               ) VALUES ($1, 'TICKETS', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
-              [tripId, desc, amount, curr, expenseDate, documentId, req.user?.id || null, notes]
+              [tripId, desc, amount, curr, expenseDate, documentId, req.user?.id || null, expNotes]
             );
           }
         }
