@@ -1833,7 +1833,7 @@ export const reportService = {
                         : ''
                     }
                     ${
-                      item.document_id
+                      !options?.anonymize && !options?.isPublicShare && item.document_id
                         ? `<a href="/api/documents/${item.document_id}/file" target="_blank" rel="noopener noreferrer" style="text-decoration: none; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 7pt; color: #92400e; background: #fef3c7; padding: 1px 5px; border-radius: 4px; border: 1px solid #fde68a; vertical-align: middle;" title="Abrir documento importado: ${item.document_name || 'Arquivo'}">
                             <span>📄</span>
                             <span style="max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.document_name || 'Arquivo'}</span>
@@ -1842,7 +1842,15 @@ export const reportService = {
                     }
                   </div>
                   ${item.address ? `<div style="font-size: 7.5pt; color: #64748b;">${item.address}</div>` : ''}
-                  ${item.tips ? `<div class="subitem-tips">💡 ${item.tips}</div>` : ''}
+                  ${
+                    item.tips
+                      ? `<div class="subitem-tips">💡 ${
+                          options?.anonymize
+                            ? item.tips.replace(/Titular:\s*[^|]+/i, '').replace(/Código:\s*[^|]+/i, '').replace(/\|\s*\|/g, '|').trim()
+                            : item.tips
+                        }</div>`
+                      : ''
+                  }
                 </div>
               </div>
             `
