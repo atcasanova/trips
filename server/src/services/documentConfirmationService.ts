@@ -342,23 +342,18 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
       const curr = data.currency || 'BRL';
       const notes = data.ticketNumber ? `Bilhete: ${data.ticketNumber}` : null;
 
-      const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
-      if (existingExp.length > 0) {
-        await query(
-          `UPDATE expenses 
-           SET category = 'TRANSPORT', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
-           WHERE id = $6`,
-          [desc, amount, curr, expenseDate, notes, existingExp[0].id]
-        );
-      } else {
-        await query(
-          `INSERT INTO expenses (
-            trip_id, category, description, amount, currency,
-            payment_method, date, document_id, paid_by_user_id, notes
-          ) VALUES ($1, 'TRANSPORT', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
-          [tripId, desc, amount, curr, expenseDate, documentId, userId || null, notes]
-        );
-      }
+      await upsertDocumentExpense({
+        tripId,
+        documentId,
+        userId,
+        category: 'TRANSPORT',
+        description: desc,
+        amount,
+        currency: curr,
+        date: expenseDate,
+        notes,
+        resolvedTravelers,
+      });
     }
 
     await query(`UPDATE documents SET category = 'FLIGHT' WHERE id = $1`, [documentId]);
@@ -467,23 +462,18 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
       const curr = data.currency || 'BRL';
       const notes = data.reservationNumber ? `Reserva: ${data.reservationNumber}` : null;
 
-      const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
-      if (existingExp.length > 0) {
-        await query(
-          `UPDATE expenses 
-           SET category = 'ACCOMMODATION', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
-           WHERE id = $6`,
-          [desc, amount, curr, expenseDate, notes, existingExp[0].id]
-        );
-      } else {
-        await query(
-          `INSERT INTO expenses (
-            trip_id, category, description, amount, currency,
-            payment_method, date, document_id, paid_by_user_id, notes
-          ) VALUES ($1, 'ACCOMMODATION', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
-          [tripId, desc, amount, curr, expenseDate, documentId, userId || null, notes]
-        );
-      }
+      await upsertDocumentExpense({
+        tripId,
+        documentId,
+        userId,
+        category: 'ACCOMMODATION',
+        description: desc,
+        amount,
+        currency: curr,
+        date: expenseDate,
+        notes,
+        resolvedTravelers,
+      });
     }
 
     await query(`UPDATE documents SET category = 'HOTEL' WHERE id = $1`, [documentId]);
@@ -798,29 +788,23 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
       const curr = data.currency || 'BRL';
       const expNotes = data.ticketCode ? `Código / Ingresso: ${data.ticketCode}` : null;
 
-      const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
-      if (existingExp.length > 0) {
-        await query(
-          `UPDATE expenses 
-           SET category = 'TICKETS', description = $1, amount = $2, currency = $3, date = $4, notes = $5, updated_at = NOW()
-           WHERE id = $6`,
-          [desc, amount, curr, expenseDate, expNotes, existingExp[0].id]
-        );
-      } else {
-        await query(
-          `INSERT INTO expenses (
-            trip_id, category, description, amount, currency,
-            payment_method, date, document_id, paid_by_user_id, notes
-          ) VALUES ($1, 'TICKETS', $2, $3, $4, 'CREDIT_CARD', $5, $6, $7, $8)`,
-          [tripId, desc, amount, curr, expenseDate, documentId, userId || null, expNotes]
-        );
-      }
+      await upsertDocumentExpense({
+        tripId,
+        documentId,
+        userId,
+        category: 'TICKETS',
+        description: desc,
+        amount,
+        currency: curr,
+        date: expenseDate,
+        notes: expNotes,
+        resolvedTravelers,
+      });
     }
 
     await query(`UPDATE documents SET category = 'TICKET' WHERE id = $1`, [documentId]);
   } else if (confirmedType === 'expense_receipt' || confirmedType === 'RECEIPT') {
     // Lança/atualiza despesa de recibo
-    const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
     const expCategory = data.category || 'OTHER';
     const expDesc = data.merchantName || 'Despesa comprovada';
     const expAmount = parseFloat(data.totalAmount) || 0;
@@ -829,32 +813,20 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
     const expDate = data.date || new Date().toISOString().split('T')[0];
     const expNotes = data.notes || null;
 
-    if (existingExp.length > 0) {
-      await query(
-        `UPDATE expenses 
-         SET category = $1, description = $2, amount = $3, currency = $4, payment_method = $5, date = $6, notes = $7, updated_at = NOW()
-         WHERE id = $8`,
-        [expCategory, expDesc, expAmount, expCurr, expMethod, expDate, expNotes, existingExp[0].id]
-      );
-    } else {
-      await query(
-        `INSERT INTO expenses (
-          trip_id, category, description, amount, currency,
-          payment_method, date, document_id, paid_by_user_id, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          tripId,
-          expCategory,
-          expDesc,
-          expAmount,
-          expCurr,
-          expMethod,
-          expDate,
-          documentId,
-          userId || null,
-          expNotes,
-        ]
-      );
+    if (expAmount > 0) {
+      await upsertDocumentExpense({
+        tripId,
+        documentId,
+        userId,
+        category: expCategory,
+        description: expDesc,
+        amount: expAmount,
+        currency: expCurr,
+        date: expDate,
+        notes: expNotes,
+        paymentMethod: expMethod,
+        resolvedTravelers,
+      });
     }
 
     await query(`UPDATE documents SET category = 'RECEIPT' WHERE id = $1`, [documentId]);
@@ -866,4 +838,85 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
      VALUES ($1, $2, 'AI_EXTRACTION_CONFIRMED', 'DOCUMENT', $3, $4)`,
     [userId || null, tripId, documentId, JSON.stringify({ confirmedType })]
   );
+}
+
+async function upsertDocumentExpense(params: {
+  tripId: string;
+  documentId: string;
+  userId?: string | null;
+  category: string;
+  description: string;
+  amount: number;
+  currency: string;
+  date: string;
+  notes?: string | null;
+  paymentMethod?: string;
+  resolvedTravelers: Array<{ travelerId?: string; name: string }>;
+  forceShared?: boolean;
+}): Promise<void> {
+  const {
+    tripId,
+    documentId,
+    userId,
+    category,
+    description,
+    amount,
+    currency,
+    date,
+    notes,
+    paymentMethod = 'CREDIT_CARD',
+    resolvedTravelers,
+    forceShared,
+  } = params;
+
+  // Single traveler on reservation = personal expense (is_shared: false)
+  // Multiple travelers on reservation = shared expense (is_shared: true)
+  const isShared = forceShared !== undefined ? forceShared : resolvedTravelers.length > 1;
+  const primaryTravelerId = resolvedTravelers[0]?.travelerId || null;
+  const splitType = 'EQUAL';
+
+  const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
+  let expenseId: string;
+
+  if (existingExp.length > 0) {
+    expenseId = existingExp[0].id;
+    await query(
+      `UPDATE expenses 
+       SET category = $1, description = $2, amount = $3, currency = $4, payment_method = $5,
+           date = $6, notes = $7, is_shared = $8, paid_by_traveler_id = COALESCE($9, paid_by_traveler_id),
+           split_type = $10, updated_at = NOW()
+       WHERE id = $11`,
+      [category, description, amount, currency, paymentMethod, date, notes, isShared, primaryTravelerId, splitType, expenseId]
+    );
+  } else {
+    const { rows: inserted } = await query(
+      `INSERT INTO expenses (
+        trip_id, category, description, amount, currency, payment_method,
+        date, document_id, paid_by_user_id, paid_by_traveler_id, notes,
+        is_shared, split_type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING id`,
+      [tripId, category, description, amount, currency, paymentMethod, date, documentId, userId || null, primaryTravelerId, notes, isShared, splitType]
+    );
+    expenseId = inserted[0].id;
+  }
+
+  // Populate splits
+  if (resolvedTravelers.length > 0 && expenseId) {
+    await query('DELETE FROM expense_splits WHERE expense_id = $1', [expenseId]);
+    const splitAmt = Math.round((amount / resolvedTravelers.length) * 100) / 100;
+    let sumSoFar = 0;
+    for (let i = 0; i < resolvedTravelers.length; i++) {
+      const tId = resolvedTravelers[i].travelerId;
+      if (!tId) continue;
+      const amtToInsert = i === resolvedTravelers.length - 1 ? Math.round((amount - sumSoFar) * 100) / 100 : splitAmt;
+      sumSoFar += amtToInsert;
+      const pct = Math.round((100 / resolvedTravelers.length) * 100) / 100;
+      await query(
+        `INSERT INTO expense_splits (expense_id, traveler_id, amount, percentage)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+        [expenseId, tId, amtToInsert, pct]
+      );
+    }
+  }
 }
