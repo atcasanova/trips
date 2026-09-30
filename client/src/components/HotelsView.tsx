@@ -124,6 +124,13 @@ export const HotelsView: React.FC<HotelsViewProps> = ({ tripId, hotels, onRefres
                     </div>
                   )}
 
+                  {h.guest_names && (
+                    <div className="text-slate-700 text-xs flex items-center gap-1.5 flex-wrap">
+                      <span className="text-slate-500">Hóspede(s):</span>
+                      <strong className="text-slate-900 bg-slate-100 px-2 py-0.5 rounded">{h.guest_names}</strong>
+                    </div>
+                  )}
+
                   {h.reservation_number && (
                     <div className="text-slate-600 flex items-center gap-1 font-mono text-[11px]">
                       <span>Código da Reserva:</span>

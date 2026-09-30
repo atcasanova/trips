@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
+import { aggregateItineraryItems } from '../utils/aggregation.js';
 
 export const itineraryController = {
   // 1. List all days and itinerary items for a trip
@@ -27,15 +28,48 @@ export const itineraryController = {
         [tripId]
       );
 
+      // Query all attached documents from itinerary_item_documents
+      const { rows: docLinks } = await query(
+        `SELECT iid.itinerary_item_id, doc.id, doc.original_name, doc.mime_type, doc.file_size
+         FROM itinerary_item_documents iid
+         JOIN documents doc ON doc.id = iid.document_id
+         WHERE doc.trip_id = $1 AND doc.deleted_at IS NULL`,
+        [tripId]
+      );
+
+      const docsByItem: Record<string, any[]> = {};
+      for (const dl of docLinks) {
+        if (!docsByItem[dl.itinerary_item_id]) docsByItem[dl.itinerary_item_id] = [];
+        docsByItem[dl.itinerary_item_id].push({
+          id: dl.id,
+          document_id: dl.id,
+          original_name: dl.original_name,
+          mime_type: dl.mime_type,
+          file_size: dl.file_size,
+        });
+      }
+
       const itemsByDay: Record<string, any[]> = {};
       for (const item of items) {
+        const itemDocs = docsByItem[item.id] || [];
+        if (itemDocs.length === 0 && (item.document_id || item.document_name)) {
+          itemDocs.push({
+            id: item.document_id,
+            document_id: item.document_id,
+            original_name: item.document_name || 'Arquivo',
+            mime_type: item.document_mime_type,
+            file_size: item.document_size,
+          });
+        }
+        item.documents = itemDocs;
+
         if (!itemsByDay[item.trip_day_id]) itemsByDay[item.trip_day_id] = [];
         itemsByDay[item.trip_day_id].push(item);
       }
 
       const result = days.map((d: any) => ({
         ...d,
-        items: itemsByDay[d.id] || [],
+        items: aggregateItineraryItems(itemsByDay[d.id] || []),
       }));
 
       return res.json({ days: result });

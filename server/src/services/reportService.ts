@@ -1,5 +1,10 @@
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
+import {
+  aggregateFlightSegments,
+  aggregateHotels,
+  aggregateItineraryItems,
+} from '../utils/aggregation.js';
 
 export const reportService = {
   // Compiles complete Trip Book data for a trip
@@ -27,7 +32,9 @@ export const reportService = {
     const { rows: items } = await query(
       `SELECT i.*,
               COALESCE(i.document_id, doc.id) AS document_id,
-              doc.original_name AS document_name
+              doc.original_name AS document_name,
+              doc.mime_type AS document_mime_type,
+              doc.file_size AS document_size
        FROM itinerary_items i
        LEFT JOIN documents doc ON doc.id = COALESCE(i.document_id, (substring(i.notes from '\\[DocID: ([0-9a-fA-F-]{36})\\]'))::uuid) AND doc.deleted_at IS NULL
        WHERE i.trip_id = $1
@@ -35,9 +42,42 @@ export const reportService = {
       [tripId]
     );
 
+    // Query all attached documents from itinerary_item_documents
+    const { rows: docLinks } = await query(
+      `SELECT iid.itinerary_item_id, doc.id, doc.original_name, doc.mime_type, doc.file_size
+       FROM itinerary_item_documents iid
+       JOIN documents doc ON doc.id = iid.document_id
+       WHERE doc.trip_id = $1 AND doc.deleted_at IS NULL`,
+      [tripId]
+    );
+
+    const docsByItem: Record<string, any[]> = {};
+    for (const dl of docLinks) {
+      if (!docsByItem[dl.itinerary_item_id]) docsByItem[dl.itinerary_item_id] = [];
+      docsByItem[dl.itinerary_item_id].push({
+        id: dl.id,
+        document_id: dl.id,
+        original_name: dl.original_name,
+        mime_type: dl.mime_type,
+        file_size: dl.file_size,
+      });
+    }
+
     // Group items by trip_day_id
     const itemsByDay: Record<string, any[]> = {};
     for (const item of items) {
+      const itemDocs = docsByItem[item.id] || [];
+      if (itemDocs.length === 0 && (item.document_id || item.document_name)) {
+        itemDocs.push({
+          id: item.document_id,
+          document_id: item.document_id,
+          original_name: item.document_name || 'Arquivo',
+          mime_type: item.document_mime_type,
+          file_size: item.document_size,
+        });
+      }
+      item.documents = itemDocs;
+
       if (!itemsByDay[item.trip_day_id]) itemsByDay[item.trip_day_id] = [];
       itemsByDay[item.trip_day_id].push(item);
     }
@@ -269,7 +309,7 @@ export const reportService = {
     }
 
     // Index flight segments by departure and arrival date
-    const segmentsByDate: Record<string, any[]> = {};
+    const rawSegmentsByDate: Record<string, any[]> = {};
     const allSegments = segments || [];
     for (const s of allSegments) {
       const depDate = toDateStr(s.departure_date);
@@ -282,17 +322,26 @@ export const reportService = {
       };
 
       if (depDate) {
-        if (!segmentsByDate[depDate]) segmentsByDate[depDate] = [];
-        segmentsByDate[depDate].push({ ...segWithPax, isArrivalOnly: false });
+        if (!rawSegmentsByDate[depDate]) rawSegmentsByDate[depDate] = [];
+        rawSegmentsByDate[depDate].push({ ...segWithPax, isArrivalOnly: false });
       }
       if (arrDate && arrDate !== depDate) {
-        if (!segmentsByDate[arrDate]) segmentsByDate[arrDate] = [];
-        segmentsByDate[arrDate].push({ ...segWithPax, isArrivalOnly: true });
+        if (!rawSegmentsByDate[arrDate]) rawSegmentsByDate[arrDate] = [];
+        rawSegmentsByDate[arrDate].push({ ...segWithPax, isArrivalOnly: true });
       }
     }
 
+    const segmentsByDate: Record<string, any[]> = {};
+    const fallbackPax = travelers && travelers.length > 0 ? travelers.map((t: any) => t.display_name) : [];
+    for (const [dt, segList] of Object.entries(rawSegmentsByDate)) {
+      segmentsByDate[dt] = aggregateFlightSegments(segList, {
+        anonymize: options?.anonymize,
+        fallbackTravelers: fallbackPax,
+      });
+    }
+
     // Index hotels by active stay dates
-    const hotelsByDate: Record<string, any> = {};
+    const rawHotelsByDate: Record<string, any[]> = {};
     const allHotels = hotels || [];
     for (const h of allHotels) {
       const inDate = toDateStr(h.check_in_date);
@@ -302,11 +351,18 @@ export const reportService = {
         const limit = outDate || inDate;
         let count = 0;
         while (cur <= limit && count < 60) {
-          hotelsByDate[cur] = h;
+          if (!rawHotelsByDate[cur]) rawHotelsByDate[cur] = [];
+          rawHotelsByDate[cur].push(h);
           cur = addDays(cur, 1);
           count++;
         }
       }
+    }
+
+    const hotelsByDate: Record<string, any> = {};
+    for (const [dt, hList] of Object.entries(rawHotelsByDate)) {
+      const aggHotels = aggregateHotels(hList, { anonymize: options?.anonymize });
+      hotelsByDate[dt] = aggHotels[0] || null;
     }
 
     // Determine timeline date range
@@ -367,6 +423,9 @@ export const reportService = {
           }
         }
 
+        const rawDayItems = dayRecord?.items || [];
+        const aggregatedDayItems = aggregateItineraryItems(rawDayItems, { anonymize: options?.anonymize });
+
         timelineDays.push({
           dateStr: cur,
           dateInfo: dInfo,
@@ -376,7 +435,7 @@ export const reportService = {
           subtitle: dayRecord?.subtitle,
           baseLocation: baseLocation || 'Em Trânsito',
           icon: icon || '📍',
-          items: dayRecord?.items || [],
+          items: aggregatedDayItems,
           flights: dayFlights,
           hotel: dayHotel,
           anchorId,
@@ -477,13 +536,6 @@ export const reportService = {
                       `;
                     }
 
-                    const flightSummary = tDay.flights && tDay.flights.length > 0
-                      ? tDay.flights.map((f: any) => f.identification_number).join(' / ')
-                      : null;
-                    const flightPax = tDay.flights && tDay.flights.length > 0 && tDay.flights[0].passengerNames && tDay.flights[0].passengerNames.length > 0
-                      ? tDay.flights[0].passengerNames.join(', ')
-                      : null;
-
                     return `
                       <td>
                         <a href="#${tDay.anchorId}" class="cal-day-cell cal-day-active" title="Ver detalhes: ${escapeHtml(tDay.title)}">
@@ -496,12 +548,35 @@ export const reportService = {
                             <span>${escapeHtml(tDay.baseLocation)}</span>
                           </div>
                           <div class="cal-day-title">${escapeHtml(tDay.title)}</div>
-                          ${flightSummary ? `
-                            <div class="cal-day-flight">
-                              ✈️ <strong>${escapeHtml(flightSummary)}</strong>
-                              ${flightPax ? `<span class="cal-day-flight-pax">👤 ${escapeHtml(flightPax)}</span>` : ''}
+                          ${tDay.flights && tDay.flights.length > 0 ? tDay.flights.map((f: any) => {
+                            const paxLabel = f.passengersFormatted || (f.passengerNames && f.passengerNames.length > 0 ? f.passengerNames.join(', ') : '');
+                            const paxCount = f.passengerCount || (f.passengerNames ? f.passengerNames.length : 1);
+                            const paxBadge = paxCount > 1
+                              ? (options?.anonymize ? `${paxCount} pessoas` : `${paxCount} pessoas: ${paxLabel}`)
+                              : paxLabel;
+                            return `
+                              <div class="cal-day-flight">
+                                ✈️ <strong>${escapeHtml(f.identification_number || f.carrier_name || 'Voo')}</strong>
+                                ${paxBadge ? `<span class="cal-day-flight-pax">👤 ${escapeHtml(paxBadge)}</span>` : ''}
+                              </div>
+                            `;
+                          }).join('') : ''}
+                          ${tDay.hotel ? `
+                            <div class="cal-day-hotel" style="font-size: 6.5pt; color: #047857; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="Hospedagem: ${escapeHtml(tDay.hotel.hotel_name)}">
+                              🏨 <strong>${escapeHtml(tDay.hotel.hotel_name)}</strong>
+                              ${!options?.anonymize && tDay.hotel.guest_names ? `<span style="color: #065f46; font-size: 6pt;"> • ${escapeHtml(tDay.hotel.guest_names)}</span>` : (tDay.hotel.guestCount > 1 ? `<span style="color: #065f46; font-size: 6pt;"> (${tDay.hotel.guestCount} hóspedes)</span>` : '')}
                             </div>
                           ` : ''}
+                          ${(tDay.items || []).filter((it: any) => it.category === 'EVENT' || it.document_id || (it.documents && it.documents.length > 0)).slice(0, 2).map((it: any) => {
+                            const attLabel = it.attendees && it.attendees.length > 1
+                              ? (options?.anonymize ? ` (${it.attendees.length} pessoas)` : ` (${it.attendees.join(', ')})`)
+                              : '';
+                            return `
+                              <div class="cal-day-event" style="font-size: 6.5pt; color: #7c2d12; background: #fff7ed; border-radius: 3px; padding: 1px 3px; margin-top: 2px; border: 1px solid #ffedd5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(it.title)}">
+                                🎟️ <strong>${escapeHtml(it.title)}</strong>${escapeHtml(attLabel)}
+                              </div>
+                            `;
+                          }).join('')}
                         </a>
                       </td>
                     `;
@@ -533,24 +608,28 @@ export const reportService = {
               // 1. Flights HTML with passengers
               let flightsHtml = '<span style="color: #94a3b8;">—</span>';
               if (tDay.flights && tDay.flights.length > 0) {
-                flightsHtml = tDay.flights.map((f: any) => `
-                  <div class="table-flight-pill">
-                    <div class="table-flight-header">
-                      ✈️ <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number)}</strong>
-                    </div>
-                    <div class="table-flight-route">
-                      ${f.isArrivalOnly ? '🛬 Pouso: ' : '🛫 Partida: '}
-                      ${escapeHtml(f.departure_station_code || f.departure_location || '—')} (${f.departure_time || '—'}) ➔ 
-                      ${escapeHtml(f.arrival_station_code || f.arrival_location || '—')} (${f.arrival_time || '—'})
-                    </div>
-                    ${f.passengerNames && f.passengerNames.length > 0 ? `
-                      <div class="table-flight-pax">
-                        👤 Passageiro(s): <strong>${escapeHtml(f.passengerNames.join(', '))}</strong>
-                        ${!options?.anonymize && f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
+                flightsHtml = tDay.flights.map((f: any) => {
+                  const paxLabel = f.passengersFormatted || (f.passengerNames && f.passengerNames.length > 0 ? f.passengerNames.join(', ') : '');
+                  const paxCount = f.passengerCount || (f.passengerNames ? f.passengerNames.length : 1);
+                  const paxTitle = paxCount > 1 ? `Passageiro(s) (${paxCount}):` : 'Passageiro(s):';
+                  return `
+                    <div class="table-flight-pill">
+                      <div class="table-flight-header">
+                        ✈️ <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number || '')}</strong>
                       </div>
-                    ` : ''}
-                  </div>
-                `).join('');
+                      <div class="table-flight-route">
+                        ${f.isArrivalOnly ? '🛬 Pouso: ' : '🛫 Partida: '}
+                        ${escapeHtml(f.departure_station_code || f.departure_location || '—')} (${f.departure_time || '—'}) ➔ 
+                        ${escapeHtml(f.arrival_station_code || f.arrival_location || '—')} (${f.arrival_time || '—'})
+                      </div>
+                      ${paxLabel ? `
+                        <div class="table-flight-pax">
+                          👤 ${paxTitle} <strong>${escapeHtml(paxLabel)}</strong>
+                        </div>
+                      ` : ''}
+                    </div>
+                  `;
+                }).join('');
               } else if (tDay.title && /transfer|shinkansen|trem|ida para/i.test(tDay.title)) {
                 flightsHtml = `<span style="color: #475569; font-weight: 500;">🚆 Deslocamento / ${escapeHtml(tDay.title)}</span>`;
               }
@@ -564,10 +643,13 @@ export const reportService = {
                   <div class="gcal-chips-wrap">
                     ${itemsToShow.map((it: any) => {
                       const cat = (it.category || 'activity').toLowerCase();
+                      const att = it.attendees && it.attendees.length > 1
+                        ? (options?.anonymize ? ` (${it.attendees.length} pessoas)` : ` (${it.attendees.join(', ')})`)
+                        : '';
                       return `
                         <div class="gcal-chip gcal-cat-${cat}" title="${escapeHtml(it.title)}">
                           <span class="gcal-time">${it.start_time || '—'}</span>
-                          <span class="gcal-title">${escapeHtml(it.title)}</span>
+                          <span class="gcal-title">${escapeHtml(it.title)}${escapeHtml(att)}</span>
                         </div>
                       `;
                     }).join('')}
@@ -577,12 +659,17 @@ export const reportService = {
               } else if (tDay.flights && tDay.flights.length > 0) {
                 agendaChipsHtml = `
                   <div class="gcal-chips-wrap">
-                    ${tDay.flights.map((f: any) => `
-                      <div class="gcal-chip gcal-cat-transport">
-                        <span class="gcal-time">${f.departure_time || f.arrival_time || '—'}</span>
-                        <span class="gcal-title">${f.isArrivalOnly ? 'Desembarque' : 'Embarque'} ${escapeHtml(f.identification_number)} (${escapeHtml(f.departure_station_code || '')} ➔ ${escapeHtml(f.arrival_station_code || '')})</span>
-                      </div>
-                    `).join('')}
+                    ${tDay.flights.map((f: any) => {
+                      const pax = f.passengerCount && f.passengerCount > 1
+                        ? (options?.anonymize ? ` (${f.passengerCount} pessoas)` : ` (${f.passengerNames.join(', ')})`)
+                        : '';
+                      return `
+                        <div class="gcal-chip gcal-cat-transport">
+                          <span class="gcal-time">${f.departure_time || f.arrival_time || '—'}</span>
+                          <span class="gcal-title">${f.isArrivalOnly ? 'Desembarque' : 'Embarque'} ${escapeHtml(f.identification_number || '')} (${escapeHtml(f.departure_station_code || '')} ➔ ${escapeHtml(f.arrival_station_code || '')})${escapeHtml(pax)}</span>
+                        </div>
+                      `;
+                    }).join('')}
                   </div>
                 `;
               } else {
@@ -599,7 +686,10 @@ export const reportService = {
               // 3. Lodging / Overnight
               let lodgingHtml = '';
               if (tDay.hotel) {
-                lodgingHtml = `<strong>🏨 ${escapeHtml(tDay.hotel.hotel_name)}</strong><br><small style="color: #64748b;">${escapeHtml(tDay.hotel.city || '')}</small>`;
+                const guests = !options?.anonymize && tDay.hotel.guest_names
+                  ? ` • Hóspedes: ${escapeHtml(tDay.hotel.guest_names)}`
+                  : (tDay.hotel.guestCount > 1 ? ` • ${tDay.hotel.guestCount} hóspedes` : '');
+                lodgingHtml = `<strong>🏨 ${escapeHtml(tDay.hotel.hotel_name)}</strong><br><small style="color: #64748b;">${escapeHtml(tDay.hotel.city || '')}${guests}</small>`;
               } else if (tDay.flights && tDay.flights.some((f: any) => f.arrival_date && f.arrival_date !== f.departure_date)) {
                 lodgingHtml = `<span style="color: #2563eb; font-weight: 500;">✈️ A bordo / Voo noturno</span>`;
               } else {
@@ -1751,6 +1841,8 @@ export const reportService = {
         (day: any) => {
           const ds = toDateStr(day.date);
           const dayFlights = segmentsByDate[ds] || [];
+          const dayItems = aggregateItineraryItems(day.items || [], { anonymize: options?.anonymize });
+
           return `
       <div class="day-card" id="dia-${day.day_number}" data-date="${ds}">
         <div class="day-header">
@@ -1769,15 +1861,18 @@ export const reportService = {
             <div style="font-weight: 700; margin-bottom: 3px; display: flex; align-items: center; gap: 4px;">
               ✈️ Voos Agendados para este Dia:
             </div>
-            ${dayFlights.map((f: any) => `
-              <div style="margin-top: 3px;">
-                <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number)}</strong>: 
-                ${escapeHtml(f.departure_station_code || f.departure_location || '')} (${f.departure_time || '—'}) ➔ 
-                ${escapeHtml(f.arrival_station_code || f.arrival_location || '')} (${f.arrival_time || '—'})
-                ${f.passengerNames && f.passengerNames.length > 0 ? ` • Passageiro(s): <strong>${escapeHtml(f.passengerNames.join(', '))}</strong>` : ''}
-                ${!options?.anonymize && f.seat ? ` • Assento: ${escapeHtml(f.seat)}` : ''}
-              </div>
-            `).join('')}
+            ${dayFlights.map((f: any) => {
+              const paxLabel = f.passengersFormatted || (f.passengerNames && f.passengerNames.length > 0 ? f.passengerNames.join(', ') : '');
+              const paxCount = f.passengerCount || (f.passengerNames ? f.passengerNames.length : 1);
+              return `
+                <div style="margin-top: 3px;">
+                  <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number || '')}</strong>: 
+                  ${escapeHtml(f.departure_station_code || f.departure_location || '')} (${f.departure_time || '—'}) ➔ 
+                  ${escapeHtml(f.arrival_station_code || f.arrival_location || '')} (${f.arrival_time || '—'})
+                  ${paxLabel ? ` • Passageiro(s)${paxCount > 1 ? ` (${paxCount})` : ''}: <strong>${escapeHtml(paxLabel)}</strong>` : ''}
+                </div>
+              `;
+            }).join('')}
           </div>
         `
             : ''
@@ -1814,10 +1909,10 @@ export const reportService = {
         }
 
         ${
-          day.items && day.items.length > 0
+          dayItems.length > 0
             ? `
           <div class="itinerary-sublist">
-            ${day.items
+            ${dayItems
               .map(
                 (item: any) => `
               <div class="itinerary-subitem">
@@ -1833,11 +1928,23 @@ export const reportService = {
                         : ''
                     }
                     ${
-                      !options?.anonymize && !options?.isPublicShare && item.document_id
-                        ? `<a href="/api/documents/${item.document_id}/file" target="_blank" rel="noopener noreferrer" style="text-decoration: none; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 7pt; color: #92400e; background: #fef3c7; padding: 1px 5px; border-radius: 4px; border: 1px solid #fde68a; vertical-align: middle;" title="Abrir documento importado: ${item.document_name || 'Arquivo'}">
-                            <span>📄</span>
-                            <span style="max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.document_name || 'Arquivo'}</span>
-                          </a>`
+                      !options?.anonymize && !options?.isPublicShare
+                        ? ((item.documents && item.documents.length > 0)
+                            ? item.documents
+                            : (item.document_id ? [{ id: item.document_id, original_name: item.document_name }] : [])
+                          ).map((doc: any) => `
+                            <a href="/api/documents/${doc.id || doc.document_id}/file" target="_blank" rel="noopener noreferrer" style="text-decoration: none; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 7pt; color: #92400e; background: #fef3c7; padding: 1px 5px; border-radius: 4px; border: 1px solid #fde68a; vertical-align: middle;" title="Abrir documento importado: ${escapeHtml(doc.original_name || 'Arquivo')}">
+                              <span>📄</span>
+                              <span style="max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(doc.original_name || 'Arquivo')}</span>
+                            </a>
+                          `).join('')
+                        : ''
+                    }
+                    ${
+                      !options?.anonymize && item.attendees && item.attendees.length > 1
+                        ? `<span style="font-size: 7pt; color: #1e3a8a; background: #eff6ff; padding: 1px 5px; border-radius: 4px; border: 1px solid #bfdbfe; margin-left: 6px; vertical-align: middle;">
+                            👥 ${item.attendees.length} pessoas: ${escapeHtml(item.attendees.join(', '))}
+                          </span>`
                         : ''
                     }
                   </div>

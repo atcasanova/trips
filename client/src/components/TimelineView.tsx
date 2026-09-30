@@ -22,17 +22,25 @@ import {
   FileText,
   Wand2,
   ExternalLink,
+  Users,
+  Plane,
+  Building2,
+  LayoutList,
+  CalendarDays,
 } from 'lucide-react';
-import { Trip, TripDay, ItineraryItem } from '../types/index.js';
+import { Trip, TripDay, ItineraryItem, TransportReservation, TransportSegment, HotelReservation } from '../types/index.js';
 import { api } from '../api/client.js';
 import { parseSafeDate } from '../utils/date.js';
 import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
 import { GoogleMapsIcon } from './GoogleMapsIcon.js';
 import { DayMiniMap } from './DayMiniMap.js';
+import { aggregateFlightSegments, aggregateHotels } from '../utils/aggregation.js';
 
 interface TimelineViewProps {
   trip: Trip;
   days: TripDay[];
+  transports?: TransportReservation[];
+  hotels?: HotelReservation[];
   onRefresh: () => void;
   canEdit: boolean;
 }
@@ -73,8 +81,16 @@ const hasMapCoordinates = (item: Pick<ItineraryItem, 'latitude' | 'longitude'>) 
   );
 };
 
-export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefresh, canEdit }) => {
+export const TimelineView: React.FC<TimelineViewProps> = ({
+  trip,
+  days,
+  transports = [],
+  hotels = [],
+  onRefresh,
+  canEdit,
+}) => {
   const [localDays, setLocalDays] = useState<TripDay[]>(days);
+  const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline');
   const [generatingDayId, setGeneratingDayId] = useState<string | null>(null);
   const [refreshingLocations, setRefreshingLocations] = useState(false);
   const [locationRefreshMessage, setLocationRefreshMessage] = useState<string | null>(null);
@@ -85,6 +101,181 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
   useEffect(() => {
     setLocalDays(days);
   }, [days]);
+
+  // Segments and Flights Aggregation by date
+  const allSegments = useMemo(() => {
+    const list: TransportSegment[] = [];
+    for (const t of transports || []) {
+      if (t.segments && t.segments.length > 0) {
+        list.push(...t.segments);
+      }
+    }
+    return list;
+  }, [transports]);
+
+  const flightsByDate = useMemo(() => {
+    const map: Record<string, TransportSegment[]> = {};
+    for (const seg of allSegments) {
+      const date = seg.departure_date || (seg.departure_time ? seg.departure_time.slice(0, 10) : null);
+      if (date) {
+        if (!map[date]) map[date] = [];
+        map[date].push(seg);
+      }
+    }
+    const result: Record<string, ReturnType<typeof aggregateFlightSegments>> = {};
+    for (const [date, segs] of Object.entries(map)) {
+      result[date] = aggregateFlightSegments(segs);
+    }
+    return result;
+  }, [allSegments]);
+
+  // Hotels Aggregation
+  const aggregatedHotels = useMemo(() => {
+    return aggregateHotels(hotels || []);
+  }, [hotels]);
+
+  const getHotelForDate = useCallback((dateStr: string) => {
+    return aggregatedHotels.find(h => {
+      const inD = h.check_in_date;
+      const outD = h.check_out_date || inD;
+      return inD && outD && dateStr >= inD && dateStr <= outD;
+    });
+  }, [aggregatedHotels]);
+
+  // Calendar Grid Data Generation
+  const calendarMonths = useMemo(() => {
+    let minDateStr = trip.start_date || '';
+    let maxDateStr = trip.end_date || '';
+
+    for (const d of localDays) {
+      if (d.date) {
+        if (!minDateStr || d.date < minDateStr) minDateStr = d.date;
+        if (!maxDateStr || d.date > maxDateStr) maxDateStr = d.date;
+      }
+    }
+    for (const seg of allSegments) {
+      const sd = seg.departure_date || (seg.departure_time ? seg.departure_time.slice(0, 10) : '');
+      if (sd) {
+        if (!minDateStr || sd < minDateStr) minDateStr = sd;
+        if (!maxDateStr || sd > maxDateStr) maxDateStr = sd;
+      }
+    }
+    for (const h of aggregatedHotels) {
+      if (h.check_in_date) {
+        if (!minDateStr || h.check_in_date < minDateStr) minDateStr = h.check_in_date;
+      }
+      if (h.check_out_date) {
+        if (!maxDateStr || h.check_out_date > maxDateStr) maxDateStr = h.check_out_date;
+      }
+    }
+
+    if (!minDateStr) minDateStr = new Date().toISOString().slice(0, 10);
+    if (!maxDateStr) maxDateStr = minDateStr;
+
+    const addDays = (dStr: string, count: number) => {
+      const p = parseSafeDate(dStr) || new Date();
+      p.setDate(p.getDate() + count);
+      const y = p.getFullYear();
+      const m = String(p.getMonth() + 1).padStart(2, '0');
+      const d = String(p.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
+    const daysByDateStr: Record<string, TripDay> = {};
+    for (const d of localDays) {
+      if (d.date) daysByDateStr[d.date] = d;
+    }
+
+    const monthsMap: Record<string, { year: number; month: number; days: { dateStr: string; dayNum: number; tripDay?: TripDay; flights: ReturnType<typeof aggregateFlightSegments>; hotel?: ReturnType<typeof getHotelForDate> }[] }> = {};
+
+    let cur = minDateStr;
+    let safeGuard = 0;
+    while (cur <= maxDateStr && safeGuard < 365) {
+      const curDate = parseSafeDate(cur);
+      if (curDate) {
+        const year = curDate.getFullYear();
+        const month = curDate.getMonth() + 1;
+        const ym = `${year}-${String(month).padStart(2, '0')}`;
+        if (!monthsMap[ym]) {
+          monthsMap[ym] = { year, month, days: [] };
+        }
+        monthsMap[ym].days.push({
+          dateStr: cur,
+          dayNum: curDate.getDate(),
+          tripDay: daysByDateStr[cur],
+          flights: flightsByDate[cur] || [],
+          hotel: getHotelForDate(cur),
+        });
+      }
+      cur = addDays(cur, 1);
+      safeGuard++;
+    }
+
+    const monthNamesPt = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+    ];
+
+    return Object.entries(monthsMap).map(([ym, mData]) => {
+      const { year, month, days: mDays } = mData;
+      const monthName = monthNamesPt[month - 1];
+      const firstDow = new Date(year, month - 1, 1).getDay();
+      const totalDays = new Date(year, month, 0).getDate();
+
+      const lookup: Record<number, typeof mDays[0]> = {};
+      for (const md of mDays) {
+        lookup[md.dayNum] = md;
+      }
+
+      const weeks: (typeof mDays[0] | null)[][] = [];
+      let currentWeek: (typeof mDays[0] | null)[] = [];
+
+      for (let i = 0; i < firstDow; i++) {
+        currentWeek.push(null);
+      }
+
+      for (let d = 1; d <= totalDays; d++) {
+        currentWeek.push(lookup[d] || {
+          dateStr: `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+          dayNum: d,
+          tripDay: undefined,
+          flights: [],
+          hotel: undefined,
+        });
+        if (currentWeek.length === 7) {
+          weeks.push(currentWeek);
+          currentWeek = [];
+        }
+      }
+
+      if (currentWeek.length > 0) {
+        while (currentWeek.length < 7) {
+          currentWeek.push(null);
+        }
+        weeks.push(currentWeek);
+      }
+
+      return {
+        ym,
+        year,
+        month,
+        monthName,
+        weeks,
+      };
+    });
+  }, [trip.start_date, trip.end_date, localDays, allSegments, flightsByDate, aggregatedHotels, getHotelForDate]);
+
+  const handleCalendarDayClick = (dayId?: string) => {
+    if (dayId) {
+      setViewMode('timeline');
+      setTimeout(() => {
+        const el = document.getElementById(`day-${dayId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+    }
+  };
 
   // Modals state
   const [showAddDayModal, setShowAddDayModal] = useState(false);
@@ -508,12 +699,44 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
   return (
     <div className="space-y-6">
       {/* Top Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold font-serif text-slate-900">Roteiro Cronológico por Dia</h2>
-          <p className="text-xs text-slate-500">
-            {localDays.length} dias programados • Arraste para reordenar atrações ou movê-las entre dias
-          </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div>
+            <h2 className="text-xl font-bold font-serif text-slate-900">
+              {viewMode === 'timeline' ? 'Roteiro Cronológico por Dia' : 'Visão Geral em Calendário'}
+            </h2>
+            <p className="text-xs text-slate-500">
+              {localDays.length} dias programados • Voos, hotéis e atrações unificados por data
+            </p>
+          </div>
+
+          {/* Toggle between Timeline and Calendar View */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setViewMode('timeline')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                viewMode === 'timeline'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <LayoutList className="w-3.5 h-3.5" />
+              <span>Roteiro & Timeline</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('calendar')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                viewMode === 'calendar'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+              <span>Visão de Calendário</span>
+            </button>
+          </div>
         </div>
 
         {canEdit && (
@@ -540,16 +763,158 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
         )}
       </div>
 
-      <ItineraryMap
-        points={mapPoints}
-        onPointSelect={handleMapPointSelect}
-        onRefresh={handleRefreshLocations}
-        isRefreshing={refreshingLocations}
-        canRefresh={canEdit}
-        accentColor={primaryColor}
-        refreshMessage={locationRefreshMessage}
-        refreshError={locationRefreshError}
-      />
+      {viewMode === 'calendar' ? (
+        <div className="space-y-8">
+          {calendarMonths.map((m) => (
+            <div key={m.ym} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-4 sm:p-6">
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-5 h-5 text-brand-600" />
+                  <h3 className="text-base sm:text-lg font-bold font-serif text-slate-900">
+                    {m.monthName} {m.year}
+                  </h3>
+                </div>
+                <span className="text-xs text-slate-500 font-medium bg-slate-100 px-2.5 py-1 rounded-full">
+                  {m.weeks.reduce((acc, w) => acc + w.filter(c => c && c.tripDay).length, 0)} dias de roteiro
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse min-w-[700px]">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider text-center">
+                      <th className="py-2 px-1 w-[14.28%] text-red-500">Dom</th>
+                      <th className="py-2 px-1 w-[14.28%]">Seg</th>
+                      <th className="py-2 px-1 w-[14.28%]">Ter</th>
+                      <th className="py-2 px-1 w-[14.28%]">Qua</th>
+                      <th className="py-2 px-1 w-[14.28%]">Qui</th>
+                      <th className="py-2 px-1 w-[14.28%]">Sex</th>
+                      <th className="py-2 px-1 w-[14.28%] text-indigo-500">Sáb</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {m.weeks.map((week, wIdx) => (
+                      <tr key={wIdx} className="border-b border-slate-100 last:border-0">
+                        {week.map((cell, cIdx) => {
+                          if (!cell) {
+                            return (
+                              <td key={cIdx} className="p-1.5 sm:p-2 bg-slate-50/40 text-slate-300 align-top h-28 border border-slate-100/60" />
+                            );
+                          }
+
+                          const hasDay = !!cell.tripDay;
+                          const dayItems = cell.tripDay?.items || [];
+
+                          return (
+                            <td
+                              key={cIdx}
+                              onClick={() => cell.tripDay && handleCalendarDayClick(cell.tripDay.id)}
+                              className={`p-1.5 sm:p-2 align-top h-28 border border-slate-100 transition-all ${
+                                hasDay
+                                  ? 'bg-white hover:bg-slate-50/80 cursor-pointer shadow-2xs hover:shadow-sm'
+                                  : 'bg-slate-50/30 text-slate-400'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className={`text-xs font-bold ${hasDay ? 'text-slate-900' : 'text-slate-400'}`}>
+                                  {cell.dayNum}
+                                </span>
+                                {cell.tripDay ? (
+                                  <span
+                                    className="text-[9px] font-extrabold px-1.5 py-0.2 rounded text-white shadow-2xs"
+                                    style={{ backgroundColor: primaryColor }}
+                                  >
+                                    Dia {cell.tripDay.day_number}
+                                  </span>
+                                ) : cell.flights.length > 0 ? (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-100 text-sky-800">
+                                    ✈️ Voo
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              {/* Base Location */}
+                              {cell.tripDay?.base_location && (
+                                <div className="text-[10px] font-semibold text-slate-700 truncate mb-1 flex items-center gap-1">
+                                  <span>{cell.tripDay.icon || '📍'}</span>
+                                  <span className="truncate">{cell.tripDay.base_location}</span>
+                                </div>
+                              )}
+
+                              {/* Flights badge (aggregated: exactly 1 badge per matching flight) */}
+                              {cell.flights.map((fl, fIdx) => (
+                                <div
+                                  key={fIdx}
+                                  className="text-[10px] bg-sky-50 text-sky-900 border border-sky-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                  title={`Voo ${fl.carrier_name || ''} ${fl.identification_number}: ${fl.passengersFormatted || fl.passengerCount + ' passageiros'}`}
+                                >
+                                  ✈️ <strong className="font-semibold">{fl.identification_number || fl.carrier_name || 'Voo'}</strong>
+                                  <span className="text-sky-700 font-normal ml-1">
+                                    ({fl.passengerCount > 1 ? `${fl.passengerCount} pessoas` : (fl.passengersFormatted || '1 pax')})
+                                  </span>
+                                </div>
+                              ))}
+
+                              {/* Hotel badge (aggregated: exactly 1 badge per matching hotel) */}
+                              {cell.hotel && (
+                                <div
+                                  className="text-[10px] bg-emerald-50 text-emerald-900 border border-emerald-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                  title={`Hotel: ${cell.hotel.hotel_name} • Hóspedes: ${cell.hotel.guest_names}`}
+                                >
+                                  🏨 <strong className="font-semibold">{cell.hotel.hotel_name}</strong>
+                                  {cell.hotel.guestCount > 1 && (
+                                    <span className="text-emerald-700 font-normal ml-1">
+                                      ({cell.hotel.guestCount} hóspedes)
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Events & Key Attractions (aggregated: exactly 1 badge with attendees) */}
+                              {dayItems.slice(0, 2).map((it) => (
+                                <div
+                                  key={it.id}
+                                  className="text-[10px] bg-purple-50/80 text-purple-900 border border-purple-200/70 rounded px-1.5 py-0.5 mb-1 truncate font-medium"
+                                  title={`${it.title}${it.attendees && it.attendees.length > 0 ? ` (${it.attendees.join(', ')})` : ''}`}
+                                >
+                                  <span className="truncate">
+                                    {it.category === 'EVENT' ? '🎟️ ' : '• '}{it.title}
+                                  </span>
+                                  {it.attendees && it.attendees.length > 1 && (
+                                    <span className="text-purple-700 font-normal ml-1">
+                                      ({it.attendees.length}p)
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                              {dayItems.length > 2 && (
+                                <span className="text-[9px] text-slate-400 font-medium pl-1">
+                                  +{dayItems.length - 2} atividades
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <ItineraryMap
+            points={mapPoints}
+            onPointSelect={handleMapPointSelect}
+            onRefresh={handleRefreshLocations}
+            isRefreshing={refreshingLocations}
+            canRefresh={canEdit}
+            accentColor={primaryColor}
+            refreshMessage={locationRefreshMessage}
+            refreshError={locationRefreshError}
+          />
 
       {/* Days List */}
       {localDays.length === 0 ? (
@@ -598,6 +963,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
             return (
               <div
                 key={day.id}
+                id={`day-${day.id}`}
                 onDragOver={(e) => {
                   e.preventDefault();
                   if (draggedItem && draggedItem.dayId !== day.id) {
@@ -751,6 +1117,90 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                     </span>
                   )}
                 </div>
+
+                {/* Aggregated Flights for this Day */}
+                {flightsByDate[day.date] && flightsByDate[day.date].length > 0 && (
+                  <div className="space-y-2 my-2.5">
+                    {flightsByDate[day.date].map((fl, fIdx) => (
+                      <div
+                        key={fl.id || fIdx}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-sky-50/80 border border-sky-200/90 rounded-xl text-xs text-sky-950 shadow-2xs"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-700 shrink-0">
+                            <Plane className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap font-bold">
+                              <span className="text-slate-900">{fl.carrier_name || 'Voo'} {fl.identification_number}</span>
+                              <span className="text-sky-700 font-medium">({fl.departure_location} → {fl.arrival_location})</span>
+                              {fl.departure_time && (
+                                <span className="text-slate-500 font-mono text-[11px]">
+                                  {fl.departure_time.slice(0, 5)}{fl.arrival_time ? ` - ${fl.arrival_time.slice(0, 5)}` : ''}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 mt-0.5">
+                              <span className="inline-flex items-center gap-1 font-semibold text-sky-800">
+                                <Users className="w-3 h-3" />
+                                {fl.passengerCount > 1 ? `${fl.passengerCount} passageiros: ` : 'Passageiro: '}
+                                {fl.passengersFormatted || fl.passengersDetail?.map((p) => p.name).join(', ') || 'Viajantes'}
+                              </span>
+                              {fl.seat && (
+                                <span className="bg-sky-100/90 text-sky-800 px-1.5 py-0.2 rounded font-mono text-[10px]">
+                                  Assento: {fl.seat}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {fl.terminal && (
+                          <span className="text-[11px] text-slate-500 shrink-0">
+                            Terminal {fl.terminal} {fl.gate ? `• Portão ${fl.gate}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Aggregated Hotel for this Day */}
+                {(() => {
+                  const activeHotel = getHotelForDate(day.date);
+                  if (!activeHotel) return null;
+                  return (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-950 shadow-2xs my-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                          <Building2 className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap font-bold">
+                            <span className="text-slate-900">{activeHotel.hotel_name}</span>
+                            {activeHotel.city && <span className="text-slate-500 text-[11px] font-normal">({activeHotel.city})</span>}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 mt-0.5">
+                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-800">
+                              <Users className="w-3 h-3" />
+                              {activeHotel.guestCount > 1 ? `${activeHotel.guestCount} hóspedes: ` : 'Hóspede: '}
+                              {activeHotel.guest_names || 'Viajantes'}
+                            </span>
+                            {activeHotel.room_type && (
+                              <span className="text-slate-500">• {activeHotel.room_type}</span>
+                            )}
+                            {activeHotel.reservation_number && (
+                              <span className="text-slate-500 font-mono text-[10px]">Reserva: {activeHotel.reservation_number}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-slate-500 shrink-0 font-medium">
+                        {activeHotel.check_in_date === day.date ? '🛎️ Check-in hoje' : activeHotel.check_out_date === day.date ? '🧳 Check-out hoje' : '🏨 Hospedagem ativa'}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Day Mini Map */}
                 <DayMiniMap
                   dayNumber={day.day_number}
@@ -912,21 +1362,43 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
                                       {item.category}
                                     </span>
                                   )}
-                                  {item.document_id && (
-                                    <a
-                                      href={api.documents.viewUrl(item.document_id)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 hover:text-amber-950 border border-amber-200/90 text-[10px] font-semibold transition-all shadow-2xs shrink-0 cursor-pointer group/doc"
-                                      title={`Documento importado: ${item.document_name || 'Abrir arquivo'}`}
+                                  {/* Multi-document support */}
+                                  {(() => {
+                                    const docs = (item.documents && item.documents.length > 0)
+                                      ? item.documents
+                                      : (item.document_id ? [{ id: item.document_id, original_name: item.document_name }] : []);
+
+                                    return docs.map((doc, docIdx) => (
+                                      <a
+                                        key={doc.id || docIdx}
+                                        href={api.documents.viewUrl(doc.id)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 hover:text-amber-950 border border-amber-200/90 text-[10px] font-semibold transition-all shadow-2xs shrink-0 cursor-pointer group/doc"
+                                        title={`Documento importado: ${doc.original_name || 'Abrir arquivo'}`}
+                                      >
+                                        <FileText className="w-3 h-3 text-amber-600 group-hover/doc:text-amber-700 shrink-0" />
+                                        <span className="max-w-[110px] sm:max-w-[160px] truncate">
+                                          {doc.original_name || 'Arquivo'}
+                                        </span>
+                                        <ExternalLink className="w-2.5 h-2.5 text-amber-500/70 group-hover/doc:text-amber-700 shrink-0" />
+                                      </a>
+                                    ));
+                                  })()}
+
+                                  {/* Attendees Badge */}
+                                  {item.attendees && item.attendees.length > 0 && (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200/90 text-[10px] font-semibold shrink-0"
+                                      title={`Participantes: ${item.attendees.join(', ')}`}
                                     >
-                                      <FileText className="w-3 h-3 text-amber-600 group-hover/doc:text-amber-700 shrink-0" />
-                                      <span className="max-w-[110px] sm:max-w-[160px] truncate">
-                                        {item.document_name || 'Arquivo'}
+                                      <Users className="w-3 h-3 text-purple-600 shrink-0" />
+                                      <span className="max-w-[140px] sm:max-w-[200px] truncate">
+                                        {item.attendees.length > 1 ? `${item.attendees.length} pessoas: ` : ''}
+                                        {item.attendees.join(', ')}
                                       </span>
-                                      <ExternalLink className="w-2.5 h-2.5 text-amber-500/70 group-hover/doc:text-amber-700 shrink-0" />
-                                    </a>
+                                    </span>
                                   )}
                                 </div>
 
@@ -1117,6 +1589,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ trip, days, onRefres
             );
           })}
         </div>
+      )}
+      </>
       )}
 
       {/* MODAL: ASSISTENTE DE ROTEIRO COM IA */}

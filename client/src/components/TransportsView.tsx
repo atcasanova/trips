@@ -171,6 +171,22 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
                             <span>•</span>
                             <span>Chegada: {seg.arrival_date} {seg.arrival_time || ''}</span>
                           </div>
+                          {(() => {
+                            const paxList: Array<{ name: string; seat?: string | null }> = Array.isArray(seg.passengers) && seg.passengers.length > 0
+                              ? seg.passengers
+                              : Array.isArray(seg.passenger_names)
+                              ? seg.passenger_names.map((p: any) => typeof p === 'string' ? { name: p } : { name: p.name || p.displayName, seat: p.seat })
+                              : [];
+                            if (paxList.length === 0) return null;
+                            return (
+                              <div className="mt-1 text-[11px] text-blue-800 bg-blue-50/80 px-2 py-0.5 rounded border border-blue-100/80 inline-flex items-center gap-1.5 flex-wrap">
+                                <span>👤 Passageiro(s){paxList.length > 1 ? ` (${paxList.length})` : ''}:</span>
+                                <strong>
+                                  {paxList.map((p) => p.seat ? `${p.name} (Assento: ${p.seat})` : p.name).join(', ')}
+                                </strong>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
 

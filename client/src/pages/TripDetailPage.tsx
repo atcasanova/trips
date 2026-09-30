@@ -593,7 +593,14 @@ export const TripDetailPage: React.FC = () => {
         )}
 
         {activeTab === 'itinerary' && (
-          <TimelineView trip={trip} days={days} onRefresh={loadAllTripData} canEdit={canEdit} />
+          <TimelineView
+            trip={trip}
+            days={days}
+            transports={transports}
+            hotels={hotels}
+            onRefresh={loadAllTripData}
+            canEdit={canEdit}
+          />
         )}
 
         {activeTab === 'transports' && (

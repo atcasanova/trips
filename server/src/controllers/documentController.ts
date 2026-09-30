@@ -6,6 +6,14 @@ import { computeFileHash } from '../middleware/upload.js';
 import { openaiService } from '../services/openaiService.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
+import {
+  areFlightsMatching,
+  areHotelsMatching,
+  areItineraryItemsMatching,
+  extractPassengers,
+  normalizeFlightNumber,
+  normalizeText,
+} from '../utils/aggregation.js';
 
 export const documentController = {
   // 1. List documents for a trip
@@ -340,7 +348,7 @@ export const documentController = {
 
       // Auto-create reservation based on confirmed type:
       if (confirmedType === 'flight_reservation' || confirmedType === 'FLIGHT') {
-        // Create flight reservation
+        // Create or link flight reservation
         const { rows: resRows } = await query(
           `INSERT INTO transport_reservations (
             trip_id, type, booking_code, ticket_number, provider_name,
@@ -359,40 +367,89 @@ export const documentController = {
           ]
         );
         const resId = resRows[0].id;
+        await query(
+          `INSERT INTO transport_reservation_documents (reservation_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [resId, documentId]
+        );
 
-        // Create segments
+        // Create or aggregate segments
         if (Array.isArray(data.segments)) {
+          const newPax = resolvedTravelers.length > 0 ? resolvedTravelers : (data.passengers || []);
+
           for (let i = 0; i < data.segments.length; i++) {
             const seg = data.segments[i];
-            await query(
-              `INSERT INTO transport_segments (
-                reservation_id, trip_id, segment_number, transport_type,
-                carrier_name, identification_number, departure_location, departure_station_code,
-                departure_date, departure_time, departure_timezone, arrival_location, arrival_station_code,
-                arrival_date, arrival_time, arrival_timezone, cabin_class, seat, duration_minutes, passenger_names
-              ) VALUES ($1, $2, $3, 'FLIGHT', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-              [
-                resId,
-                tripId,
-                i + 1,
-                seg.airline || data.airline || null,
-                seg.flightNumber || null,
-                seg.departureCity || seg.departureAirport || 'Origem',
-                seg.departureAirport || null,
-                seg.departureDate || null,
-                seg.departureTime || null,
-                seg.departureTimezone || null,
-                seg.arrivalCity || seg.arrivalAirport || 'Destino',
-                seg.arrivalAirport || null,
-                seg.arrivalDate || null,
-                seg.arrivalTime || null,
-                seg.arrivalTimezone || null,
-                seg.cabin || 'Economy',
-                seg.seat || null,
-                seg.durationMinutes || null,
-                JSON.stringify(resolvedTravelers.length > 0 ? resolvedTravelers : (data.passengers || [])),
-              ]
+            const segCandidate = {
+              identification_number: seg.flightNumber || null,
+              departure_date: seg.departureDate || null,
+              departure_time: seg.departureTime || null,
+              departure_location: seg.departureCity || seg.departureAirport || 'Origem',
+              departure_station_code: seg.departureAirport || null,
+              arrival_location: seg.arrivalCity || seg.arrivalAirport || 'Destino',
+              arrival_station_code: seg.arrivalAirport || null,
+            };
+
+            // Check if there is already a matching flight segment in the trip for the same flight/date
+            const { rows: existingSegs } = await query(
+              `SELECT s.* FROM transport_segments s
+               WHERE s.trip_id = $1 AND (s.departure_date = $2 OR s.departure_date IS NULL)`,
+              [tripId, seg.departureDate || null]
             );
+
+            const matchingSeg = existingSegs.find((es) => areFlightsMatching(es, segCandidate));
+
+            if (matchingSeg) {
+              // Aggregate passengers into the existing segment
+              const currentPax = extractPassengers(matchingSeg.passenger_names);
+              for (const np of newPax) {
+                const normNp = normalizeText(typeof np === 'string' ? np : np.name);
+                if (!currentPax.some((cp) => normalizeText(cp.name) === normNp)) {
+                  currentPax.push(typeof np === 'string' ? { name: np } : np);
+                }
+              }
+
+              await query(
+                `UPDATE transport_segments SET passenger_names = $1, updated_at = NOW() WHERE id = $2`,
+                [JSON.stringify(currentPax), matchingSeg.id]
+              );
+
+              // Also link this document to the existing reservation
+              await query(
+                `INSERT INTO transport_reservation_documents (reservation_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                [matchingSeg.reservation_id, documentId]
+              );
+
+              logger.info(`Voo agregado ao trecho existente: ${seg.flightNumber || matchingSeg.identification_number} (${currentPax.length} passageiros)`);
+            } else {
+              await query(
+                `INSERT INTO transport_segments (
+                  reservation_id, trip_id, segment_number, transport_type,
+                  carrier_name, identification_number, departure_location, departure_station_code,
+                  departure_date, departure_time, departure_timezone, arrival_location, arrival_station_code,
+                  arrival_date, arrival_time, arrival_timezone, cabin_class, seat, duration_minutes, passenger_names
+                ) VALUES ($1, $2, $3, 'FLIGHT', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+                [
+                  resId,
+                  tripId,
+                  i + 1,
+                  seg.airline || data.airline || null,
+                  seg.flightNumber || null,
+                  seg.departureCity || seg.departureAirport || 'Origem',
+                  seg.departureAirport || null,
+                  seg.departureDate || null,
+                  seg.departureTime || null,
+                  seg.departureTimezone || null,
+                  seg.arrivalCity || seg.arrivalAirport || 'Destino',
+                  seg.arrivalAirport || null,
+                  seg.arrivalDate || null,
+                  seg.arrivalTime || null,
+                  seg.arrivalTimezone || null,
+                  seg.cabin || 'Economy',
+                  seg.seat || null,
+                  seg.durationMinutes || null,
+                  JSON.stringify(newPax),
+                ]
+              );
+            }
           }
         }
 
@@ -425,37 +482,101 @@ export const documentController = {
 
         await query(`UPDATE documents SET category = 'FLIGHT' WHERE id = $1`, [documentId]);
       } else if (confirmedType === 'hotel_reservation' || confirmedType === 'HOTEL') {
-        // Create hotel reservation
-        await query(
-          `INSERT INTO hotel_reservations (
-            trip_id, hotel_name, address, city, country,
-            check_in_date, check_in_time, check_out_date, check_out_time,
-            reservation_number, guest_names, room_type, total_amount, currency,
-            payment_status, phone, email, website, document_id, notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
-          [
-            tripId,
-            data.hotelName || 'Hotel',
-            data.address || null,
-            data.city || null,
-            data.country || null,
-            data.checkInDate || new Date().toISOString().split('T')[0],
-            data.checkInTime || '15:00',
-            data.checkOutDate || new Date().toISOString().split('T')[0],
-            data.checkOutTime || '11:00',
-            data.reservationNumber || null,
-            (resolvedTravelers.length > 0 ? resolvedTravelers.map((t) => t.name).join(', ') : (data.guestNames || null)),
-            data.roomType || null,
-            data.totalAmount || null,
-            data.currency || 'USD',
-            data.paymentStatus || 'CONFIRMED',
-            data.phone || null,
-            data.email || null,
-            data.website || null,
-            documentId,
-            data.notes || null,
-          ]
+        const checkIn = data.checkInDate || new Date().toISOString().split('T')[0];
+        const checkOut = data.checkOutDate || checkIn;
+        const newGuestNames = resolvedTravelers.length > 0 ? resolvedTravelers.map((t) => t.name).join(', ') : (data.guestNames || null);
+
+        // Check if an existing hotel reservation matches this stay
+        const { rows: existingHotels } = await query(
+          `SELECT * FROM hotel_reservations WHERE trip_id = $1`,
+          [tripId]
         );
+
+        const hotelCandidate = {
+          hotel_name: data.hotelName || 'Hotel',
+          address: data.address || null,
+          check_in_date: checkIn,
+          check_out_date: checkOut,
+        };
+
+        const matchingHotel = existingHotels.find((eh) => areHotelsMatching(eh, hotelCandidate));
+
+        if (matchingHotel) {
+          // Merge guest names
+          const guestsList: string[] = [];
+          const seenG = new Set<string>();
+          for (const gStr of [matchingHotel.guest_names, newGuestNames]) {
+            if (gStr) {
+              gStr.split(/[,;\n]/).map((s: string) => s.trim()).filter(Boolean).forEach((g: string) => {
+                const norm = normalizeText(g);
+                if (!seenG.has(norm)) {
+                  seenG.add(norm);
+                  guestsList.push(g);
+                }
+              });
+            }
+          }
+          const mergedGuests = guestsList.join(', ');
+
+          // Merge reservation numbers if both exist and differ
+          const resNumbers = [matchingHotel.reservation_number, data.reservationNumber]
+            .filter(Boolean)
+            .filter((v, i, a) => a.indexOf(v) === i);
+
+          await query(
+            `UPDATE hotel_reservations
+             SET guest_names = $1, reservation_number = $2, updated_at = NOW()
+             WHERE id = $3`,
+            [mergedGuests, resNumbers.join(', ') || null, matchingHotel.id]
+          );
+
+          await query(
+            `INSERT INTO hotel_reservation_documents (hotel_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+            [matchingHotel.id, documentId]
+          );
+
+          logger.info(`Hotel agregado à reserva existente: ${matchingHotel.hotel_name} (Hóspedes: ${mergedGuests})`);
+        } else {
+          // Create hotel reservation
+          const { rows: newHotelRows } = await query(
+            `INSERT INTO hotel_reservations (
+              trip_id, hotel_name, address, city, country,
+              check_in_date, check_in_time, check_out_date, check_out_time,
+              reservation_number, guest_names, room_type, total_amount, currency,
+              payment_status, phone, email, website, document_id, notes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            RETURNING id`,
+            [
+              tripId,
+              data.hotelName || 'Hotel',
+              data.address || null,
+              data.city || null,
+              data.country || null,
+              checkIn,
+              data.checkInTime || '15:00',
+              checkOut,
+              data.checkOutTime || '11:00',
+              data.reservationNumber || null,
+              newGuestNames,
+              data.roomType || null,
+              data.totalAmount || null,
+              data.currency || 'USD',
+              data.paymentStatus || 'CONFIRMED',
+              data.phone || null,
+              data.email || null,
+              data.website || null,
+              documentId,
+              data.notes || null,
+            ]
+          );
+
+          if (newHotelRows.length > 0) {
+            await query(
+              `INSERT INTO hotel_reservation_documents (hotel_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+              [newHotelRows[0].id, documentId]
+            );
+          }
+        }
 
         // Lança/atualiza despesa de hospedagem se houver valor
         if (data.totalAmount && parseFloat(data.totalAmount) > 0) {
@@ -627,36 +748,76 @@ export const documentController = {
           const costAmount = data.totalAmount && parseFloat(data.totalAmount) > 0 ? parseFloat(data.totalAmount) : null;
           const costCurrency = data.currency || 'BRL';
 
-          const { rows: existingItems } = await query(
-            `SELECT id FROM itinerary_items WHERE trip_id = $1 AND notes LIKE $2`,
-            [tripId, `%[DocID: ${documentId}]%`]
+          const { rows: existingDocItems } = await query(
+            `SELECT * FROM itinerary_items WHERE trip_id = $1 AND (notes LIKE $2 OR document_id = $3)`,
+            [tripId, `%[DocID: ${documentId}]%`, documentId]
           );
 
-          if (existingItems.length > 0) {
+          let targetItem = existingDocItems.length > 0 ? existingDocItems[0] : null;
+
+          if (!targetItem) {
+            // Check if there is an existing item on the same day matching this event/show
+            const { rows: dayItems } = await query(
+              `SELECT * FROM itinerary_items WHERE trip_day_id = $1`,
+              [targetDayId]
+            );
+            const candidate = { title: eventTitle, start_time: startTime, location_name: venueName, address };
+            targetItem = dayItems.find((di) => areItineraryItemsMatching(di, candidate)) || null;
+          }
+
+          let finalItemId: string;
+
+          if (targetItem) {
+            finalItemId = targetItem.id;
+
+            // Merge tips cleanly
+            const existingTips = targetItem.tips || '';
+            const newTips = tips || '';
+            let mergedTips = existingTips;
+            if (newTips) {
+              if (!existingTips) {
+                mergedTips = newTips;
+              } else if (!existingTips.includes(newTips)) {
+                mergedTips = `${existingTips} | ${newTips}`;
+              }
+            }
+
+            // Merge notes cleanly (preserve DocID and new notes)
+            const existingNotes = targetItem.notes || '';
+            const newNotes = notes || '';
+            let mergedNotes = existingNotes;
+            if (newNotes) {
+              if (!existingNotes) {
+                mergedNotes = newNotes;
+              } else if (!existingNotes.includes(`[DocID: ${documentId}]`)) {
+                mergedNotes = `${existingNotes}\n\n${newNotes}`;
+              }
+            }
+
             await query(
               `UPDATE itinerary_items
                SET trip_day_id = $1,
-                   title = $2,
+                   title = COALESCE($2, title),
                    category = $3,
-                   start_time = $4,
-                   end_time = $5,
-                   location_name = $6,
-                   address = $7,
-                   latitude = $8,
-                   longitude = $9,
-                   location_source = $10,
-                   location_source_url = $11,
-                   location_confidence = $12,
-                   location_verified_at = $13,
-                   location_kind = $14,
-                   location_anchor_name = $15,
-                   map_mode = 'AUTO',
-                   booking_reference = $16,
+                   start_time = COALESCE(start_time, $4),
+                   end_time = COALESCE(end_time, $5),
+                   location_name = COALESCE(location_name, $6),
+                   address = COALESCE(address, $7),
+                   latitude = COALESCE(latitude, $8),
+                   longitude = COALESCE(longitude, $9),
+                   location_source = COALESCE(location_source, $10),
+                   location_source_url = COALESCE(location_source_url, $11),
+                   location_confidence = COALESCE(location_confidence, $12),
+                   location_verified_at = COALESCE(location_verified_at, $13),
+                   location_kind = COALESCE(location_kind, $14),
+                   location_anchor_name = COALESCE(location_anchor_name, $15),
+                   map_mode = COALESCE(map_mode, 'AUTO'),
+                   booking_reference = COALESCE(booking_reference, $16),
                    tips = $17,
                    notes = $18,
-                   cost_amount = $19,
-                   cost_currency = $20,
-                   document_id = $21,
+                   cost_amount = COALESCE(cost_amount, $19),
+                   cost_currency = COALESCE(cost_currency, $20),
+                   document_id = COALESCE(document_id, $21),
                    updated_at = NOW()
                WHERE id = $22`,
               [
@@ -676,14 +837,21 @@ export const documentController = {
                 lat && lng ? 'PLACE' : null,
                 venueName,
                 bookingRef,
-                tips,
-                notes,
+                mergedTips,
+                mergedNotes,
                 costAmount,
                 costCurrency,
                 documentId,
-                existingItems[0].id,
+                targetItem.id,
               ]
             );
+
+            await query(
+              `INSERT INTO itinerary_item_documents (itinerary_item_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+              [targetItem.id, documentId]
+            );
+
+            logger.info(`Item de roteiro agregado ao item existente: ${targetItem.title} (ID: ${targetItem.id})`);
           } else {
             const { rows: orderRows } = await query(
               `SELECT COALESCE(MAX(order_index), 0) + 1 AS next_order FROM itinerary_items WHERE trip_day_id = $1`,
@@ -691,14 +859,15 @@ export const documentController = {
             );
             const orderIndex = parseInt(orderRows[0].next_order, 10);
 
-            await query(
+            const { rows: newItemRows } = await query(
               `INSERT INTO itinerary_items (
                 trip_id, trip_day_id, title, category, start_time, end_time,
                 location_name, address, latitude, longitude,
                 location_source, location_source_url, location_confidence, location_verified_at,
                 location_kind, location_anchor_name, map_mode,
                 booking_reference, tips, notes, cost_amount, cost_currency, order_index, document_id
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'AUTO', $17, $18, $19, $20, $21, $22, $23)`,
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'AUTO', $17, $18, $19, $20, $21, $22, $23)
+              RETURNING id`,
               [
                 tripId,
                 targetDayId,
@@ -724,6 +893,12 @@ export const documentController = {
                 orderIndex,
                 documentId,
               ]
+            );
+            finalItemId = newItemRows[0].id;
+
+            await query(
+              `INSERT INTO itinerary_item_documents (itinerary_item_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+              [finalItemId, documentId]
             );
           }
 

@@ -160,6 +160,16 @@ export interface ItineraryItem {
   document_name?: string | null;
   document_mime_type?: string | null;
   document_size?: number | null;
+  documents?: Array<{
+    id: string;
+    document_id?: string;
+    original_name?: string;
+    mime_type?: string;
+    file_size?: number;
+  }>;
+  attendees?: string[];
+  attendeesCount?: number;
+  merged_item_ids?: string[];
 }
 
 export interface TransportReservation {
@@ -204,7 +214,14 @@ export interface TransportSegment {
   baggage_allowance?: string | null;
   terminal?: string | null;
   gate?: string | null;
-  passenger_names?: string[];
+  passenger_names?: any;
+  passengers?: Array<{
+    name: string;
+    seat?: string | null;
+    ticketNumber?: string | null;
+    ticketName?: string | null;
+  }>;
+  passengersFormatted?: string;
   notes?: string | null;
 }
 

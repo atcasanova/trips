@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
+import { aggregateHotels, extractPassengers } from '../utils/aggregation.js';
 
 export const reservationController = {
   // === TRANSPORTS ===
@@ -20,8 +21,14 @@ export const reservationController = {
 
       const segmentsByRes: Record<string, any[]> = {};
       for (const s of segments) {
+        const paxList = extractPassengers(s.passenger_names);
+        const enhancedSegment = {
+          ...s,
+          passengers: paxList,
+          passenger_names: paxList,
+        };
         if (!segmentsByRes[s.reservation_id]) segmentsByRes[s.reservation_id] = [];
-        segmentsByRes[s.reservation_id].push(s);
+        segmentsByRes[s.reservation_id].push(enhancedSegment);
       }
 
       const result = reservations.map((r: any) => ({
@@ -152,7 +159,8 @@ export const reservationController = {
         `SELECT * FROM hotel_reservations WHERE trip_id = $1 ORDER BY check_in_date ASC`,
         [tripId]
       );
-      return res.json({ hotels: rows });
+      const aggregated = aggregateHotels(rows);
+      return res.json({ hotels: aggregated });
     } catch (err: any) {
       logger.error('Erro ao listar hotéis:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao listar hotéis' });
