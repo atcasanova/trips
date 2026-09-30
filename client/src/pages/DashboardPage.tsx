@@ -4,6 +4,7 @@ import { Trip } from '../types/index.js';
 import { api } from '../api/client.js';
 import { TripCard } from '../components/TripCard.js';
 import { NewTripModal } from '../components/NewTripModal.js';
+import { DeleteTripModal } from '../components/DeleteTripModal.js';
 import { useAuth } from '../context/AuthContext.js';
 
 export const DashboardPage: React.FC = () => {
@@ -13,6 +14,7 @@ export const DashboardPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [showNewModal, setShowNewModal] = useState(false);
+  const [tripToDelete, setTripToDelete] = useState<Trip | null>(null);
 
   const loadTrips = async () => {
     try {
@@ -132,7 +134,12 @@ export const DashboardPage: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredTrips.map((trip) => (
-            <TripCard key={trip.id} trip={trip} />
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              canManage={trip.user_role === 'OWNER' || user?.role === 'ADMIN'}
+              onDelete={(t) => setTripToDelete(t)}
+            />
           ))}
         </div>
       )}
@@ -147,6 +154,17 @@ export const DashboardPage: React.FC = () => {
           onClose={() => setShowNewModal(false)}
         />
       )}
+
+      {/* Delete Trip Confirmation Modal */}
+      <DeleteTripModal
+        trip={tripToDelete}
+        isOpen={!!tripToDelete}
+        onClose={() => setTripToDelete(null)}
+        onSuccess={() => {
+          setTripToDelete(null);
+          loadTrips();
+        }}
+      />
     </div>
   );
 };

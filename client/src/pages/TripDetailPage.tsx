@@ -21,6 +21,7 @@ import {
   Scale,
   ArrowRight,
   Check,
+  Trash2,
 } from 'lucide-react';
 import {
   Trip,
@@ -42,6 +43,7 @@ import { ReportEditorView } from '../components/ReportEditorView.js';
 import { ThemePicker } from '../components/ThemePicker.js';
 import { PexelsModal } from '../components/PexelsModal.js';
 import { MembersModal } from '../components/MembersModal.js';
+import { DeleteTripModal } from '../components/DeleteTripModal.js';
 import { useAuth } from '../context/AuthContext.js';
 
 const VALID_TABS = [
@@ -78,6 +80,7 @@ export const TripDetailPage: React.FC = () => {
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [showPexelsModal, setShowPexelsModal] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const tripId = id || '';
 
@@ -268,6 +271,17 @@ export const TripDetailPage: React.FC = () => {
                   <span className="hidden sm:inline">Tema</span>
                 </button>
               </>
+            )}
+
+            {canManage && (
+              <button
+                onClick={() => setShowDeleteModal(true)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-rose-500/25 hover:bg-rose-600 text-rose-200 hover:text-white text-xs font-semibold backdrop-blur transition-all border border-rose-500/30"
+                title="Excluir ou arquivar esta viagem"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Excluir</span>
+              </button>
             )}
           </div>
         </div>
@@ -589,6 +603,30 @@ export const TripDetailPage: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* Danger Zone / Trip Management */}
+            {canManage && (
+              <div className="bg-white rounded-2xl border border-rose-200/80 p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-base font-bold font-serif text-slate-900 flex items-center gap-2">
+                      <Trash2 className="w-4 h-4 text-rose-600" />
+                      <span>Zona de Gerenciamento & Exclusão</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1 max-w-xl">
+                      Como proprietário ou administrador desta viagem, você pode arquivá-la ou excluí-la. Todos os participantes perderão o acesso aos itinerários, reservas e documentos associados.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowDeleteModal(true)}
+                    className="px-4 py-2 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 hover:border-transparent rounded-xl text-xs font-bold transition-all shrink-0 flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Excluir Viagem</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -646,6 +684,18 @@ export const TripDetailPage: React.FC = () => {
           onRefresh={loadAllTripData}
           onClose={() => setShowMembersModal(false)}
           canManage={canManage}
+        />
+      )}
+
+      {showDeleteModal && (
+        <DeleteTripModal
+          trip={trip}
+          isOpen={showDeleteModal}
+          onClose={() => setShowDeleteModal(false)}
+          onSuccess={() => {
+            setShowDeleteModal(false);
+            navigate('/');
+          }}
         />
       )}
     </div>
