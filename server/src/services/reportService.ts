@@ -296,6 +296,73 @@ export const reportService = {
       return [];
     };
 
+    interface PassengerDetail {
+      name: string;
+      seat?: string | null;
+      bookingCode?: string | null;
+      ticketNumber?: string | null;
+    }
+
+    // Extract detailed passengers with seats and booking codes
+    const extractPassengerDetails = (
+      val: any,
+      defaultSeat?: string | null,
+      defaultBookingCode?: string | null
+    ): PassengerDetail[] => {
+      if (options?.anonymize) {
+        return [{ name: 'Viajante(s)' }];
+      }
+      if (!val || (Array.isArray(val) && val.length === 0)) {
+        if (travelers && travelers.length > 0) {
+          return travelers.map((t: any) => ({
+            name: t.display_name || t.name,
+            seat: defaultSeat || null,
+            bookingCode: defaultBookingCode || null,
+          }));
+        }
+        return [];
+      }
+      let parsed = val;
+      if (typeof val === 'string') {
+        try {
+          parsed = JSON.parse(val);
+        } catch {
+          return [{ name: val, seat: defaultSeat || null, bookingCode: defaultBookingCode || null }];
+        }
+      }
+      if (Array.isArray(parsed)) {
+        const list: PassengerDetail[] = [];
+        for (const p of parsed) {
+          if (!p) continue;
+          if (typeof p === 'string') {
+            list.push({
+              name: p,
+              seat: defaultSeat || null,
+              bookingCode: defaultBookingCode || null,
+            });
+          } else if (typeof p === 'object') {
+            const name = p.name || p.displayName || p.ticketName;
+            if (!name) continue;
+            list.push({
+              name,
+              seat: p.seat || defaultSeat || null,
+              bookingCode: p.bookingCode || p.booking_code || defaultBookingCode || null,
+              ticketNumber: p.ticketNumber || p.ticket_number || null,
+            });
+          }
+        }
+        if (list.length > 0) return list;
+      }
+      if (travelers && travelers.length > 0) {
+        return travelers.map((t: any) => ({
+          name: t.display_name || t.name,
+          seat: defaultSeat || null,
+          bookingCode: defaultBookingCode || null,
+        }));
+      }
+      return [];
+    };
+
     // Index days by dateStr
     const daysByDate: Record<string, any> = {};
     for (const d of days) {
@@ -1996,19 +2063,130 @@ export const reportService = {
     <div class="footer-ornament">❀  ❀  ❀</div>
   </div>
 
-  ${
-    transports && transports.length > 0
-      ? `
+  ${(() => {
+    if (!transports || transports.length === 0) return '';
+
+    // Condense / group transports that share the same flights or empty duplicate reservations
+    const condenseTransports = (rawTransports: any[]) => {
+      const condensed: any[] = [];
+
+      for (const tr of rawTransports) {
+        const trType = tr.type || 'FLIGHT';
+        const trProvider = (tr.provider_name || '').trim().toLowerCase();
+        const trSegments = tr.segments || [];
+
+        const matched = condensed.find((g) => {
+          if (g.type !== trType) return false;
+          if (trProvider && g.provider_name && g.provider_name.trim().toLowerCase() === trProvider) {
+            return true;
+          }
+          if (trSegments.length > 0 && g.segments.length > 0) {
+            return trSegments.some((s1: any) =>
+              g.segments.some((s2: any) =>
+                s1.identification_number &&
+                s2.identification_number &&
+                s1.identification_number.trim().toUpperCase() === s2.identification_number.trim().toUpperCase() &&
+                toDateStr(s1.departure_date) === toDateStr(s2.departure_date)
+              )
+            );
+          }
+          return false;
+        });
+
+        if (matched) {
+          if (tr.booking_code && !matched.booking_codes.includes(tr.booking_code)) {
+            matched.booking_codes.push(tr.booking_code);
+          }
+
+          for (const seg of trSegments) {
+            const existingSeg = matched.segments.find((s: any) =>
+              s.identification_number &&
+              seg.identification_number &&
+              s.identification_number.trim().toUpperCase() === seg.identification_number.trim().toUpperCase() &&
+              toDateStr(s.departure_date) === toDateStr(seg.departure_date)
+            );
+
+            if (existingSeg) {
+              const currentPax = extractPassengerDetails(existingSeg.passenger_names, existingSeg.seat, matched.booking_codes[0]);
+              const newPax = extractPassengerDetails(seg.passenger_names, seg.seat, tr.booking_code);
+              for (const np of newPax) {
+                const normNp = np.name.toLowerCase().trim();
+                const idx = currentPax.findIndex(cp => cp.name.toLowerCase().trim() === normNp);
+                if (idx >= 0) {
+                  if (!currentPax[idx].seat && np.seat) currentPax[idx].seat = np.seat;
+                  if (!currentPax[idx].bookingCode && np.bookingCode) currentPax[idx].bookingCode = np.bookingCode;
+                } else {
+                  currentPax.push(np);
+                }
+              }
+              existingSeg.passenger_names = currentPax;
+            } else {
+              matched.segments.push(seg);
+            }
+          }
+        } else {
+          condensed.push({
+            type: trType,
+            provider_name: tr.provider_name,
+            booking_codes: tr.booking_code ? [tr.booking_code] : [],
+            segments: [...trSegments],
+          });
+        }
+      }
+
+      // Filter out reservations with 0 segments if another with segments exists
+      const withSegments = condensed.filter(g => g.segments && g.segments.length > 0);
+      const finalGroups = withSegments.length > 0 ? withSegments : condensed;
+
+      for (const g of finalGroups) {
+        g.segments.sort((a: any, b: any) => {
+          const d1 = `${toDateStr(a.departure_date)} ${a.departure_time || ''}`;
+          const d2 = `${toDateStr(b.departure_date)} ${b.departure_time || ''}`;
+          return d1.localeCompare(d2);
+        });
+      }
+
+      return finalGroups;
+    };
+
+    const condensedList = condenseTransports(transports);
+    if (condensedList.length === 0) return '';
+
+    return `
   <!-- TRANSPORTES & VOOS -->
   <div class="page-break" id="transportes">
     <h1 class="section-title">Transportes & Voos</h1>
-    ${transports
-      .map(
-        (tr: any) => `
-      <div style="margin-bottom: 20px;">
-        <h2 class="subsection-title">
-          ${tr.type === 'FLIGHT' ? '✈️ Reserva Aérea' : '🚆 Transporte'}: ${tr.provider_name || ''} 
-          ${tr.booking_code ? `<span style="color: ${theme.primary}; font-weight: bold;">(Localizador: ${options?.anonymize ? '******' : tr.booking_code})</span>` : ''}
+    ${condensedList
+      .map((tr: any) => {
+        // Collect mapping of passenger -> bookingCode across all segments in this group
+        const paxBookingMap = new Map<string, string>();
+        for (const s of tr.segments) {
+          const pDetails = extractPassengerDetails(s.passenger_names, s.seat, tr.booking_codes[0]);
+          for (const p of pDetails) {
+            if (p.name && p.bookingCode) {
+              paxBookingMap.set(p.name, p.bookingCode);
+            }
+          }
+        }
+
+        let bookingCodesHtml = '';
+        if (options?.anonymize) {
+          bookingCodesHtml = `<span style="font-weight: bold; color: ${theme.primary}; font-size: 13px;">(Localizador: ******)</span>`;
+        } else if (paxBookingMap.size > 1) {
+          const items = Array.from(paxBookingMap.entries()).map(
+            ([pName, pCode]) => `<strong>${escapeHtml(pName)}:</strong> <span style="font-family: monospace; font-weight: bold; color: ${theme.primary}; background: #fdf2f4; padding: 1px 6px; border-radius: 4px; border: 1px solid #fecdd3;">${escapeHtml(pCode)}</span>`
+          );
+          bookingCodesHtml = `<span style="color: #475569; font-size: 12px; font-weight: normal; margin-left: 8px;">(Localizadores: ${items.join(' &nbsp;&bull;&nbsp; ')})</span>`;
+        } else if (tr.booking_codes && tr.booking_codes.length > 0) {
+          const codes = tr.booking_codes.map((c: string) => `<span style="font-family: monospace; font-weight: bold; color: ${theme.primary}; background: #fdf2f4; padding: 1px 6px; border-radius: 4px; border: 1px solid #fecdd3;">${escapeHtml(c)}</span>`).join(', ');
+          bookingCodesHtml = `<span style="color: #475569; font-size: 12px; font-weight: normal; margin-left: 8px;">(Localizador${tr.booking_codes.length > 1 ? 'es' : ''}: ${codes})</span>`;
+        }
+
+        return `
+      <div style="margin-bottom: 24px;">
+        <h2 class="subsection-title" style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+          <span>${tr.type === 'FLIGHT' ? '✈️ Reserva Aérea' : '🚆 Transporte'}: ${escapeHtml(tr.provider_name || '')}</span>
+          ${bookingCodesHtml}
         </h2>
         <div class="table-responsive">
         <table class="data-table">
@@ -2020,28 +2198,44 @@ export const reportService = {
               <th>Destino</th>
               <th>Chegada</th>
               <th>Duração / Conexão</th>
-              <th>Assento / Classe</th>
-              <th>Passageiro(s)</th>
+              <th>Classe</th>
+              <th>Passageiro(s) & Poltronas</th>
             </tr>
           </thead>
           <tbody>
             ${
               tr.segments && tr.segments.length > 0
                 ? tr.segments
-                    .map(
-                      (s: any) => `
+                    .map((s: any) => {
+                      const paxDetails = extractPassengerDetails(s.passenger_names, s.seat, tr.booking_codes[0]);
+                      const paxHtml = paxDetails.length > 0
+                        ? paxDetails
+                            .map((p: any) => {
+                              const seatTag = p.seat
+                                ? `<strong style="color: ${theme.primary}; font-weight: bold;">${escapeHtml(p.seat)}</strong>`
+                                : `<span style="color: #94a3b8; font-style: italic; font-size: 11px;">Não marcado</span>`;
+                              return `
+                                <div style="margin: 2px 0; line-height: 1.4;">
+                                  <strong>${escapeHtml(p.name)}</strong>: Poltrona ${seatTag}
+                                </div>
+                              `;
+                            })
+                            .join('')
+                        : '—';
+
+                      return `
                   <tr>
-                    <td><strong>${s.identification_number || s.carrier_name || 'Voo'}</strong></td>
-                    <td>${s.departure_location} (${s.departure_station_code || '—'})</td>
-                    <td>${formatDateShort(s.departure_date)} ${s.departure_time || ''}</td>
-                    <td>${s.arrival_location} (${s.arrival_station_code || '—'})</td>
-                    <td>${formatDateShort(s.arrival_date)} ${s.arrival_time || ''}</td>
+                    <td><strong>${escapeHtml(s.identification_number || s.carrier_name || 'Voo')}</strong></td>
+                    <td>${escapeHtml(s.departure_location || '—')} (${escapeHtml(s.departure_station_code || '—')})</td>
+                    <td>${formatDateShort(s.departure_date)} ${escapeHtml(s.departure_time || '')}</td>
+                    <td>${escapeHtml(s.arrival_location || '—')} (${escapeHtml(s.arrival_station_code || '—')})</td>
+                    <td>${formatDateShort(s.arrival_date)} ${escapeHtml(s.arrival_time || '')}</td>
                     <td>${s.duration_minutes ? Math.floor(s.duration_minutes / 60) + 'h' + (s.duration_minutes % 60) + 'm' : '—'} ${s.layover_minutes ? `(Conexão: ${Math.floor(s.layover_minutes / 60)}h${s.layover_minutes % 60}m)` : ''}</td>
-                    <td>${options?.anonymize ? '—' : (s.seat || '—')} / ${s.cabin_class || 'Econômica'}</td>
-                    <td><strong>${escapeHtml(extractPassengerNames(s.passenger_names).join(', ') || '—')}</strong></td>
+                    <td>${escapeHtml(s.cabin_class || 'Econômica')}</td>
+                    <td>${paxHtml}</td>
                   </tr>
-                `
-                    )
+                `;
+                    })
                     .join('')
                 : `<tr><td colspan="8">Nenhum trecho detalhado</td></tr>`
             }
@@ -2049,13 +2243,12 @@ export const reportService = {
         </table>
         </div>
       </div>
-    `
-      )
+    `;
+      })
       .join('')}
   </div>
-  `
-      : ''
-  }
+  `;
+  })()}
 
   ${
     hotels && hotels.length > 0

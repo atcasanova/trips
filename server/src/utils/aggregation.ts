@@ -6,6 +6,7 @@
 export interface AggregatedPassenger {
   name: string;
   seat?: string | null;
+  bookingCode?: string | null;
   ticketNumber?: string | null;
   ticketName?: string | null;
   travelerId?: string | null;
@@ -68,6 +69,7 @@ export function extractPassengers(val: any, fallbackNames: string[] = []): Aggre
           result.push({
             name,
             seat: item.seat || null,
+            bookingCode: item.bookingCode || null,
             ticketNumber: item.ticketNumber || null,
             ticketName: item.ticketName || null,
             travelerId: item.travelerId || null,

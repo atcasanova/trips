@@ -251,10 +251,22 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
         if (matchingSeg) {
           // Aggregate passengers into the existing segment
           const currentPax = extractPassengers(matchingSeg.passenger_names);
+          for (const cp of currentPax) {
+            if (!cp.seat && matchingSeg.seat) cp.seat = matchingSeg.seat;
+          }
+
           for (const np of newPax) {
             const normNp = normalizeText(typeof np === 'string' ? np : np.name);
-            if (!currentPax.some((cp) => normalizeText(cp.name) === normNp)) {
-              currentPax.push(typeof np === 'string' ? { name: np } : np);
+            const paxObj = typeof np === 'string' ? { name: np } : { ...np };
+            if (!paxObj.seat && seg.seat) paxObj.seat = seg.seat;
+            if (!paxObj.bookingCode && data.reservationCode) paxObj.bookingCode = data.reservationCode;
+
+            const existingIdx = currentPax.findIndex((cp) => normalizeText(cp.name) === normNp);
+            if (existingIdx >= 0) {
+              if (!currentPax[existingIdx].seat && paxObj.seat) currentPax[existingIdx].seat = paxObj.seat;
+              if (!currentPax[existingIdx].bookingCode && paxObj.bookingCode) currentPax[existingIdx].bookingCode = paxObj.bookingCode;
+            } else {
+              currentPax.push(paxObj);
             }
           }
 
@@ -271,6 +283,13 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
 
           logger.info(`Voo agregado ao trecho existente: ${seg.flightNumber || matchingSeg.identification_number} (${currentPax.length} passageiros)`);
         } else {
+          const segPax = newPax.map((np: any) => {
+            const paxObj = typeof np === 'string' ? { name: np } : { ...np };
+            if (!paxObj.seat && seg.seat) paxObj.seat = seg.seat;
+            if (!paxObj.bookingCode && data.reservationCode) paxObj.bookingCode = data.reservationCode;
+            return paxObj;
+          });
+
           await query(
             `INSERT INTO transport_segments (
               reservation_id, trip_id, segment_number, transport_type,
@@ -297,11 +316,22 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
               seg.cabin || 'Economy',
               seg.seat || null,
               seg.durationMinutes || null,
-              JSON.stringify(newPax),
+              JSON.stringify(segPax),
             ]
           );
         }
       }
+    }
+
+    // Se nenhum trecho foi cadastrado nesta reserva (porque todos foram consolidados em reservas existentes),
+    // removemos a reserva vazia recém-criada para evitar registros duplicados sem trechos
+    const { rows: segCount } = await query(
+      `SELECT count(*)::int as count FROM transport_segments WHERE reservation_id = $1`,
+      [resId]
+    );
+    if (segCount.length > 0 && segCount[0].count === 0) {
+      await query(`DELETE FROM transport_reservations WHERE id = $1`, [resId]);
+      logger.info(`Reserva vazia ${resId} removida pois todos os trechos foram consolidados em trechos existentes.`);
     }
 
     // Lança/atualiza despesa de transporte se houver valor

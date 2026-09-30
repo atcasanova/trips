@@ -110,7 +110,39 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
         </div>
       ) : (
         <div className="space-y-4">
-          {transports.map((tr) => (
+          {transports
+            .filter((tr) => {
+              if (tr.segments && tr.segments.length > 0) return true;
+              if (tr.booking_code) {
+                const existsInOther = transports.some(
+                  (other) =>
+                    other.id !== tr.id &&
+                    other.segments &&
+                    other.segments.some((s) => {
+                      const pnames = Array.isArray(s.passenger_names) ? s.passenger_names : [];
+                      return pnames.some((p: any) => typeof p === 'object' && p?.bookingCode === tr.booking_code);
+                    })
+                );
+                if (existsInOther) return false;
+              }
+              return true;
+            })
+            .map((tr) => {
+              // Extract all unique booking codes for this reservation
+              const bookingCodes: string[] = [];
+              if (tr.booking_code) bookingCodes.push(tr.booking_code);
+              if (Array.isArray(tr.segments)) {
+                for (const s of tr.segments) {
+                  const pnames = Array.isArray(s.passenger_names) ? s.passenger_names : [];
+                  for (const p of pnames) {
+                    if (typeof p === 'object' && p?.bookingCode && !bookingCodes.includes(p.bookingCode)) {
+                      bookingCodes.push(p.bookingCode);
+                    }
+                  }
+                }
+              }
+
+              return (
             <div key={tr.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               {/* Header */}
               <div className="flex items-start justify-between pb-3 border-b border-slate-100">
@@ -119,12 +151,16 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
                     {getTransportIcon(tr.type)}
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
-                      {tr.provider_name || 'Transporte'}
-                      {tr.booking_code && (
-                        <span className="px-2 py-0.5 bg-brand-50 text-brand-700 border border-brand-200 font-mono text-xs rounded-md">
-                          PNR: {tr.booking_code}
-                        </span>
+                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2 flex-wrap">
+                      <span>{tr.provider_name || 'Transporte'}</span>
+                      {bookingCodes.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {bookingCodes.map((code) => (
+                            <span key={code} className="px-2 py-0.5 bg-brand-50 text-brand-700 border border-brand-200 font-mono text-xs rounded-md">
+                              PNR: {code}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </h3>
                     <span className="text-[11px] text-slate-500">
@@ -150,7 +186,15 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
               {/* Segments */}
               <div className="mt-4 space-y-3">
                 {tr.segments && tr.segments.length > 0 ? (
-                  tr.segments.map((seg, idx) => (
+                  tr.segments.map((seg, idx) => {
+                    const paxList: Array<{ name: string; seat?: string | null; bookingCode?: string | null }> = Array.isArray(seg.passengers) && seg.passengers.length > 0
+                      ? seg.passengers
+                      : Array.isArray(seg.passenger_names)
+                      ? seg.passenger_names.map((p: any) => typeof p === 'string' ? { name: p } : { name: p.name || p.displayName, seat: p.seat, bookingCode: p.bookingCode })
+                      : [];
+                    const hasPaxSeats = paxList.some((p) => p.seat);
+
+                    return (
                     <div
                       key={seg.id || idx}
                       className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
@@ -171,27 +215,24 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
                             <span>•</span>
                             <span>Chegada: {seg.arrival_date} {seg.arrival_time || ''}</span>
                           </div>
-                          {(() => {
-                            const paxList: Array<{ name: string; seat?: string | null }> = Array.isArray(seg.passengers) && seg.passengers.length > 0
-                              ? seg.passengers
-                              : Array.isArray(seg.passenger_names)
-                              ? seg.passenger_names.map((p: any) => typeof p === 'string' ? { name: p } : { name: p.name || p.displayName, seat: p.seat })
-                              : [];
-                            if (paxList.length === 0) return null;
-                            return (
-                              <div className="mt-1 text-[11px] text-blue-800 bg-blue-50/80 px-2 py-0.5 rounded border border-blue-100/80 inline-flex items-center gap-1.5 flex-wrap">
-                                <span>👤 Passageiro(s){paxList.length > 1 ? ` (${paxList.length})` : ''}:</span>
-                                <strong>
-                                  {paxList.map((p) => p.seat ? `${p.name} (Assento: ${p.seat})` : p.name).join(', ')}
-                                </strong>
-                              </div>
-                            );
-                          })()}
+                          {paxList.length > 0 && (
+                            <div className="mt-1 text-[11px] text-blue-800 bg-blue-50/80 px-2 py-0.5 rounded border border-blue-100/80 inline-flex items-center gap-1.5 flex-wrap">
+                              <span>👤 Passageiro(s){paxList.length > 1 ? ` (${paxList.length})` : ''}:</span>
+                              <strong>
+                                {paxList.map((p) => {
+                                  const parts: string[] = [];
+                                  if (p.seat) parts.push(`Poltrona: ${p.seat}`);
+                                  if (p.bookingCode && bookingCodes.length > 1) parts.push(`PNR: ${p.bookingCode}`);
+                                  return parts.length > 0 ? `${p.name} (${parts.join(', ')})` : p.name;
+                                }).join(' • ')}
+                              </strong>
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-3 text-[11px] text-slate-600">
-                        {seg.seat && <span>Assento: <strong>{seg.seat}</strong></span>}
+                        {!hasPaxSeats && seg.seat && <span>Assento: <strong>{seg.seat}</strong></span>}
                         {seg.cabin_class && <span className="capitalize">{seg.cabin_class}</span>}
                         {seg.duration_minutes && (
                           <span className="flex items-center gap-1">
@@ -201,13 +242,15 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
                         )}
                       </div>
                     </div>
-                  ))
+                  );
+                })
                 ) : (
                   <p className="text-xs text-slate-400 italic">Sem trechos detalhados</p>
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
