@@ -59,15 +59,22 @@ export const PexelsModal: React.FC<PexelsModalProps> = ({ tripId, onSelect, onCl
 
   const handleConfirm = () => {
     if (!selectedPhoto) return;
-    onSelect(
-      selectedPhoto.src.large2x || selectedPhoto.src.original,
-      selectedPhoto.src.medium,
-      {
-        photographer: selectedPhoto.photographer,
-        photographer_url: selectedPhoto.photographer_url,
-        photo_url: selectedPhoto.url,
-      }
-    );
+    const largeUrl =
+      selectedPhoto.src?.large2x ||
+      selectedPhoto.src?.large ||
+      selectedPhoto.src?.original ||
+      selectedPhoto.url;
+    const mediumUrl =
+      selectedPhoto.src?.medium ||
+      selectedPhoto.src?.small ||
+      largeUrl;
+    const attribution = {
+      photographer: selectedPhoto.photographer,
+      photographer_url: selectedPhoto.photographer_url,
+      photo_url: selectedPhoto.url,
+    };
+
+    onSelect(largeUrl, mediumUrl, attribution);
     onClose();
   };
 
@@ -154,7 +161,7 @@ export const PexelsModal: React.FC<PexelsModalProps> = ({ tripId, onSelect, onCl
                         : 'border-transparent hover:border-slate-300'
                     }`}
                   >
-                    <img src={photo.src.medium} alt={photo.alt} className="w-full h-full object-cover" />
+                    <img src={photo.src?.medium || photo.src?.small || photo.url} alt={photo.alt || ''} className="w-full h-full object-cover" />
                     {isSelected && (
                       <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-brand-600 text-white flex items-center justify-center shadow-md">
                         <Check className="w-4 h-4" />

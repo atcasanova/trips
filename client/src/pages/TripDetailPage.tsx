@@ -155,16 +155,42 @@ export const TripDetailPage: React.FC = () => {
     }
   };
 
-  const handleSelectCover = async (photo: any) => {
+  const handleSelectCover = async (
+    photoOrUrl: any,
+    thumbUrl?: string,
+    attribution?: any
+  ) => {
     try {
+      let coverUrl = '';
+      let coverThumb = '';
+      let coverAttr: any = attribution || null;
+
+      if (typeof photoOrUrl === 'string') {
+        coverUrl = photoOrUrl;
+        coverThumb = thumbUrl || photoOrUrl;
+      } else if (photoOrUrl && typeof photoOrUrl === 'object') {
+        coverUrl =
+          photoOrUrl.src?.large2x ||
+          photoOrUrl.src?.large ||
+          photoOrUrl.src?.original ||
+          photoOrUrl.url ||
+          '';
+        coverThumb = photoOrUrl.src?.medium || photoOrUrl.src?.small || coverUrl;
+        coverAttr = {
+          photographer: photoOrUrl.photographer,
+          photographer_url: photoOrUrl.photographer_url,
+          url: photoOrUrl.url,
+        };
+      }
+
+      if (!coverUrl) {
+        throw new Error('URL da foto não encontrada');
+      }
+
       await api.trips.update(trip.id, {
-        cover_image_url: photo.src.large2x || photo.src.large,
-        cover_image_thumb: photo.src.medium,
-        cover_image_attribution: {
-          photographer: photo.photographer,
-          photographer_url: photo.photographer_url,
-          url: photo.url,
-        },
+        cover_image_url: coverUrl,
+        cover_image_thumb: coverThumb,
+        cover_image_attribution: coverAttr,
       });
       loadAllTripData();
     } catch (err: any) {
