@@ -74,10 +74,7 @@ export const inboundEmailService = {
     const user = await this.resolveSenderUser(parsed, fromAddress);
 
     if (!user) {
-      logger.warn('Inbound email recebido de remetente desconhecido ou não registrado', { from: fromAddress });
-      if (fromAddress && fromAddress.includes('@')) {
-        await emailService.sendInboundUnknownSenderEmail(fromAddress);
-      }
+      logger.info('Inbound email descartado silenciosamente: remetente desconhecido ou não cadastrado no sistema', { from: fromAddress, subject });
       return { success: false, reason: 'unknown_sender' };
     }
 
