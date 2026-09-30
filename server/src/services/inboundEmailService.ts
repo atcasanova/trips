@@ -24,6 +24,7 @@ interface ExtractedTripInfo {
   startDate: string | null;
   endDate: string | null;
   cities: string[];
+  allCities?: string[];
   country: string | null;
   summaryTitle: string;
   rawSummary?: string;
@@ -429,6 +430,7 @@ export const inboundEmailService = {
     let startDate: string | null = null;
     let endDate: string | null = null;
     const cities: string[] = [];
+    const allCities: string[] = [];
     let country: string | null = null;
     let summaryTitle = raw.summary || 'Reserva';
     const rawSummary = raw.summary;
@@ -447,6 +449,14 @@ export const inboundEmailService = {
         if (dates.length > 0) {
           startDate = dates[0];
           endDate = dates[dates.length - 1];
+        }
+
+        // Collect all cities & airports involved in the flight (for matching existing trips)
+        for (const s of segments) {
+          if (s.departureCity && !allCities.includes(s.departureCity)) allCities.push(s.departureCity);
+          if (s.arrivalCity && !allCities.includes(s.arrivalCity)) allCities.push(s.arrivalCity);
+          if (s.departureAirport && !allCities.includes(s.departureAirport)) allCities.push(s.departureAirport);
+          if (s.arrivalAirport && !allCities.includes(s.arrivalAirport)) allCities.push(s.arrivalAirport);
         }
 
         // Collect destination cities (arrival cities, excluding origin of the journey)
@@ -470,28 +480,43 @@ export const inboundEmailService = {
       category = 'HOTEL';
       startDate = norm.checkInDate || null;
       endDate = norm.checkOutDate || startDate;
-      if (norm.city) cities.push(norm.city);
+      if (norm.city) {
+        cities.push(norm.city);
+        allCities.push(norm.city);
+      }
       if (norm.country) country = norm.country;
       summaryTitle = `Hospedagem: ${norm.hotelName || norm.city || 'Hotel'}`;
     } else if (detectedType === 'activity_ticket') {
       category = 'EVENT';
       startDate = norm.eventDate || null;
       endDate = norm.eventDate || null;
-      if (norm.city) cities.push(norm.city);
+      if (norm.city) {
+        cities.push(norm.city);
+        allCities.push(norm.city);
+      }
       if (norm.country) country = norm.country;
       summaryTitle = `Ingresso: ${norm.title || norm.activityName || norm.venueName || 'Evento'}`;
     } else if (detectedType === 'transport_other') {
       category = 'FLIGHT';
       startDate = norm.departureDate || null;
       endDate = norm.arrivalDate || startDate;
-      if (norm.arrivalCity) cities.push(norm.arrivalCity);
-      if (norm.departureCity && !cities.includes(norm.departureCity)) cities.push(norm.departureCity);
+      if (norm.arrivalCity) {
+        cities.push(norm.arrivalCity);
+        allCities.push(norm.arrivalCity);
+      }
+      if (norm.departureCity && !cities.includes(norm.departureCity)) {
+        cities.push(norm.departureCity);
+        allCities.push(norm.departureCity);
+      }
       summaryTitle = `Transporte: ${norm.operator || norm.transportType || 'Transfer'}`;
     } else if (detectedType === 'expense_receipt') {
       category = 'RECEIPT';
       startDate = norm.date || null;
       endDate = norm.date || null;
-      if (norm.city) cities.push(norm.city);
+      if (norm.city) {
+        cities.push(norm.city);
+        allCities.push(norm.city);
+      }
       summaryTitle = `Despesa: ${norm.merchantName || 'Recibo'}`;
     }
 
@@ -501,6 +526,7 @@ export const inboundEmailService = {
       startDate,
       endDate,
       cities,
+      allCities: allCities.length > 0 ? allCities : cities,
       country,
       summaryTitle,
       rawSummary,
@@ -523,7 +549,8 @@ export const inboundEmailService = {
     let bestTrip: any = null;
     let highestScore = 0;
 
-    const normCandidateCities = info.cities.map((c) => normalizeText(c));
+    const candidateCities = info.allCities && info.allCities.length > 0 ? info.allCities : info.cities;
+    const normCandidateCities = candidateCities.map((c) => normalizeText(c));
 
     for (const trip of trips) {
       let score = 0;
@@ -643,7 +670,7 @@ export const inboundEmailService = {
         }
       }
 
-      // Add city to trip.cities if missing
+      // Add city to trip.cities if missing (ignoring home origin city of existing transports)
       if (info.cities.length > 0) {
         const tripCities: string[] = Array.isArray(bestTrip.cities)
           ? bestTrip.cities
@@ -651,9 +678,20 @@ export const inboundEmailService = {
           ? JSON.parse(bestTrip.cities || '[]')
           : [];
 
+        // Check if candidate city is the origin of an existing outbound segment (home city)
+        const { rows: firstSeg } = await query(
+          `SELECT departure_location FROM transport_segments WHERE trip_id = $1 ORDER BY departure_date ASC, departure_time ASC LIMIT 1`,
+          [bestTrip.id]
+        );
+        const homeCity = firstSeg.length > 0 && firstSeg[0].departure_location ? normalizeText(firstSeg[0].departure_location) : null;
+
         let citiesUpdated = false;
         for (const c of info.cities) {
-          if (!tripCities.some((tc) => normalizeText(tc) === normalizeText(c))) {
+          const normC = normalizeText(c);
+          if (homeCity && normC === homeCity) {
+            continue; // Do not add traveler's home origin city to trip destinations
+          }
+          if (!tripCities.some((tc) => normalizeText(tc) === normC)) {
             tripCities.push(c);
             citiesUpdated = true;
           }
