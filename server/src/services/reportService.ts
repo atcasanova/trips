@@ -590,7 +590,11 @@ export const reportService = {
                 <tr>
                   ${week.map(cell => {
                     if (!cell) {
-                      return `<td class="cal-day-cell cal-day-muted">&nbsp;</td>`;
+                      return `
+                        <td>
+                          <div class="cal-day-cell cal-day-muted cal-day-empty">&nbsp;</div>
+                        </td>
+                      `;
                     }
                     const tDay = cell.data;
                     if (!tDay) {
@@ -1245,6 +1249,12 @@ export const reportService = {
     .cal-day-cell.cal-day-muted {
       background: #fafaf9;
       opacity: 0.35;
+      cursor: default;
+    }
+
+    .cal-day-cell.cal-day-empty {
+      background: #f8fafc;
+      opacity: 0.2;
       cursor: default;
     }
 
