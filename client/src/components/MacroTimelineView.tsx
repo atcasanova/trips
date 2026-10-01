@@ -3,6 +3,8 @@ import {
   Calendar,
   MapPin,
   Plane,
+  PlaneTakeoff,
+  PlaneLanding,
   Train,
   Bus,
   Car,
@@ -23,6 +25,8 @@ import {
   Plus,
   ShieldAlert,
   ChevronRight,
+  Home,
+  Flag,
 } from 'lucide-react';
 import {
   Trip,
@@ -77,6 +81,20 @@ function diffDays(dateStrA: string, dateStrB: string): number {
   return Math.round(diffTime / (1000 * 60 * 60 * 24));
 }
 
+function formatLayoverTime(arrTime?: string | null, depTime?: string | null): string | null {
+  if (!arrTime || !depTime) return null;
+  const [ah, am] = arrTime.split(':').map(Number);
+  const [dh, dm] = depTime.split(':').map(Number);
+  if (isNaN(ah) || isNaN(am) || isNaN(dh) || isNaN(dm)) return null;
+  let diff = (dh * 60 + dm) - (ah * 60 + am);
+  if (diff < 0) diff += 24 * 60;
+  const h = Math.floor(diff / 60);
+  const m = diff % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 const WEEKDAYS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const MONTHS_SHORT = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 
@@ -91,15 +109,30 @@ export interface DayTimelineItem {
   isTripBoundary: 'START' | 'END' | 'BOTH' | 'INSIDE' | 'BEFORE' | 'AFTER';
   tripDay?: TripDay;
   baseCity: string;
+  isReturnDay?: boolean;
+  isPostReturnDay?: boolean;
+  finalReturnArrival?: {
+    location: string;
+    stationCode?: string | null;
+    time?: string | null;
+    date: string;
+  };
   departingSegments: Array<{
     segment: TransportSegment;
     reservation: TransportReservation;
     isOvernight: boolean;
+    arrDateFormatted: string;
+    layoverNextMinutes?: number | null;
+    layoverNextCity?: string | null;
   }>;
   arrivingSegments: Array<{
     segment: TransportSegment;
     reservation: TransportReservation;
     departedYesterday: boolean;
+    depDateFormatted: string;
+    layoverAfterFormatted?: string | null;
+    connectingToSegment?: TransportSegment | null;
+    isFinalReturnToOrigin?: boolean;
   }>;
   hotelCheckIns: HotelReservation[];
   hotelCheckOuts: HotelReservation[];
@@ -152,7 +185,40 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
     return list;
   }, [transports]);
 
-  // 2. Identify master date range
+  // 2. Determine trip origin and final return segment
+  const { originLocation, originStationCode, returnSegment, returnDateStr } = useMemo(() => {
+    if (allSegmentsWithParent.length === 0) {
+      return { originLocation: null, originStationCode: null, returnSegment: null, returnDateStr: null };
+    }
+    const firstSeg = allSegmentsWithParent[0].segment;
+    const origLoc = firstSeg.departure_location?.trim() || null;
+    const origCode = firstSeg.departure_station_code?.trim()?.toUpperCase() || null;
+
+    // Find the return segment (the last segment that arrives in origin)
+    let retSeg = null;
+    for (let i = allSegmentsWithParent.length - 1; i >= 0; i--) {
+      const s = allSegmentsWithParent[i].segment;
+      const arrLoc = (s.arrival_location || '').toLowerCase();
+      const arrCode = (s.arrival_station_code || '').toUpperCase();
+      const isOrigin =
+        (origCode && arrCode === origCode) ||
+        (origLoc && (arrLoc.includes(origLoc.toLowerCase()) || origLoc.toLowerCase().includes(arrLoc)));
+      if (isOrigin) {
+        retSeg = allSegmentsWithParent[i];
+        break;
+      }
+    }
+
+    const retDateStr = retSeg ? toIsoDateStr(retSeg.segment.arrival_date) : null;
+    return {
+      originLocation: origLoc,
+      originStationCode: origCode,
+      returnSegment: retSeg,
+      returnDateStr: retDateStr,
+    };
+  }, [allSegmentsWithParent]);
+
+  // 3. Identify master date range
   const { dateList, tripStartDateStr, tripEndDateStr } = useMemo(() => {
     const tripStart = toIsoDateStr(trip.start_date);
     const tripEnd = toIsoDateStr(trip.end_date);
@@ -220,7 +286,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
     };
   }, [trip.start_date, trip.end_date, allSegmentsWithParent, hotels, days]);
 
-  // 3. Build day-by-day models with gap and logistics diagnostics
+  // 4. Build day-by-day models with gap and logistics diagnostics
   const timelineDays = useMemo(() => {
     if (dateList.length === 0) return [];
 
@@ -237,7 +303,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
     let lastKnownCity =
       trip.cities && trip.cities.length > 0
         ? trip.cities[0]
-        : trip.destination_summary || 'Destino';
+        : trip.destination_summary || originLocation || 'Destino';
 
     const result: DayTimelineItem[] = [];
 
@@ -293,31 +359,60 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
         isTripBoundary = 'END';
       }
 
-      // Departing segments on dStr
-      const departingSegments = allSegmentsWithParent
-        .filter((item) => toIsoDateStr(item.segment.departure_date) === dStr)
-        .map((item) => {
-          const arrDate = toIsoDateStr(item.segment.arrival_date);
-          const isOvernight = arrDate ? arrDate > dStr : false;
-          return {
-            segment: item.segment,
-            reservation: item.reservation,
-            isOvernight,
-          };
+      // Raw Departing segments on dStr
+      const rawDeparting = allSegmentsWithParent.filter(
+        (item) => toIsoDateStr(item.segment.departure_date) === dStr
+      );
+
+      // Raw Arriving segments on dStr
+      const rawArriving = allSegmentsWithParent.filter(
+        (item) => toIsoDateStr(item.segment.arrival_date) === dStr
+      );
+
+      // Departing segments decorated
+      const departingSegments = rawDeparting.map((item) => {
+        const arrDate = toIsoDateStr(item.segment.arrival_date);
+        const isOvernight = arrDate ? arrDate > dStr : false;
+        return {
+          segment: item.segment,
+          reservation: item.reservation,
+          isOvernight,
+          arrDateFormatted: formatDateBr(arrDate || dStr),
+        };
+      });
+
+      // Arriving segments decorated
+      const arrivingSegments = rawArriving.map((item) => {
+        const depDate = toIsoDateStr(item.segment.departure_date);
+        const departedYesterday = depDate ? depDate < dStr : false;
+
+        // Check if there is a connecting segment departing from this arrival airport on this same day
+        const arrCode = (item.segment.arrival_station_code || '').toUpperCase();
+        const arrLoc = (item.segment.arrival_location || '').toLowerCase();
+        const connecting = rawDeparting.find((dep) => {
+          const dCode = (dep.segment.departure_station_code || '').toUpperCase();
+          const dLoc = (dep.segment.departure_location || '').toLowerCase();
+          return (arrCode && dCode === arrCode) || (arrLoc && dLoc.includes(arrLoc));
         });
 
-      // Arriving segments on dStr
-      const arrivingSegments = allSegmentsWithParent
-        .filter((item) => toIsoDateStr(item.segment.arrival_date) === dStr)
-        .map((item) => {
-          const depDate = toIsoDateStr(item.segment.departure_date);
-          const departedYesterday = depDate ? depDate < dStr : false;
-          return {
-            segment: item.segment,
-            reservation: item.reservation,
-            departedYesterday,
-          };
-        });
+        const layoverFormatted = connecting
+          ? formatLayoverTime(item.segment.arrival_time, connecting.segment.departure_time)
+          : null;
+
+        const isFinalReturn =
+          returnSegment &&
+          returnSegment.segment.id === item.segment.id;
+
+        return {
+          segment: item.segment,
+          reservation: item.reservation,
+          departedYesterday,
+          depDateFormatted: formatDateBr(depDate || dStr),
+          layoverAfterFormatted: layoverFormatted,
+          connectingToSegment: connecting ? connecting.segment : null,
+          isFinalReturnToOrigin: !!isFinalReturn,
+        };
+      });
 
       // Hotels check-in and check-out on dStr
       const hotelCheckIns = hotels.filter((h) => toIsoDateStr(h.check_in_date) === dStr);
@@ -339,17 +434,38 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
         }
       }
 
-      // Base City determination
+      // Return day detection
+      const isReturnDay = returnDateStr ? dStr === returnDateStr : false;
+      const isPostReturnDay = returnDateStr ? dStr > returnDateStr : false;
+
+      // Base City determination:
+      // Priority 1: If user already arrived back home/origin:
       let baseCity = lastKnownCity;
-      if (tripDay?.base_location) {
+
+      if (isReturnDay || isPostReturnDay) {
+        baseCity = originLocation || 'Brasília';
+      } else if (tripDay?.base_location) {
         baseCity = tripDay.base_location;
       } else if (hotelActiveNights.length > 0 && hotelActiveNights[0].hotel.city) {
         baseCity = hotelActiveNights[0].hotel.city;
-      } else if (arrivingSegments.length > 0 && arrivingSegments[0].segment.arrival_location) {
-        baseCity = arrivingSegments[0].segment.arrival_location;
-      } else if (departingSegments.length > 0 && departingSegments[0].segment.departure_location) {
-        baseCity = departingSegments[0].segment.departure_location;
+      } else {
+        // Evaluate travel day transitions:
+        // Find arrivals today that are NOT layovers:
+        const nonLayoverArrivals = arrivingSegments.filter((arr) => !arr.connectingToSegment);
+        if (nonLayoverArrivals.length > 0) {
+          // The last destination reached today is the base city!
+          const lastArrival = nonLayoverArrivals[nonLayoverArrivals.length - 1];
+          baseCity = lastArrival.segment.arrival_location;
+        } else if (departingSegments.length > 0) {
+          // If only departures or all arrivals are layovers, traveler started today in departure city
+          const firstDeparture = departingSegments[0];
+          baseCity = firstDeparture.segment.departure_location;
+          if (departingSegments.some((s) => s.isOvernight)) {
+            baseCity = `${firstDeparture.segment.departure_location} ➔ Em trânsito`;
+          }
+        }
       }
+
       lastKnownCity = baseCity;
 
       // Alerts & Diagnostics for this day
@@ -389,12 +505,15 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
       }
 
       // 3. Missing lodging check:
-      // A night needs a hotel if it's within the trip dates (strictly before tripEnd),
-      // EXCEPT if traveler is on an overnight transport!
+      // A night needs a hotel if:
+      // - It is within the trip dates (strictly before tripEnd);
+      // - AND the traveler has NOT returned home yet (!isReturnDay && !isPostReturnDay);
+      // - AND there is NO overnight transport departing tonight!
       const isNightWithinTrip = tripEnd ? dStr < tripEnd : i < dateList.length - 1;
       const hasOvernightTransport = departingSegments.some((s) => s.isOvernight);
+      const isAlreadyBackAtHome = isReturnDay || isPostReturnDay;
 
-      if (isNightWithinTrip && hotelActiveNights.length === 0 && !hasOvernightTransport) {
+      if (isNightWithinTrip && !isAlreadyBackAtHome && hotelActiveNights.length === 0 && !hasOvernightTransport) {
         const nextDayStr = addDays(dStr, 1);
         dayAlerts.push({
           id: `no-hotel-${dStr}`,
@@ -432,6 +551,16 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
         isTripBoundary,
         tripDay,
         baseCity,
+        isReturnDay,
+        isPostReturnDay,
+        finalReturnArrival: returnSegment
+          ? {
+              location: returnSegment.segment.arrival_location,
+              stationCode: returnSegment.segment.arrival_station_code,
+              time: returnSegment.segment.arrival_time,
+              date: toIsoDateStr(returnSegment.segment.arrival_date) || '',
+            }
+          : undefined,
         departingSegments,
         arrivingSegments,
         hotelCheckIns,
@@ -442,7 +571,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
     }
 
     return result;
-  }, [dateList, tripStartDateStr, tripEndDateStr, days, allSegmentsWithParent, hotels, trip.cities, trip.destination_summary]);
+  }, [dateList, tripStartDateStr, tripEndDateStr, days, allSegmentsWithParent, hotels, trip.cities, trip.destination_summary, originLocation, returnSegment, returnDateStr]);
 
   // Overall Statistics & Health Metrics
   const stats = useMemo(() => {
@@ -460,7 +589,8 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
       if (isNight) {
         totalNights++;
         const hasOvernightTransport = d.departingSegments.some((s) => s.isOvernight);
-        if (d.hotelActiveNights.length > 0 || hasOvernightTransport) {
+        const isBackHome = d.isReturnDay || d.isPostReturnDay;
+        if (d.hotelActiveNights.length > 0 || hasOvernightTransport || isBackHome) {
           coveredNights++;
         }
       }
@@ -595,7 +725,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
           <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-start sm:items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5 sm:mt-0" />
             <div className="flex-1 text-xs">
-              <span className="font-bold">Logística e Datas 100% Cobertas!</span> Todas as noites da viagem possuem hospedagem confirmada ou voo noturno registrado, sem conflitos detectados.
+              <span className="font-bold">Logística e Datas 100% Cobertas!</span> Todas as noites da viagem possuem hospedagem confirmada, voo noturno registrado ou retorno concluído para casa, sem inconsistências.
             </div>
           </div>
         ) : (
@@ -778,11 +908,9 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
 
       {/* 2. Chronological Timeline List */}
       <div className="space-y-4">
-        {filteredDays.map((dayItem, index) => {
-          const isSelected = selectedDate === dayItem.date;
+        {filteredDays.map((dayItem) => {
           const hasAlerts = dayItem.alerts.length > 0;
-          const isToday =
-            toIsoDateStr(new Date()) === dayItem.date;
+          const isToday = toIsoDateStr(new Date()) === dayItem.date;
 
           return (
             <div
@@ -793,6 +921,8 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                   ? 'border-amber-300 ring-1 ring-amber-200/50'
                   : isToday
                   ? 'border-brand-300 ring-1 ring-brand-200'
+                  : dayItem.isReturnDay
+                  ? 'border-emerald-300 ring-1 ring-emerald-200/60'
                   : 'border-slate-200 hover:border-slate-300'
               }`}
             >
@@ -803,14 +933,29 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                     <div className="flex items-center gap-3 md:flex-col md:items-start md:gap-1">
                       <div className="flex items-center gap-1.5">
                         <span
-                          className="px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider text-white shadow-sm"
-                          style={{ backgroundColor: primaryColor }}
+                          className={`px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider text-white shadow-sm ${
+                            dayItem.isReturnDay
+                              ? 'bg-emerald-600'
+                              : dayItem.isPostReturnDay
+                              ? 'bg-slate-600'
+                              : ''
+                          }`}
+                          style={
+                            !dayItem.isReturnDay && !dayItem.isPostReturnDay
+                              ? { backgroundColor: primaryColor }
+                              : undefined
+                          }
                         >
                           Dia {dayItem.dayNumber > 0 ? String(dayItem.dayNumber).padStart(2, '0') : 'Extra'}
                         </span>
                         {isToday && (
                           <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-brand-50 text-brand-700 border border-brand-200">
                             Hoje
+                          </span>
+                        )}
+                        {dayItem.isReturnDay && (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            Retorno
                           </span>
                         )}
                       </div>
@@ -831,8 +976,18 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
 
                     {/* Macro City / Base Location Pill */}
                     <div className="flex flex-col md:w-full md:mt-3">
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200/80 text-xs font-bold text-slate-800 truncate">
-                        <MapPin className="w-3.5 h-3.5 text-brand-600 shrink-0" />
+                      <div
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold truncate ${
+                          dayItem.isReturnDay || dayItem.isPostReturnDay
+                            ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                            : 'bg-slate-100 border border-slate-200/80 text-slate-800'
+                        }`}
+                      >
+                        {dayItem.isReturnDay || dayItem.isPostReturnDay ? (
+                          <Home className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <MapPin className="w-3.5 h-3.5 text-brand-600 shrink-0" />
+                        )}
                         <span className="truncate">{dayItem.baseCity}</span>
                       </div>
 
@@ -890,34 +1045,103 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                       </div>
                     ))}
 
-                    {/* B. Overnight Flight Arrivals from previous day */}
+                    {/* B. GRAYSCALE CARD: Overnight Flight Arrivals from previous day */}
                     {dayItem.arrivingSegments
                       .filter((s) => s.departedYesterday)
-                      .map((arrItem, idx) => (
-                        <div
-                          key={`arr-${arrItem.segment.id || idx}`}
-                          className="p-3.5 bg-sky-50/60 rounded-xl border border-sky-200/80 flex items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className="p-2 bg-sky-100 text-sky-700 rounded-lg">
-                              <Plane className="w-4 h-4 rotate-45" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-bold text-slate-900">
-                                  Desembarque: {arrItem.segment.carrier_name || 'Voo'} {arrItem.segment.identification_number}
-                                </span>
-                                <span className="text-[10px] font-bold px-1.5 py-0.2 bg-sky-100 text-sky-800 rounded">
-                                  Chegada {arrItem.segment.arrival_time || 'Horário a definir'}
-                                </span>
+                      .map((arrItem, idx) => {
+                        const seg = arrItem.segment;
+                        return (
+                          <div
+                            key={`arr-${seg.id || idx}`}
+                            className="p-4 bg-slate-100/90 rounded-xl border border-slate-300 text-slate-800 shadow-sm space-y-2.5"
+                          >
+                            {/* Card Header with prominent Gray/Slate Badge */}
+                            <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-slate-200">
+                              <div className="flex items-center gap-2">
+                                <div className="p-1.5 bg-slate-200 text-slate-700 rounded-lg">
+                                  <PlaneLanding className="w-4 h-4" />
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="px-2.5 py-0.5 rounded bg-slate-700 text-white font-extrabold text-[10px] tracking-wider uppercase shadow-sm">
+                                    Apenas Pouso / Desembarque
+                                  </span>
+                                  <span className="font-bold text-xs sm:text-sm text-slate-800">
+                                    {seg.carrier_name || 'Companhia Aérea'}{' '}
+                                    {seg.identification_number ? `• ${seg.identification_number}` : ''}
+                                  </span>
+                                </div>
                               </div>
-                              <span className="text-[11px] text-slate-500">
-                                Desembarque em <strong>{arrItem.segment.arrival_location}</strong> ({arrItem.segment.arrival_station_code || 'aeroporto'}) • Vindo de {arrItem.segment.departure_location}
+
+                              <span className="text-[11px] text-slate-500 font-medium italic">
+                                Embarque ontem ({arrItem.depDateFormatted} às {seg.departure_time || '--:--'})
                               </span>
                             </div>
+
+                            {/* Route Visualization */}
+                            <div className="flex items-center justify-between gap-2 sm:gap-6 py-1">
+                              {/* Left: Origin (yesterday) */}
+                              <div className="min-w-0 opacity-60">
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className="text-xs sm:text-sm font-mono text-slate-600">
+                                    {seg.departure_time || '--:--'}
+                                  </span>
+                                  <span className="text-xs sm:text-sm font-bold text-slate-600">
+                                    {seg.departure_station_code || '---'}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  {seg.departure_location}
+                                </p>
+                              </div>
+
+                              {/* Center: Grayscale Dotted Flight Bar */}
+                              <div className="flex-1 flex flex-col items-center justify-center px-2">
+                                <span className="text-[10px] text-slate-500 font-medium mb-0.5">
+                                  Voo Noturno • Pouso Hoje
+                                </span>
+                                <div className="w-full flex items-center">
+                                  <div className="h-0.5 flex-1 bg-slate-300" />
+                                  <PlaneLanding className="w-3.5 h-3.5 text-slate-600 shrink-0 mx-1" />
+                                  <div className="h-0.5 flex-1 bg-slate-300" />
+                                </div>
+                              </div>
+
+                              {/* Right: Landing Destination (TODAY - Bold Highlight) */}
+                              <div className="text-right min-w-0">
+                                <div className="flex items-baseline justify-end gap-1.5">
+                                  <span className="text-sm sm:text-base font-extrabold text-slate-800">
+                                    {seg.arrival_station_code || '---'}
+                                  </span>
+                                  <span className="text-base sm:text-lg font-mono font-extrabold text-slate-900 bg-slate-200/80 px-2 py-0.5 rounded">
+                                    {seg.arrival_time || '--:--'}
+                                  </span>
+                                </div>
+                                <p className="text-xs font-bold text-slate-800 truncate mt-0.5">
+                                  {seg.arrival_location}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Layover or Connection Info */}
+                            {arrItem.layoverAfterFormatted && arrItem.connectingToSegment && (
+                              <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-600 flex-wrap gap-2">
+                                <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                  Conexão de {arrItem.layoverAfterFormatted} em {seg.arrival_location} até o próximo voo ({arrItem.connectingToSegment.carrier_name || ''} {arrItem.connectingToSegment.identification_number} às {arrItem.connectingToSegment.departure_time})
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Final return celebration if landing home */}
+                            {arrItem.isFinalReturnToOrigin && (
+                              <div className="pt-2 border-t border-emerald-200 flex items-center gap-2 text-xs font-bold text-emerald-800 bg-emerald-50/80 px-3 py-1.5 rounded-lg">
+                                <Home className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span>🎉 Desembarque final da viagem! Bem-vindo de volta a {seg.arrival_location}.</span>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
 
                     {/* C. Hotel Check-outs */}
                     {dayItem.hotelCheckOuts.map((h) => (
@@ -944,7 +1168,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                       </div>
                     ))}
 
-                    {/* D. Transport Departures (Flights, Trains, etc.) */}
+                    {/* D. ACTIVE Transport Departures (Flights, Trains, etc.) */}
                     {dayItem.departingSegments.map((depItem, idx) => {
                       const seg = depItem.segment;
                       const res = depItem.reservation;
@@ -960,14 +1184,21 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                       return (
                         <div
                           key={`dep-${seg.id || idx}`}
-                          className="p-4 bg-gradient-to-r from-sky-50/70 to-white rounded-xl border border-sky-200 shadow-sm space-y-3"
+                          className="p-4 bg-gradient-to-r from-sky-50/80 to-white rounded-xl border border-sky-200 shadow-sm space-y-3"
                         >
                           {/* Segment Header */}
                           <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-sky-100">
                             <div className="flex items-center gap-2">
-                              <div className="p-1.5 bg-sky-100 rounded-lg">
-                                {getTransportIcon(seg.transport_type)}
+                              <div className="p-1.5 bg-sky-100 rounded-lg text-sky-700">
+                                {seg.transport_type === 'FLIGHT' ? (
+                                  <PlaneTakeoff className="w-4 h-4" />
+                                ) : (
+                                  getTransportIcon(seg.transport_type)
+                                )}
                               </div>
+                              <span className="px-2 py-0.5 rounded bg-sky-600 text-white font-extrabold text-[10px] tracking-wider uppercase shadow-sm">
+                                Embarque Hoje
+                              </span>
                               <span className="font-bold text-xs sm:text-sm text-slate-900">
                                 {seg.carrier_name || 'Companhia Aérea'}
                                 {seg.identification_number ? ` • ${seg.identification_number}` : ''}
@@ -986,7 +1217,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                                 </span>
                               )}
                               {depItem.isOvernight && (
-                                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-bold rounded-md">
+                                <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-bold rounded-md border border-indigo-200">
                                   🌙 Voo Noturno (+1 dia)
                                 </span>
                               )}
@@ -995,24 +1226,24 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
 
                           {/* Segment Route Times & Stations */}
                           <div className="flex items-center justify-between gap-2 sm:gap-6 py-1">
-                            {/* Departure */}
+                            {/* Departure (Active Highlight) */}
                             <div className="min-w-0">
                               <div className="flex items-baseline gap-1.5">
-                                <span className="text-base sm:text-lg font-mono font-bold text-slate-900">
+                                <span className="text-base sm:text-lg font-mono font-extrabold text-sky-900">
                                   {seg.departure_time || '--:--'}
                                 </span>
                                 <span className="text-sm sm:text-base font-extrabold text-sky-700">
                                   {seg.departure_station_code || '---'}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-600 font-medium truncate">
+                              <p className="text-xs text-slate-700 font-bold truncate">
                                 {seg.departure_location}
                               </p>
                             </div>
 
                             {/* Middle Connector Bar */}
                             <div className="flex-1 flex flex-col items-center justify-center px-2">
-                              <span className="text-[10px] text-slate-400 font-semibold mb-0.5">
+                              <span className="text-[10px] text-slate-500 font-semibold mb-0.5">
                                 {seg.duration_minutes
                                   ? `${Math.floor(seg.duration_minutes / 60)}h ${seg.duration_minutes % 60}m`
                                   : 'Direto'}
@@ -1044,6 +1275,18 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                               </p>
                             </div>
                           </div>
+
+                          {/* Overnight arrival alert banner */}
+                          {depItem.isOvernight && (
+                            <div className="p-2.5 bg-indigo-50/90 border border-indigo-200/80 rounded-lg text-xs text-indigo-950 flex items-center gap-2">
+                              <span className="text-base shrink-0">🌙</span>
+                              <span>
+                                <strong>Pouso no dia seguinte:</strong> Este voo aterrissa em{' '}
+                                <strong>{seg.arrival_location}</strong> ({seg.arrival_station_code || 'aeroporto'}) amanhã,{' '}
+                                <strong>{depItem.arrDateFormatted} às {seg.arrival_time}</strong>.
+                              </span>
+                            </div>
+                          )}
 
                           {/* Passengers & Seats */}
                           {paxList.length > 0 && (
@@ -1151,7 +1394,26 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                         </div>
                       ))}
 
-                    {/* G. Macro Highlights of the Day (from itinerary if present) */}
+                    {/* G. Post-Return to Origin Summary Card (when traveler is back home) */}
+                    {dayItem.isPostReturnDay && (
+                      <div className="p-4 bg-gradient-to-r from-emerald-50/60 to-white rounded-xl border border-emerald-200 text-xs text-emerald-950 flex items-center gap-3">
+                        <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                          <Home className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <strong className="text-sm font-bold text-slate-900 block">
+                            Em Casa • {dayItem.baseCity}
+                          </strong>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                            Retorno da viagem concluído com sucesso. Desembarque realizado{' '}
+                            {dayItem.finalReturnArrival?.time ? `às ${dayItem.finalReturnArrival.time}` : ''} em{' '}
+                            <strong>{dayItem.baseCity}</strong>.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* H. Macro Highlights of the Day (from itinerary if present) */}
                     {dayItem.tripDay?.subtitle && (
                       <div className="p-2.5 bg-slate-50/50 rounded-lg border border-slate-100 text-xs text-slate-600 flex items-center gap-2">
                         <Sparkles className="w-3.5 h-3.5 text-brand-500 shrink-0" />
