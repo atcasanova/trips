@@ -679,17 +679,18 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
                location_source_url = COALESCE(location_source_url, $11),
                location_confidence = COALESCE(location_confidence, $12),
                location_verified_at = COALESCE(location_verified_at, $13),
-               location_kind = COALESCE(location_kind, $14),
-               location_anchor_name = COALESCE(location_anchor_name, $15),
+               location_confirmed_at = COALESCE(location_confirmed_at, $14),
+               location_kind = COALESCE(location_kind, $15),
+               location_anchor_name = COALESCE(location_anchor_name, $16),
                map_mode = COALESCE(map_mode, 'AUTO'),
-               booking_reference = COALESCE(booking_reference, $16),
-               tips = $17,
-               notes = $18,
-               cost_amount = COALESCE(cost_amount, $19),
-               cost_currency = COALESCE(cost_currency, $20),
-               document_id = COALESCE(document_id, $21),
+               booking_reference = COALESCE(booking_reference, $17),
+               tips = $18,
+               notes = $19,
+               cost_amount = COALESCE(cost_amount, $20),
+               cost_currency = COALESCE(cost_currency, $21),
+               document_id = COALESCE(document_id, $22),
                updated_at = NOW()
-           WHERE id = $22`,
+           WHERE id = $23`,
           [
             targetDayId,
             eventTitle,
@@ -703,6 +704,7 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
             locationSource,
             locationSourceUrl,
             locationConfidence,
+            lat && lng ? new Date() : null,
             lat && lng ? new Date() : null,
             lat && lng ? 'PLACE' : null,
             venueName,
@@ -733,10 +735,10 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
           `INSERT INTO itinerary_items (
             trip_id, trip_day_id, title, category, start_time, end_time,
             location_name, address, latitude, longitude,
-            location_source, location_source_url, location_confidence, location_verified_at,
+            location_source, location_source_url, location_confidence, location_verified_at, location_confirmed_at,
             location_kind, location_anchor_name, map_mode,
             booking_reference, tips, notes, cost_amount, cost_currency, order_index, document_id
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'AUTO', $17, $18, $19, $20, $21, $22, $23)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'AUTO', $18, $19, $20, $21, $22, $23, $24)
           RETURNING id`,
           [
             tripId,
@@ -752,6 +754,7 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
             locationSource,
             locationSourceUrl,
             locationConfidence,
+            lat && lng ? new Date() : null,
             lat && lng ? new Date() : null,
             lat && lng ? 'PLACE' : null,
             venueName,
@@ -772,10 +775,10 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
         );
       }
 
-      // Se ainda não tiver coordenadas, dispara a busca do roteiro em background
+      // Se ainda não tiver coordenadas, dispara a busca do roteiro em background apenas para este item
       if (!lat || !lng) {
-        refreshItineraryLocations({ tripId }).catch((err: any) =>
-          logger.warn(`Erro no refreshItineraryLocations para trip ${tripId}: ${err.message}`)
+        refreshItineraryLocations({ tripId, itemIds: [finalItemId] }).catch((err: any) =>
+          logger.warn(`Erro no refreshItineraryLocations para item ${finalItemId}: ${err.message}`)
         );
       }
     }

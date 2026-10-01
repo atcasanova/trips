@@ -302,7 +302,7 @@ export const api = {
       }),
     parseItinerary: (
       tripId: string,
-      data: { text: string; replaceExisting?: boolean; apply?: boolean }
+      data: { text?: string; days?: any[]; replaceExisting?: boolean; apply?: boolean }
     ) =>
       request<{ days: any[]; message: string; durationMs: number }>(`/trips/${tripId}/ai/itinerary-parse`, {
         method: 'POST',

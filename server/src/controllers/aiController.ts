@@ -88,10 +88,11 @@ export const aiController = {
   // 4. Parse freeform itinerary notes into days & items with AI
   async parseItinerary(req: Request, res: Response) {
     const { tripId } = req.params;
-    const { text, replaceExisting = false, apply = true } = req.body;
+    const { text, replaceExisting = false, apply = true, days } = req.body;
 
-    if (!text || typeof text !== 'string' || text.trim().length === 0) {
-      return res.status(400).json({ error: 'O texto do itinerário é obrigatório' });
+    const hasPreParsedDays = Array.isArray(days) && days.length > 0;
+    if (!hasPreParsedDays && (!text || typeof text !== 'string' || text.trim().length === 0)) {
+      return res.status(400).json({ error: 'O texto do itinerário ou os dias analisados são obrigatórios' });
     }
 
     try {
@@ -102,21 +103,28 @@ export const aiController = {
       if (trips.length === 0) return res.status(404).json({ error: 'Viagem não encontrada' });
       const trip = trips[0];
 
-      const parsedResult = await openaiService.parseItineraryFromText({
-        rawText: text.trim(),
-        tripTitle: trip.title,
-        tripStartDate: trip.start_date,
-        tripEndDate: trip.end_date,
-        cities: Array.isArray(trip.cities) ? trip.cities : [],
-        userId: req.user?.id,
-        tripId,
-      });
+      let parsedDays = hasPreParsedDays ? days : null;
+      let durationMs = 0;
+
+      if (!parsedDays) {
+        const parsedResult = await openaiService.parseItineraryFromText({
+          rawText: text.trim(),
+          tripTitle: trip.title,
+          tripStartDate: trip.start_date,
+          tripEndDate: trip.end_date,
+          cities: Array.isArray(trip.cities) ? trip.cities : [],
+          userId: req.user?.id,
+          tripId,
+        });
+        parsedDays = parsedResult.days;
+        durationMs = parsedResult.durationMs;
+      }
 
       if (!apply) {
         return res.json({
           previewOnly: true,
-          days: parsedResult.days,
-          durationMs: parsedResult.durationMs,
+          days: parsedDays,
+          durationMs,
         });
       }
 
@@ -139,8 +147,8 @@ export const aiController = {
       let totalItemsCreated = 0;
       const createdItemIds: string[] = [];
 
-      for (let i = 0; i < parsedResult.days.length; i++) {
-        const d = parsedResult.days[i];
+      for (let i = 0; i < parsedDays.length; i++) {
+        const d = parsedDays[i];
         const dayNumber = replaceExisting ? (d.dayNumber || i + 1) : (startDayNum + i);
         const dayDate = d.date || new Date().toISOString().split('T')[0];
 
@@ -205,7 +213,7 @@ export const aiController = {
         success: true,
         daysCreated: totalDaysCreated,
         itemsCreated: totalItemsCreated,
-        parsedDays: parsedResult.days,
+        parsedDays,
         locationRefresh,
       });
     } catch (err: any) {

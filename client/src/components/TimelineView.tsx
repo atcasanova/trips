@@ -313,6 +313,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   const [itemTime, setItemTime] = useState('');
   const [itemAddress, setItemAddress] = useState('');
   const [itemTips, setItemTips] = useState('');
+  const [itemMapMode, setItemMapMode] = useState<'AUTO' | 'SKIP'>('AUTO');
 
   const primaryColor = trip.theme?.primary || '#b94a5d';
 
@@ -552,12 +553,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         start_time: itemTime || null,
         address: itemAddress || null,
         tips: itemTips || null,
+        map_mode: itemMapMode,
       });
       setShowAddItemModal(null);
       setItemTitle('');
       setItemTime('');
       setItemAddress('');
       setItemTips('');
+      setItemMapMode('AUTO');
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'Erro ao criar atividade');
@@ -580,6 +583,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         address: editingItem.item.address || null,
         tips: editingItem.item.tips || null,
         notes: editingItem.item.notes || null,
+        map_mode: editingItem.item.map_mode || 'AUTO',
       });
       setEditingItem(null);
       onRefresh();
@@ -696,6 +700,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     setIsAiApplying(true);
     try {
       await api.ai.parseItinerary(trip.id, {
+        days: aiPreviewDays || undefined,
         text: aiText,
         replaceExisting: aiReplaceExisting,
         apply: true, // commit to DB
@@ -1299,7 +1304,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                               setDragOverDayId(null);
                               setDragOverItemId(null);
                             }}
-                            className={`group flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl transition-all ${
+                            className={`group flex items-start justify-between gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl transition-all ${
                               isBeingDragged
                                 ? 'opacity-40 bg-slate-100 border border-dashed border-slate-400'
                               : isDragOver
@@ -1358,13 +1363,18 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                   )}
                                   <span className="font-semibold text-xs text-slate-900 break-words">{item.title}</span>
                                   {item.map_mode === 'SKIP' && (
-                                    <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200" title="Este item não aparece no mapa e não será pesquisado automaticamente">
-                                      <MapPinOff className="h-3 w-3" /> Fora do mapa
-                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMapMode(item)}
+                                      className="inline-flex items-center gap-1 rounded bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 transition-colors cursor-pointer"
+                                      title="Este item está fora do mapa. Clique para incluir."
+                                    >
+                                      <MapPinOff className="h-3 w-3 text-slate-500" /> Fora do mapa
+                                    </button>
                                   )}
                                   {item.location_confirmed_at && (
-                                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200" title="Este ponto não será pesquisado novamente até a confirmação ser removida">
-                                      <CheckCircle className="h-3 w-3" /> Confirmado
+                                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200" title="Localização confirmada">
+                                      <CheckCircle className="h-3 w-3 text-emerald-600" /> Confirmado
                                     </span>
                                   )}
                                   {item.location_kind === 'AREA' && (
@@ -1450,107 +1460,33 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             </div>
 
                             {canEdit && (
-                              <>
-                                {/* Desktop Actions: Right column with hover reveal */}
-                                <div className="hidden sm:flex items-center gap-1 shrink-0">
+                              <div className="flex items-center gap-1 shrink-0 self-start mt-0.5">
+                                {mapPointNumber && !item.location_confirmed_at && (
                                   <button
                                     type="button"
-                                    onClick={() => handleMapMode(item)}
-                                    aria-pressed={item.map_mode === 'SKIP'}
-                                    className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold transition-colors ${
-                                      item.map_mode === 'SKIP'
-                                        ? 'bg-slate-200 text-slate-700 hover:bg-sky-100 hover:text-sky-800'
-                                        : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-800'
-                                    }`}
-                                    title={item.map_mode === 'SKIP' ? 'Incluir no mapa e permitir pesquisa na próxima atualização' : 'Não exibir no mapa nem pesquisar automaticamente'}
+                                    onClick={() => handleLocationConfirmation(item)}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-100 transition-colors shadow-2xs cursor-pointer"
+                                    title="Confirmar localização deste ponto para evitar pesquisas futuras"
                                   >
-                                    <MapPinOff className="h-3.5 w-3.5" />
-                                    <span>{item.map_mode === 'SKIP' ? 'Incluir no mapa' : 'Ignorar mapa'}</span>
+                                    <CheckCircle className="h-3 w-3" />
+                                    <span className="hidden sm:inline">Confirmar</span>
                                   </button>
-                                  {mapPointNumber && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleLocationConfirmation(item)}
-                                      aria-pressed={Boolean(item.location_confirmed_at)}
-                                      className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold transition-colors ${
-                                        item.location_confirmed_at
-                                          ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800'
-                                          : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
-                                      }`}
-                                      title={item.location_confirmed_at ? 'Remover confirmação e permitir nova pesquisa' : 'Confirmar ponto e evitar nova pesquisa'}
-                                    >
-                                      <CheckCircle className="h-3.5 w-3.5" />
-                                      <span>{item.location_confirmed_at ? 'Confirmado' : 'Confirmar'}</span>
-                                    </button>
-                                  )}
-                                  <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                                    <button
-                                      onClick={() => setEditingItem({ dayId: day.id, item })}
-                                      className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200"
-                                      title="Editar atividade"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteItem(day.id, item.id)}
-                                      className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
-                                      title="Remover atividade"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Mobile Action Bar: Bottom bar giving full width to content above */}
-                                <div className="sm:hidden flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 mt-0.5 w-full">
-                                  <div className="flex items-center gap-1 flex-wrap">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleMapMode(item)}
-                                      aria-pressed={item.map_mode === 'SKIP'}
-                                      className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold transition-colors ${
-                                        item.map_mode === 'SKIP'
-                                          ? 'bg-slate-200 text-slate-700'
-                                          : 'bg-white text-slate-600 ring-1 ring-slate-200'
-                                      }`}
-                                    >
-                                      <MapPinOff className="h-3 w-3" />
-                                      <span>{item.map_mode === 'SKIP' ? 'No mapa' : 'Ocultar'}</span>
-                                    </button>
-                                    {mapPointNumber && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleLocationConfirmation(item)}
-                                        aria-pressed={Boolean(item.location_confirmed_at)}
-                                        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold transition-colors ${
-                                          item.location_confirmed_at
-                                            ? 'bg-emerald-100 text-emerald-800'
-                                            : 'bg-white text-slate-600 ring-1 ring-slate-200'
-                                        }`}
-                                      >
-                                        <CheckCircle className="h-3 w-3" />
-                                        <span>{item.location_confirmed_at ? 'Confirmado' : 'Confirmar'}</span>
-                                      </button>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      onClick={() => setEditingItem({ dayId: day.id, item })}
-                                      className="p-1.5 text-slate-600 hover:text-slate-900 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
-                                      title="Editar atividade"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteItem(day.id, item.id)}
-                                      className="p-1.5 text-red-600 hover:text-red-700 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors cursor-pointer"
-                                      title="Remover atividade"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              </>
+                                )}
+                                <button
+                                  onClick={() => setEditingItem({ dayId: day.id, item })}
+                                  className="p-1 sm:p-1.5 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200 transition-colors cursor-pointer"
+                                  title="Editar atividade"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteItem(day.id, item.id)}
+                                  className="p-1 sm:p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                                  title="Remover atividade"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             )}
                           </div>
                         );
@@ -2076,6 +2012,26 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 />
               </div>
 
+              <div className="flex items-center gap-2 pt-1 pb-1">
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editingItem.item.map_mode !== 'SKIP'}
+                    onChange={(e) =>
+                      setEditingItem({
+                        ...editingItem,
+                        item: {
+                          ...editingItem.item,
+                          map_mode: e.target.checked ? 'AUTO' : 'SKIP',
+                        },
+                      })
+                    }
+                    className="rounded text-brand-600 focus:ring-brand-500"
+                  />
+                  <span>Exibir esta atividade no mapa</span>
+                </label>
+              </div>
+
               {hasMapCoordinates(editingItem.item) && (
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
                   <div className="flex items-center gap-1.5 text-slate-700">
@@ -2311,6 +2267,18 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                   placeholder="Ex: Chegar 15 minutos antes para evitar filas"
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1 pb-1">
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={itemMapMode !== 'SKIP'}
+                    onChange={(e) => setItemMapMode(e.target.checked ? 'AUTO' : 'SKIP')}
+                    className="rounded text-brand-600 focus:ring-brand-500"
+                  />
+                  <span>Exibir esta atividade no mapa</span>
+                </label>
               </div>
 
               <div className="pt-4 flex justify-end gap-2 border-t border-slate-100">

@@ -220,6 +220,7 @@ export const itineraryController = {
       tips,
       notes,
       order_index,
+      map_mode,
     } = req.body;
 
     if (!title) return res.status(400).json({ error: 'O título da atividade é obrigatório' });
@@ -229,8 +230,8 @@ export const itineraryController = {
         `INSERT INTO itinerary_items (
           trip_id, trip_day_id, title, category, start_time, end_time, timezone,
           location_name, address, latitude, longitude, duration_text,
-          cost_amount, cost_currency, booking_reference, url, tips, notes, order_index
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+          cost_amount, cost_currency, booking_reference, url, tips, notes, order_index, map_mode
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         RETURNING *`,
         [
           tripId,
@@ -252,14 +253,18 @@ export const itineraryController = {
           tips || null,
           notes || null,
           order_index || 0,
+          map_mode || (category === 'NOTE' ? 'SKIP' : 'AUTO'),
         ]
       );
 
-      const locationRefresh = await refreshItineraryLocations({
-        tripId,
-        itemIds: [rows[0].id],
-        userId: req.user?.id,
-      });
+      let locationRefresh = null;
+      if (rows[0].map_mode !== 'SKIP' && rows[0].category !== 'NOTE') {
+        locationRefresh = await refreshItineraryLocations({
+          tripId,
+          itemIds: [rows[0].id],
+          userId: req.user?.id,
+        });
+      }
 
       return res.status(201).json({ item: rows[0], locationRefresh });
     } catch (err: any) {
@@ -277,7 +282,8 @@ export const itineraryController = {
       const allowed = [
         'title', 'category', 'start_time', 'end_time', 'timezone',
         'location_name', 'address', 'latitude', 'longitude', 'duration_text',
-        'cost_amount', 'cost_currency', 'booking_reference', 'url', 'tips', 'notes', 'order_index', 'document_id'
+        'cost_amount', 'cost_currency', 'booking_reference', 'url', 'tips', 'notes', 'order_index', 'document_id',
+        'map_mode'
       ];
 
       const setClauses: string[] = [];
