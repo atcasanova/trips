@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { TripDetailPage } from './pages/TripDetailPage.js';
 import { AcceptInvitePage } from './pages/AcceptInvitePage.js';
+import { AdminDashboardPage } from './pages/AdminDashboardPage.js';
 
 const ProtectedLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -49,6 +50,14 @@ export const App: React.FC = () => {
               element={
                 <ProtectedLayout>
                   <DashboardPage />
+                </ProtectedLayout>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedLayout>
+                  <AdminDashboardPage />
                 </ProtectedLayout>
               }
             />

@@ -353,4 +353,24 @@ export const api = {
         method: 'DELETE',
       }),
   },
+
+  // === ADMIN MANAGEMENT & DASHBOARD ===
+  admin: {
+    getOverview: () => request<any>('/admin/overview'),
+    getAiAudits: (params?: { limit?: number; offset?: number; operation?: string; status?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.limit) q.set('limit', String(params.limit));
+      if (params?.offset) q.set('offset', String(params.offset));
+      if (params?.operation) q.set('operation', params.operation);
+      if (params?.status) q.set('status', params.status);
+      const queryString = q.toString();
+      return request<any>(`/admin/ai-audits${queryString ? `?${queryString}` : ''}`);
+    },
+    getUsers: () => request<{ users: any[] }>('/admin/users'),
+    getGroupTrips: (filter?: 'all' | 'group' | 'solo') => {
+      const qs = filter ? `?filter=${filter}` : '';
+      return request<{ trips: any[] }>(`/admin/group-trips${qs}`);
+    },
+    getDestinations: () => request<{ cities: any[]; countries: any[] }>('/admin/destinations'),
+  },
 };

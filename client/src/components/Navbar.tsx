@@ -72,17 +72,17 @@ export const Navbar: React.FC = () => {
             )}
 
             {user?.role === 'ADMIN' && (
-              <button
-                onClick={() => setShowUsersModal(true)}
-                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors cursor-pointer"
-                title="Gerenciar Usuários"
+              <Link
+                to="/admin"
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors"
+                title="Painel de Gestão e Auditoria do Administrador"
               >
-                <Users className="w-4 h-4" />
-                <span className="hidden sm:inline">Usuários</span>
+                <Shield className="w-4 h-4 text-purple-600" />
+                <span className="hidden sm:inline">Painel Admin</span>
                 <span className="bg-purple-200 text-purple-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
                   Admin
                 </span>
-              </button>
+              </Link>
             )}
 
             {/* User Profile Pill */}

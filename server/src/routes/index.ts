@@ -2,6 +2,7 @@ import express, { Router } from 'express';
 import { healthController } from '../controllers/healthController.js';
 import { authController } from '../controllers/authController.js';
 import { userController } from '../controllers/userController.js';
+import { adminController } from '../controllers/adminController.js';
 import { tripController } from '../controllers/tripController.js';
 import { itineraryController } from '../controllers/itineraryController.js';
 import { reservationController } from '../controllers/reservationController.js';
@@ -36,6 +37,13 @@ router.get('/users', requireAuth, requireAdmin, userController.listUsers);
 router.post('/users', requireAuth, requireAdmin, userController.createUser);
 router.put('/users/:id', requireAuth, requireAdmin, userController.updateUser);
 router.delete('/users/:id', requireAuth, requireAdmin, userController.deleteUser);
+
+// 3.0 Admin Dashboard & Audits (Admin only)
+router.get('/admin/overview', requireAuth, requireAdmin, adminController.getOverview);
+router.get('/admin/ai-audits', requireAuth, requireAdmin, adminController.getAiAudits);
+router.get('/admin/users', requireAuth, requireAdmin, adminController.getUsersStats);
+router.get('/admin/group-trips', requireAuth, requireAdmin, adminController.getGroupTrips);
+router.get('/admin/destinations', requireAuth, requireAdmin, adminController.getDestinationsStats);
 
 // 3.1 User Invitations (Any authenticated user can invite; public token endpoints to accept)
 router.post('/invites', requireAuth, inviteController.createInvite);
