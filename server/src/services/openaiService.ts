@@ -906,6 +906,17 @@ Regras obrigatórias para evitar falsos positivos:
     tripStartDate?: string | null;
     tripEndDate?: string | null;
     cities?: string[];
+    existingDays?: Array<{
+      dayNumber: number;
+      date?: string;
+      title: string;
+      baseLocation?: string | null;
+      items?: Array<{
+        title: string;
+        category?: string;
+        locationName?: string;
+      }>;
+    }>;
     userId?: string;
     tripId?: string;
   }): Promise<{
@@ -940,39 +951,58 @@ Regras obrigatórias para evitar falsos positivos:
     const client = getClient();
     if (!client) throw new Error('Cliente OpenAI indisponível.');
 
+    let existingDaysText = '';
+    if (params.existingDays && params.existingDays.length > 0) {
+      existingDaysText = `\nDias e Atividades Já Existentes no Roteiro Atual da Viagem:
+${params.existingDays
+  .map(
+    (d) =>
+      `- Dia ${d.dayNumber} (${d.date || 'Sem data definida'}): "${d.title}" [Local Base: ${d.baseLocation || 'Não especificado'}]\n  Atividades cadastradas: ${
+        d.items && d.items.length > 0
+          ? d.items.map((it) => it.title).join(', ')
+          : 'Nenhuma atividade cadastrada ainda'
+      }`
+  )
+  .join('\n')}\n`;
+    }
+
     const prompt = `Você é um arquiteto especialista em turismo e roteiros de viagem.
-Sua missão é transformar um texto bruto com notas de itinerário em um roteiro completo, detalhado, cronológico e estruturado em JSON para a plataforma Trips.
+Sua missão é interpretar anotações ou pedidos livres do viajante e transformá-los em um roteiro completo, detalhado, cronológico e estruturado em JSON para a plataforma Trips.
 
 Contexto da Viagem:
 - Título da Viagem: "${params.tripTitle}"
 - Data de Início da Viagem: ${params.tripStartDate || 'Não informada'}
 - Data de Término da Viagem: ${params.tripEndDate || 'Não informada'}
 - Cidades / Regiões visitadas: ${(params.cities || []).join(', ') || 'Não informadas'}
-
-Texto do Itinerário enviado pelo viajante:
+${existingDaysText}
+Texto ou Instrução enviado pelo viajante:
 """
 ${params.rawText}
 """
 
 Regras rigorosas para a conversão:
-1. Ordem Cronológica: Mantenha exatamente a sequência temporal fornecida no texto.
-2. Tratamento Inteligente de Datas:
-   - Identifique dias como "18/03", "19", "20", "21/03", etc.
-   - Infira o ano a partir da data de início da viagem (se início for em 2027, ano é 2027). Se o mês não estiver explícito na linha, continue o mês anterior coerentemente (ex: 18/03 -> 2027-03-18, 19 -> 2027-03-19 ... 31 -> 2027-03-31, 01/04 -> 2027-04-01).
+1. Interpretação Abrangente (Anotações Cronológicas OU Instruções Livres):
+   - O texto enviado pode ser anotações de múltiplos dias (ex: "18/03 chegada em Tokyo...", "19/03 Sensoji, Shibuya...") OU uma instrução/pedido livre de enriquecimento/adição (ex: "no dia 22/03 irei para Nara e Osaka, adicione ao roteiro e já sugira visitas turísticas para eu fazer lá", ou "adicione dia livre em Hakone no dia 25/03 com onsen").
+   - Quando o usuário pedir sugestões para uma cidade ou data, gere um roteiro com atrações turísticas famosas, atividades e opções gastronômicas reais, autênticas e coerentes com a cidade e o tempo disponível.
+   - NUNCA repita ou gere atrações ou atividades duplicadas que já constem nos dias existentes listados acima.
+2. Tratamento Inteligente de Datas e Sequência:
+   - Identifique dias como "18/03", "19", "20", "21/03", "no dia 22", etc.
+   - Infira o ano a partir da data de início da viagem (se início for em 2027, ano é 2027). Se o mês não estiver explícito na linha, continue o mês anterior coerentemente (ex: 18/03 -> 2027-03-18, 19 -> 2027-03-19 ... 31 -> 2027-03-31, 01/04 -> 2027-04-01). Se o viajante citar apenas "no dia 22", verifique no contexto das datas existentes e da viagem qual é o mês e ano corretos.
    - Formate o campo "date" sempre como "AAAA-MM-DD".
+   - Se o usuário estiver adicionando ou complementando um dia que já existe na lista acima, use a data exata daquele dia.
    - Numere os dias sequencialmente ("dayNumber": 1, 2, 3...).
 3. Título e Localização do Dia:
-   - "title": Crie um título claro, refinado e descritivo para o dia (ex: "Chegada em Tóquio — Transfer In", "Templos, Ginza & Tokyo Skytree", "Monte Fuji & Região dos Lagos", "Ida para Kyoto & Cerimônia do Chá", "Castelo de Osaka & Museu Cup Noodles").
+   - "title": Crie um título claro, refinado e descritivo para o dia (ex: "Chegada em Tóquio — Transfer In", "Templos, Ginza & Tokyo Skytree", "Monte Fuji & Região dos Lagos", "Ida para Kyoto & Cerimônia do Chá", "Bate-volta a Nara e Noite em Dotonbori").
    - "subtitle": Frase curta com o destaque do dia.
-   - "baseLocation": A cidade principal do dia (ex: "Tóquio", "Kyoto", "Osaka", "Hakone / Fuji").
-   - "icon": Um emoji temático para o dia (ex: 🛬, ⛩️, 🗻, 🍵, 🏯, 🍣, 🎡, 🦌, 🛍️, 🛫).
+   - "baseLocation": A cidade principal do dia (ex: "Tóquio", "Kyoto", "Osaka", "Hakone", "Nara").
+   - "icon": Um emoji temático para o dia (ex: 🛬, ⛩️, 🗻, 🍵, 🏯, 🍣, 🦌, 🎡, 🛍️, 🛫).
 4. Decomposição de Atividades em Itens Individuais ("items"):
-   - Quando uma linha listar múltiplos pontos ou passeios separados por vírgula, barra ou "e" (ex: "Templo Sensoji, Ginza, Tsukiji, Tokyo Sky tree e Teamlab Borderless"), CRIE UM ITEM INDIVIDUAL SEPARADO PARA CADA ATRAÇÃO.
+   - Crie UM ITEM INDIVIDUAL SEPARADO PARA CADA ATRAÇÃO, RESTAURANTE OU ATIVIDADE.
    - "title": Nome legível e correto da atração / atividade.
    - "category": Um entre: "ATTRACTION", "RESTAURANT", "TRANSPORT", "ACTIVITY", "HOTEL", "NOTE".
    - "startTime": Sugira horários lógicos sequenciais espaçados ao longo do dia (ex: 09:00, 11:30, 14:00, 16:30, 19:00).
    - "locationName": Bairro, área ou cidade correspondente.
-   - "tips": Dica útil de visitação ou observação prática (ex: "Comprar ingressos com antecedência", "Provar peixe fresco no mercado", etc.).
+   - "tips": Dica útil de visitação ou observação prática (ex: "Comprar ingressos com antecedência", "Provar peixe fresco no mercado", "Comprar shika-senbei para alimentar os cervos", etc.).
    - "mapMode": Escolha "AUTO" quando o item descreve uma parada física ou área nomeada que vale localizar no mapa. Escolha "SKIP" quando não há lugar pesquisável: deslocamento/transfer genérico, check-in ou check-out sem hotel nomeado, dia livre, tempo livre, descanso, instrução, lembrete, nota ou logística sem terminal/endereço específico. Se houver um local físico explicitamente nomeado (inclusive hotel, aeroporto, estação ou atração), prefira "AUTO". Em caso de dúvida sem nome de local, use "SKIP".
 
 Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:

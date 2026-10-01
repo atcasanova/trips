@@ -4,6 +4,42 @@ import { logger } from '../utils/logger.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { aggregateItineraryItems } from '../utils/aggregation.js';
 
+/**
+ * Re-orders all days of a trip chronologically by date and creation time,
+ * re-assigning day_number (1..N) and order_index (0..N-1), and updating
+ * any auto-generated "Dia X:" prefixes in the day title.
+ */
+export async function reorderTripDaysChronologically(tripId: string) {
+  const { rows: allTripDays } = await query(
+    'SELECT id, date, title, day_number FROM trip_days WHERE trip_id = $1 ORDER BY date ASC, created_at ASC',
+    [tripId]
+  );
+
+  for (let idx = 0; idx < allTripDays.length; idx++) {
+    const td = allTripDays[idx];
+    const newDayNum = idx + 1;
+    const newOrder = idx;
+
+    let updatedTitle = td.title;
+    const prefixMatch = (td.title || '').match(/^Dia\s+\d+\s*([:–—-])\s*(.*)$/i);
+    if (prefixMatch) {
+      updatedTitle = `Dia ${newDayNum}${prefixMatch[1]} ${prefixMatch[2]}`;
+    }
+
+    if (td.day_number !== newDayNum || td.title !== updatedTitle) {
+      await query(
+        'UPDATE trip_days SET day_number = $1, order_index = $2, title = $3, updated_at = NOW() WHERE id = $4',
+        [newDayNum, newOrder, updatedTitle, td.id]
+      );
+    } else {
+      await query(
+        'UPDATE trip_days SET order_index = $1, updated_at = NOW() WHERE id = $2',
+        [newOrder, td.id]
+      );
+    }
+  }
+}
+
 export const itineraryController = {
   // 1. List all days and itinerary items for a trip
   async listDays(req: Request, res: Response) {
@@ -132,7 +168,10 @@ export const itineraryController = {
         ]
       );
 
-      return res.status(201).json({ day: { ...rows[0], items: [] } });
+      await reorderTripDaysChronologically(tripId);
+      const { rows: updatedRows } = await query('SELECT * FROM trip_days WHERE id = $1', [rows[0].id]);
+
+      return res.status(201).json({ day: { ...(updatedRows[0] || rows[0]), items: [] } });
     } catch (err: any) {
       logger.error('Erro ao criar dia do roteiro:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao criar dia no roteiro' });
@@ -176,12 +215,18 @@ export const itineraryController = {
 
       if (rows.length === 0) return res.status(404).json({ error: 'Dia não encontrado' });
 
+      if (updates.date !== undefined) {
+        await reorderTripDaysChronologically(tripId);
+      }
+
+      const { rows: freshRows } = await query('SELECT * FROM trip_days WHERE id = $1', [dayId]);
+
       const locationRefresh =
         updates.base_location !== undefined
           ? await refreshItineraryLocations({ tripId, dayIds: [dayId], userId: req.user?.id })
           : undefined;
 
-      return res.json({ day: rows[0], locationRefresh });
+      return res.json({ day: freshRows[0] || rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao atualizar dia do roteiro:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao atualizar dia' });
@@ -193,6 +238,7 @@ export const itineraryController = {
     const { tripId, dayId } = req.params;
     try {
       await query('DELETE FROM trip_days WHERE id = $1 AND trip_id = $2', [dayId, tripId]);
+      await reorderTripDaysChronologically(tripId);
       return res.json({ message: 'Dia removido com sucesso' });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover dia' });

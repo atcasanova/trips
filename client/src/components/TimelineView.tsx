@@ -27,6 +27,7 @@ import {
   Building2,
   LayoutList,
   CalendarDays,
+  RefreshCw,
 } from 'lucide-react';
 import { Trip, TripDay, ItineraryItem, TransportReservation, TransportSegment, HotelReservation } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -1762,7 +1763,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     rows={11}
                     value={aiText}
                     onChange={(e) => setAiText(e.target.value)}
-                    placeholder={`Exemplo de anotação:\n18/03 chegada em tokyo - Transfer In\n19 Templo Sensoji, Ginza, Tsukiji, Tokyo Sky tree e Teamlab Borderless\n20 Santuário Meiji, Harajuku, Shinjuku/kabukicho e Shibuya\n21 Monte Fuji\n...`}
+                    placeholder={`Cole suas anotações ou digite pedidos livres para a IA, por exemplo:
+
+• "18/03 chegada em Tóquio - Transfer In
+19 Templo Sensoji, Ginza, Tsukiji, Tokyo Skytree e TeamLab
+20 Meiji Jingu, Harajuku e Shibuya"
+
+Ou instruções livres de adição/sugestão como:
+• "No dia 22/03 irei para Nara e Osaka, adicione ao roteiro e já sugira visitas turísticas e restaurantes para eu fazer lá"
+• "No dia 25/03 teremos um dia livre em Hakone com onsen e vista do Monte Fuji"`}
                     className="w-full px-3.5 py-2.5 text-xs font-mono border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 leading-relaxed bg-slate-50/50"
                   />
 
@@ -1781,8 +1790,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     </div>
                     <p className="text-[11px] text-slate-500 pl-6">
                       {aiReplaceExisting
-                        ? 'Os dias atuais serão substituídos pelo roteiro extraído.'
-                        : 'Os novos dias identificados serão adicionados ao final dos dias já existentes.'}
+                        ? 'Todos os dias e atividades atuais serão substituídos pelo roteiro gerado.'
+                        : 'Inteligente: novos dias serão encaixados na ordem cronológica correta e dias coincidentes terão novas atividades mescladas sem duplicidade.'}
                     </p>
                   </div>
                 </>
@@ -1806,11 +1815,23 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                         className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2"
                       >
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-base">{d.icon || '📍'}</span>
                             <strong className="text-slate-800 font-bold">
-                              Dia {d.dayNumber || idx + 1}: {d.title}
+                              {d.isExistingDay
+                                ? `Dia ${d.existingDayNumber}: ${d.existingDayTitle || d.title}`
+                                : `Dia ${d.dayNumber || idx + 1}: ${d.title}`}
                             </strong>
+                            {d.isExistingDay && (
+                              <span className="px-2 py-0.5 bg-amber-100 border border-amber-300 rounded text-amber-800 font-semibold text-[10px] flex items-center gap-1">
+                                <RefreshCw className="w-2.5 h-2.5" /> Mesclando no Dia {d.existingDayNumber} existente
+                              </span>
+                            )}
+                            {!aiReplaceExisting && !d.isExistingDay && (
+                              <span className="px-2 py-0.5 bg-emerald-100 border border-emerald-300 rounded text-emerald-800 font-semibold text-[10px] flex items-center gap-1">
+                                <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> Novo Dia • Encaixe cronológico
+                              </span>
+                            )}
                           </div>
                           <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-600 font-mono text-[11px]">
                             {d.date}
