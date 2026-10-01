@@ -357,12 +357,25 @@ export const api = {
   // === ADMIN MANAGEMENT & DASHBOARD ===
   admin: {
     getOverview: () => request<any>('/admin/overview'),
-    getAiAudits: (params?: { limit?: number; offset?: number; operation?: string; status?: string }) => {
+    getAiAudits: (params?: {
+      page?: number;
+      pageSize?: number;
+      limit?: number;
+      offset?: number;
+      operation?: string;
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+    }) => {
       const q = new URLSearchParams();
+      if (params?.page) q.set('page', String(params.page));
+      if (params?.pageSize) q.set('pageSize', String(params.pageSize));
       if (params?.limit) q.set('limit', String(params.limit));
-      if (params?.offset) q.set('offset', String(params.offset));
+      if (params?.offset !== undefined) q.set('offset', String(params.offset));
       if (params?.operation) q.set('operation', params.operation);
       if (params?.status) q.set('status', params.status);
+      if (params?.startDate) q.set('startDate', params.startDate);
+      if (params?.endDate) q.set('endDate', params.endDate);
       const queryString = q.toString();
       return request<any>(`/admin/ai-audits${queryString ? `?${queryString}` : ''}`);
     },

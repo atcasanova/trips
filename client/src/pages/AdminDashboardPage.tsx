@@ -31,6 +31,11 @@ import {
   Receipt,
   Globe,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  X,
 } from 'lucide-react';
 import { api } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.js';
@@ -57,15 +62,23 @@ export const AdminDashboardPage: React.FC = () => {
   const [groupTrips, setGroupTrips] = useState<any[]>([]);
   const [destinations, setDestinations] = useState<any>(null);
 
-  // AI filter state
+  // AI audits pagination & filter state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiPage, setAiPage] = useState(1);
+  const [aiPageSize, setAiPageSize] = useState(25);
   const [aiOpFilter, setAiOpFilter] = useState('ALL');
   const [aiStatusFilter, setAiStatusFilter] = useState('ALL');
+  const [aiDatePreset, setAiDatePreset] = useState<'ALL' | 'TODAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'CUSTOM'>('ALL');
+  const [aiStartDate, setAiStartDate] = useState('');
+  const [aiEndDate, setAiEndDate] = useState('');
 
   // Group trips filter state
   const [groupFilter, setGroupFilter] = useState<'all' | 'group' | 'solo'>('all');
 
   // Selected audit log for detail inspection
   const [selectedAuditLog, setSelectedAuditLog] = useState<any | null>(null);
+
+  const isInitialMount = React.useRef(true);
 
   // Check admin permission
   useEffect(() => {
@@ -74,17 +87,133 @@ export const AdminDashboardPage: React.FC = () => {
     }
   }, [user, navigate]);
 
+  // Date Presets Handler
+  const applyDatePreset = (preset: 'ALL' | 'TODAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'CUSTOM') => {
+    setAiDatePreset(preset);
+    setAiPage(1);
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const toYMD = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    if (preset === 'ALL') {
+      setAiStartDate('');
+      setAiEndDate('');
+    } else if (preset === 'TODAY') {
+      const todayStr = toYMD(now);
+      setAiStartDate(todayStr);
+      setAiEndDate(todayStr);
+    } else if (preset === 'LAST_7_DAYS') {
+      const past = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setAiStartDate(toYMD(past));
+      setAiEndDate(toYMD(now));
+    } else if (preset === 'LAST_30_DAYS') {
+      const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      setAiStartDate(toYMD(past));
+      setAiEndDate(toYMD(now));
+    } else if (preset === 'THIS_MONTH') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      setAiStartDate(toYMD(firstDay));
+      setAiEndDate(toYMD(now));
+    }
+  };
+
+  // Helper for smart pagination numbering (with ellipsis)
+  const getPageNumbers = (current: number, total: number) => {
+    const pages: (number | string)[] = [];
+    if (total <= 7) {
+      for (let i = 1; i <= total; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (current > 3) pages.push('...');
+      const start = Math.max(2, current - 1);
+      const end = Math.min(total - 1, current + 1);
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      if (current < total - 2) pages.push('...');
+      pages.push(total);
+    }
+    return pages;
+  };
+
+  // Fetch only AI audits (fast paginated query)
+  const loadAiData = useCallback(async () => {
+    setAiLoading(true);
+    try {
+      const aiData = await api.admin.getAiAudits({
+        page: aiPage,
+        pageSize: aiPageSize,
+        operation: aiOpFilter !== 'ALL' ? aiOpFilter : undefined,
+        status: aiStatusFilter !== 'ALL' ? aiStatusFilter : undefined,
+        startDate: aiStartDate || undefined,
+        endDate: aiEndDate || undefined,
+      });
+      setAiAudits(aiData);
+    } catch (err: any) {
+      console.error('Erro ao recarregar auditoria de IA:', err);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [aiPage, aiPageSize, aiOpFilter, aiStatusFilter, aiStartDate, aiEndDate]);
+
+  // Maintain active filter values for full refresh
+  const filtersRef = React.useRef({
+    aiPage,
+    aiPageSize,
+    aiOpFilter,
+    aiStatusFilter,
+    aiStartDate,
+    aiEndDate,
+    groupFilter,
+  });
+
+  useEffect(() => {
+    filtersRef.current = {
+      aiPage,
+      aiPageSize,
+      aiOpFilter,
+      aiStatusFilter,
+      aiStartDate,
+      aiEndDate,
+      groupFilter,
+    };
+  }, [aiPage, aiPageSize, aiOpFilter, aiStatusFilter, aiStartDate, aiEndDate, groupFilter]);
+
+  // Keep AI audits updated when AI filters or pagination changes
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    loadAiData();
+  }, [loadAiData]);
+
+  // Group trips filter effect
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    api.admin.getGroupTrips(groupFilter).then((gt) => setGroupTrips(gt.trips || [])).catch(() => {});
+  }, [groupFilter]);
+
   const loadAllData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
 
+    const f = filtersRef.current;
     try {
       const [ovData, aiData, usData, gtData, destData] = await Promise.all([
         api.admin.getOverview(),
-        api.admin.getAiAudits({ operation: aiOpFilter !== 'ALL' ? aiOpFilter : undefined, status: aiStatusFilter !== 'ALL' ? aiStatusFilter : undefined }),
+        api.admin.getAiAudits({
+          page: f.aiPage,
+          pageSize: f.aiPageSize,
+          operation: f.aiOpFilter !== 'ALL' ? f.aiOpFilter : undefined,
+          status: f.aiStatusFilter !== 'ALL' ? f.aiStatusFilter : undefined,
+          startDate: f.aiStartDate || undefined,
+          endDate: f.aiEndDate || undefined,
+        }),
         api.admin.getUsers(),
-        api.admin.getGroupTrips(groupFilter),
+        api.admin.getGroupTrips(f.groupFilter),
         api.admin.getDestinations(),
       ]);
 
@@ -99,7 +228,7 @@ export const AdminDashboardPage: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [aiOpFilter, aiStatusFilter, groupFilter]);
+  }, []);
 
   useEffect(() => {
     loadAllData();
@@ -529,6 +658,90 @@ export const AdminDashboardPage: React.FC = () => {
       {/* TAB 2: AUDITORIA & MEDIÇÕES DE IA */}
       {activeTab === 'ai-audits' && (
         <div className="space-y-8">
+          {/* AI Date Filtering Toolbar */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-purple-50 text-purple-700 rounded-xl">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-800">Filtrar Auditoria por Período</h3>
+                  {aiLoading && (
+                    <span className="flex items-center gap-1 text-[11px] text-purple-600 font-medium">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Atualizando...
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Métricas agregadas, custos e registros calculados para o intervalo selecionado
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Presets */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                {[
+                  { id: 'ALL', label: 'Tudo' },
+                  { id: 'TODAY', label: 'Hoje' },
+                  { id: 'LAST_7_DAYS', label: '7 Dias' },
+                  { id: 'LAST_30_DAYS', label: '30 Dias' },
+                  { id: 'THIS_MONTH', label: 'Este Mês' },
+                ].map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyDatePreset(p.id as any)}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      aiDatePreset === p.id
+                        ? 'bg-white text-purple-700 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Date Inputs */}
+              <div className="flex items-center gap-2 text-xs bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600">
+                <span className="text-slate-400 font-medium">De:</span>
+                <input
+                  type="date"
+                  value={aiStartDate}
+                  onChange={(e) => {
+                    setAiStartDate(e.target.value);
+                    setAiDatePreset('CUSTOM');
+                    setAiPage(1);
+                  }}
+                  className="bg-transparent border-none text-slate-700 focus:outline-none text-xs cursor-pointer"
+                />
+                <span className="text-slate-400 font-medium">Até:</span>
+                <input
+                  type="date"
+                  value={aiEndDate}
+                  onChange={(e) => {
+                    setAiEndDate(e.target.value);
+                    setAiDatePreset('CUSTOM');
+                    setAiPage(1);
+                  }}
+                  className="bg-transparent border-none text-slate-700 focus:outline-none text-xs cursor-pointer"
+                />
+                {(aiStartDate || aiEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => applyDatePreset('ALL')}
+                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
+                    title="Limpar filtro de datas"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Summary Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
@@ -578,27 +791,31 @@ export const AdminDashboardPage: React.FC = () => {
               </h3>
 
               <div className="divide-y divide-slate-100 text-xs">
-                {aiAudits?.byOperation?.map((op: any, idx: number) => (
-                  <div key={idx} className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg">
-                    <div className="space-y-0.5">
-                      <span className="font-mono font-bold text-purple-900 text-xs bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                        {op.operation}
-                      </span>
-                      <p className="text-[11px] text-slate-500 pt-1">
-                        {op.count} chamadas • Duração média: {(op.avgDurationMs / 1000).toFixed(1)}s
-                      </p>
-                    </div>
+                {aiAudits?.byOperation?.length === 0 ? (
+                  <p className="text-slate-400 py-3 text-center">Nenhuma operação no período selecionado.</p>
+                ) : (
+                  aiAudits?.byOperation?.map((op: any, idx: number) => (
+                    <div key={idx} className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg">
+                      <div className="space-y-0.5">
+                        <span className="font-mono font-bold text-purple-900 text-xs bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                          {op.operation}
+                        </span>
+                        <p className="text-[11px] text-slate-500 pt-1">
+                          {op.count} chamadas • Duração média: {(op.avgDurationMs / 1000).toFixed(1)}s
+                        </p>
+                      </div>
 
-                    <div className="text-right">
-                      <span className="font-bold text-slate-800">{op.totalTokens.toLocaleString()} tokens</span>
-                      {op.errorCount > 0 ? (
-                        <p className="text-[11px] text-rose-600 font-semibold">{op.errorCount} erros</p>
-                      ) : (
-                        <p className="text-[11px] text-emerald-600">100% sucesso</p>
-                      )}
+                      <div className="text-right">
+                        <span className="font-bold text-slate-800">{op.totalTokens.toLocaleString()} tokens</span>
+                        {op.errorCount > 0 ? (
+                          <p className="text-[11px] text-rose-600 font-semibold">{op.errorCount} erros</p>
+                        ) : (
+                          <p className="text-[11px] text-emerald-600">100% sucesso</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
@@ -611,17 +828,21 @@ export const AdminDashboardPage: React.FC = () => {
                   Modelos Utilizados
                 </h3>
                 <div className="divide-y divide-slate-100 text-xs">
-                  {aiAudits?.byModel?.map((m: any, idx: number) => (
-                    <div key={idx} className="py-2.5 flex items-center justify-between">
-                      <div>
-                        <strong className="text-slate-800 font-mono">{m.model}</strong>
-                        <p className="text-[11px] text-slate-500">{m.count} requisições • Média {(m.avgDurationMs / 1000).toFixed(1)}s</p>
+                  {aiAudits?.byModel?.length === 0 ? (
+                    <p className="text-slate-400 py-3 text-center">Nenhum registro de modelo no período.</p>
+                  ) : (
+                    aiAudits?.byModel?.map((m: any, idx: number) => (
+                      <div key={idx} className="py-2.5 flex items-center justify-between">
+                        <div>
+                          <strong className="text-slate-800 font-mono">{m.model}</strong>
+                          <p className="text-[11px] text-slate-500">{m.count} requisições • Média {(m.avgDurationMs / 1000).toFixed(1)}s</p>
+                        </div>
+                        <div className="text-right font-mono text-slate-700">
+                          {m.totalTokens.toLocaleString()} tokens
+                        </div>
                       </div>
-                      <div className="text-right font-mono text-slate-700">
-                        {m.totalTokens.toLocaleString()} tokens
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -632,24 +853,28 @@ export const AdminDashboardPage: React.FC = () => {
                   Consumo por Usuário
                 </h3>
                 <div className="divide-y divide-slate-100 text-xs">
-                  {aiAudits?.byUser?.map((u: any, idx: number) => (
-                    <div key={idx} className="py-2.5 flex items-center justify-between">
-                      <div>
-                        <strong className="text-slate-800">{u.userName}</strong>
-                        <p className="text-[11px] text-slate-500">{u.userEmail}</p>
+                  {aiAudits?.byUser?.length === 0 ? (
+                    <p className="text-slate-400 py-3 text-center">Nenhum consumo por usuário no período.</p>
+                  ) : (
+                    aiAudits?.byUser?.map((u: any, idx: number) => (
+                      <div key={idx} className="py-2.5 flex items-center justify-between">
+                        <div>
+                          <strong className="text-slate-800">{u.userName}</strong>
+                          <p className="text-[11px] text-slate-500">{u.userEmail}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-slate-800">{u.callsCount} chamadas</span>
+                          <p className="text-[11px] text-purple-600 font-mono">{u.totalTokens.toLocaleString()} tokens</p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className="font-bold text-slate-800">{u.callsCount} chamadas</span>
-                        <p className="text-[11px] text-purple-600 font-mono">{u.totalTokens.toLocaleString()} tokens</p>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Interactive Audit Logs Table */}
+          {/* Interactive Audit Logs Table with Pagination & Filters */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
@@ -661,8 +886,11 @@ export const AdminDashboardPage: React.FC = () => {
               <div className="flex items-center gap-2 flex-wrap">
                 <select
                   value={aiOpFilter}
-                  onChange={(e) => setAiOpFilter(e.target.value)}
-                  className="text-xs border border-slate-300 rounded-xl px-2.5 py-1.5 bg-white text-slate-700"
+                  onChange={(e) => {
+                    setAiOpFilter(e.target.value);
+                    setAiPage(1);
+                  }}
+                  className="text-xs border border-slate-300 rounded-xl px-2.5 py-1.5 bg-white text-slate-700 cursor-pointer"
                 >
                   <option value="ALL">Todas as Operações</option>
                   <option value="PARSE_ITINERARY_TEXT">PARSE_ITINERARY_TEXT</option>
@@ -673,17 +901,37 @@ export const AdminDashboardPage: React.FC = () => {
 
                 <select
                   value={aiStatusFilter}
-                  onChange={(e) => setAiStatusFilter(e.target.value)}
-                  className="text-xs border border-slate-300 rounded-xl px-2.5 py-1.5 bg-white text-slate-700"
+                  onChange={(e) => {
+                    setAiStatusFilter(e.target.value);
+                    setAiPage(1);
+                  }}
+                  className="text-xs border border-slate-300 rounded-xl px-2.5 py-1.5 bg-white text-slate-700 cursor-pointer"
                 >
                   <option value="ALL">Todos os Status</option>
                   <option value="SUCCESS">Sucesso</option>
                   <option value="ERROR">Erro</option>
                 </select>
+
+                {(aiOpFilter !== 'ALL' || aiStatusFilter !== 'ALL' || aiStartDate || aiEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiOpFilter('ALL');
+                      setAiStatusFilter('ALL');
+                      applyDatePreset('ALL');
+                    }}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
+                    title="Redefinir filtros"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Limpar Filtros</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Table */}
+            <div className={`overflow-x-auto transition-opacity ${aiLoading ? 'opacity-60' : 'opacity-100'}`}>
               <table className="w-full text-xs text-left border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500 font-semibold bg-slate-50 uppercase text-[10px]">
@@ -698,45 +946,156 @@ export const AdminDashboardPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {aiAudits?.recentLogs?.map((log: any) => (
-                    <tr
-                      key={log.id}
-                      onClick={() => setSelectedAuditLog(log)}
-                      className="hover:bg-purple-50/50 cursor-pointer transition-colors"
-                    >
-                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">{formatDate(log.created_at)}</td>
-                      <td className="py-2.5 px-3">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800">
-                          {log.operation}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600">{log.model}</td>
-                      <td className="py-2.5 px-3 text-slate-800 font-sans">{log.user_name || 'Sistema'}</td>
-                      <td className="py-2.5 px-3 text-slate-600 font-sans truncate max-w-[150px]">
-                        {log.trip_title || '—'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                        {(log.total_tokens || 0).toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">
-                        {((log.duration_ms || 0) / 1000).toFixed(2)}s
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-sans">
-                        {log.status === 'SUCCESS' ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                            OK
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
-                            ERRO
-                          </span>
-                        )}
+                  {aiAudits?.recentLogs?.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-400 font-sans">
+                        Nenhum registro de auditoria encontrado com os filtros selecionados.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    aiAudits?.recentLogs?.map((log: any) => (
+                      <tr
+                        key={log.id}
+                        onClick={() => setSelectedAuditLog(log)}
+                        className="hover:bg-purple-50/50 cursor-pointer transition-colors"
+                      >
+                        <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">{formatDate(log.created_at)}</td>
+                        <td className="py-2.5 px-3">
+                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800">
+                            {log.operation}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600">{log.model}</td>
+                        <td className="py-2.5 px-3 text-slate-800 font-sans">{log.user_name || 'Sistema'}</td>
+                        <td className="py-2.5 px-3 text-slate-600 font-sans truncate max-w-[150px]">
+                          {log.trip_title || '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                          {(log.total_tokens || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-right text-slate-600">
+                          {((log.duration_ms || 0) / 1000).toFixed(2)}s
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-sans">
+                          {log.status === 'SUCCESS' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              OK
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
+                              ERRO
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Controls */}
+            {(() => {
+              const totalRecords = aiAudits?.pagination?.totalRecords ?? 0;
+              const totalPages = Math.max(aiAudits?.pagination?.totalPages ?? 1, 1);
+              const startRecord = totalRecords > 0 ? (aiPage - 1) * aiPageSize + 1 : 0;
+              const endRecord = Math.min(aiPage * aiPageSize, totalRecords);
+
+              return (
+                <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+                  {/* Left: Records Counter & Page Size Selector */}
+                  <div className="flex items-center gap-4 text-slate-500">
+                    <span>
+                      Mostrando <strong className="text-slate-800 font-semibold">{startRecord}</strong> a{' '}
+                      <strong className="text-slate-800 font-semibold">{endRecord}</strong> de{' '}
+                      <strong className="text-slate-800 font-semibold">{totalRecords}</strong> registros
+                    </span>
+
+                    <div className="flex items-center gap-1.5 pl-3 border-l border-slate-200">
+                      <span>Por página:</span>
+                      <select
+                        value={aiPageSize}
+                        onChange={(e) => {
+                          setAiPageSize(Number(e.target.value));
+                          setAiPage(1);
+                        }}
+                        className="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white text-slate-700 cursor-pointer"
+                      >
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Right: Page Navigation Buttons */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setAiPage(1)}
+                      disabled={aiPage <= 1 || aiLoading}
+                      className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      title="Primeira Página"
+                    >
+                      <ChevronsLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiPage((prev) => Math.max(prev - 1, 1))}
+                      disabled={aiPage <= 1 || aiLoading}
+                      className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      title="Página Anterior"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+
+                    <div className="flex items-center gap-1 px-1">
+                      {getPageNumbers(aiPage, totalPages).map((p, idx) =>
+                        p === '...' ? (
+                          <span key={`ellipsis-${idx}`} className="px-2 py-1 text-slate-400 font-mono">
+                            ...
+                          </span>
+                        ) : (
+                          <button
+                            key={`page-${p}`}
+                            type="button"
+                            onClick={() => setAiPage(Number(p))}
+                            disabled={aiLoading}
+                            className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                              aiPage === p
+                                ? 'bg-purple-600 text-white shadow-xs'
+                                : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setAiPage((prev) => Math.min(prev + 1, totalPages))}
+                      disabled={aiPage >= totalPages || aiLoading}
+                      className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      title="Próxima Página"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiPage(totalPages)}
+                      disabled={aiPage >= totalPages || aiLoading}
+                      className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      title="Última Página"
+                    >
+                      <ChevronsRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

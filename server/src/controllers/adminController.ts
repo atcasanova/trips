@@ -162,13 +162,50 @@ export const adminController = {
     }
   },
 
-  // 2. AI Audits & Measurements
+  // 2. AI Audits & Measurements (Paginated & Filterable by Date, Operation, Status)
   async getAiAudits(req: Request, res: Response) {
     try {
-      const limit = Math.min(Math.max(parseInt(req.query.limit as string, 10) || 50, 1), 200);
-      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
+      const page = Math.max(parseInt(req.query.page as string, 10) || 1, 1);
+      const limit = Math.min(Math.max(parseInt((req.query.pageSize || req.query.limit) as string, 10) || 25, 1), 200);
+      const offset = (page - 1) * limit;
+
       const operationFilter = req.query.operation as string;
       const statusFilter = req.query.status as string;
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+
+      // 1. Build date conditions for summary and aggregations
+      const dateConditions: string[] = [];
+      const dateParams: any[] = [];
+      let dateParamIdx = 1;
+
+      if (startDate && startDate.trim()) {
+        const parsed = Date.parse(startDate);
+        if (!isNaN(parsed)) {
+          dateConditions.push(`created_at >= $${dateParamIdx++}::timestamptz`);
+          dateParams.push(startDate.trim());
+        }
+      }
+
+      if (endDate && endDate.trim()) {
+        const parsed = Date.parse(endDate);
+        if (!isNaN(parsed)) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(endDate.trim())) {
+            // Whole day coverage: include until 23:59:59.999
+            dateConditions.push(`created_at < ($${dateParamIdx++}::date + interval '1 day')`);
+            dateParams.push(endDate.trim());
+          } else {
+            dateConditions.push(`created_at <= $${dateParamIdx++}::timestamptz`);
+            dateParams.push(endDate.trim());
+          }
+        }
+      }
+
+      const dateWhereClause = dateConditions.length > 0 ? `WHERE ${dateConditions.join(' AND ')}` : '';
+
+      // Date conditions with 'ai.' table alias for joined queries
+      const dateConditionsAliased = dateConditions.map(c => c.replace(/\bcreated_at\b/g, 'ai.created_at'));
+      const dateWhereClauseAliased = dateConditionsAliased.length > 0 ? `WHERE ${dateConditionsAliased.join(' AND ')}` : '';
 
       // Summary
       const { rows: summaryRows } = await query(`
@@ -182,13 +219,15 @@ export const adminController = {
           COALESCE(ROUND(AVG(duration_ms)), 0) as avg_duration_ms,
           COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 0) as p95_duration_ms
         FROM ai_audit_logs
-      `);
-      const summary = summaryRows[0];
-      const totalCallsNum = Number(summary.total_calls) || 0;
-      const successRate = totalCallsNum > 0 ? ((Number(summary.success_calls) / totalCallsNum) * 100).toFixed(1) : '100.0';
+        ${dateWhereClause}
+      `, dateParams);
 
-      const promptTokens = Number(summary.total_prompt_tokens) || 0;
-      const completionTokens = Number(summary.total_completion_tokens) || 0;
+      const summary = summaryRows[0] || {};
+      const totalCallsNum = Number(summary.total_calls || 0);
+      const successRate = totalCallsNum > 0 ? ((Number(summary.success_calls || 0) / totalCallsNum) * 100).toFixed(1) : '100.0';
+
+      const promptTokens = Number(summary.total_prompt_tokens || 0);
+      const completionTokens = Number(summary.total_completion_tokens || 0);
       const estimatedCostUsd = ((promptTokens * 0.0000025) + (completionTokens * 0.000010)).toFixed(4);
 
       // By operation
@@ -200,9 +239,10 @@ export const adminController = {
           COALESCE(ROUND(AVG(duration_ms)), 0) as avg_duration_ms, 
           COUNT(*) FILTER (WHERE status = 'ERROR') as error_count 
         FROM ai_audit_logs 
+        ${dateWhereClause}
         GROUP BY operation 
         ORDER BY count DESC
-      `);
+      `, dateParams);
 
       // By model
       const { rows: byModel } = await query(`
@@ -215,9 +255,10 @@ export const adminController = {
           COALESCE(ROUND(AVG(duration_ms)), 0) as avg_duration_ms, 
           COUNT(*) FILTER (WHERE status = 'ERROR') as error_count 
         FROM ai_audit_logs 
+        ${dateWhereClause}
         GROUP BY model 
         ORDER BY count DESC
-      `);
+      `, dateParams);
 
       // By user
       const { rows: byUser } = await query(`
@@ -229,32 +270,66 @@ export const adminController = {
           COALESCE(SUM(ai.total_tokens), 0) as total_tokens
         FROM ai_audit_logs ai
         LEFT JOIN users u ON u.id = ai.user_id
+        ${dateWhereClauseAliased}
         GROUP BY ai.user_id, u.name, u.email
         ORDER BY calls_count DESC
-      `);
+      `, dateParams);
 
-      // Recent logs with dynamic filtering
-      const whereConditions: string[] = [];
-      const queryParams: any[] = [];
-      let paramIdx = 1;
+      // 2. Query for individual logs (with date filters + operation + status + pagination)
+      const logsConditions: string[] = [];
+      const logsParams: any[] = [];
+      let logsParamIdx = 1;
+
+      if (startDate && startDate.trim()) {
+        const parsed = Date.parse(startDate);
+        if (!isNaN(parsed)) {
+          logsConditions.push(`ai.created_at >= $${logsParamIdx++}::timestamptz`);
+          logsParams.push(startDate.trim());
+        }
+      }
+
+      if (endDate && endDate.trim()) {
+        const parsed = Date.parse(endDate);
+        if (!isNaN(parsed)) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(endDate.trim())) {
+            logsConditions.push(`ai.created_at < ($${logsParamIdx++}::date + interval '1 day')`);
+            logsParams.push(endDate.trim());
+          } else {
+            logsConditions.push(`ai.created_at <= $${logsParamIdx++}::timestamptz`);
+            logsParams.push(endDate.trim());
+          }
+        }
+      }
 
       if (operationFilter && operationFilter !== 'ALL') {
-        whereConditions.push(`ai.operation = $${paramIdx++}`);
-        queryParams.push(operationFilter);
+        logsConditions.push(`ai.operation = $${logsParamIdx++}`);
+        logsParams.push(operationFilter);
       }
       if (statusFilter && statusFilter !== 'ALL') {
-        whereConditions.push(`ai.status = $${paramIdx++}`);
-        queryParams.push(statusFilter);
+        logsConditions.push(`ai.status = $${logsParamIdx++}`);
+        logsParams.push(statusFilter);
       }
 
-      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+      const logsWhereClause = logsConditions.length > 0 ? `WHERE ${logsConditions.join(' AND ')}` : '';
 
-      queryParams.push(limit);
-      const limitIdx = paramIdx++;
-      queryParams.push(offset);
-      const offsetIdx = paramIdx++;
+      // Count total matching logs for pagination
+      const { rows: countRows } = await query(`
+        SELECT COUNT(*) as count 
+        FROM ai_audit_logs ai 
+        ${logsWhereClause}
+      `, logsParams);
 
-      const { rows: recentLogs } = await query(`
+      const totalRecords = Number(countRows[0]?.count || 0);
+      const totalPages = Math.max(Math.ceil(totalRecords / limit), 1);
+
+      // Fetch the page of logs
+      const pageParams = [...logsParams];
+      pageParams.push(limit);
+      const limitParamIdx = logsParamIdx++;
+      pageParams.push(offset);
+      const offsetParamIdx = logsParamIdx++;
+
+      const { rows: logs } = await query(`
         SELECT 
           ai.id, ai.operation, ai.model, ai.prompt_tokens, ai.completion_tokens,
           ai.total_tokens, ai.duration_ms, ai.status, ai.error_message, ai.created_at,
@@ -264,27 +339,23 @@ export const adminController = {
         FROM ai_audit_logs ai
         LEFT JOIN users u ON u.id = ai.user_id
         LEFT JOIN trips t ON t.id = ai.trip_id
-        ${whereClause}
+        ${logsWhereClause}
         ORDER BY ai.created_at DESC
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}
-      `, queryParams);
-
-      const { rows: totalCountRows } = await query(`
-        SELECT COUNT(*) as count FROM ai_audit_logs ai ${whereClause}
-      `, queryParams.slice(0, whereConditions.length));
+        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+      `, pageParams);
 
       return res.json({
         summary: {
-          totalCalls: Number(summary.total_calls),
-          successCalls: Number(summary.success_calls),
-          errorCalls: Number(summary.error_calls),
+          totalCalls: Number(summary.total_calls || 0),
+          successCalls: Number(summary.success_calls || 0),
+          errorCalls: Number(summary.error_calls || 0),
           successRate: Number(successRate),
-          totalPromptTokens: Number(summary.total_prompt_tokens),
-          totalCompletionTokens: Number(summary.total_completion_tokens),
-          totalTokens: Number(summary.total_tokens),
+          totalPromptTokens: Number(summary.total_prompt_tokens || 0),
+          totalCompletionTokens: Number(summary.total_completion_tokens || 0),
+          totalTokens: Number(summary.total_tokens || 0),
           estimatedCostUsd: Number(estimatedCostUsd),
-          avgDurationMs: Number(summary.avg_duration_ms),
-          p95DurationMs: Number(summary.p95_duration_ms),
+          avgDurationMs: Number(summary.avg_duration_ms || 0),
+          p95DurationMs: Number(summary.p95_duration_ms || 0),
         },
         byOperation: byOperation.map((r: any) => ({
           operation: r.operation,
@@ -309,11 +380,24 @@ export const adminController = {
           callsCount: Number(r.calls_count),
           totalTokens: Number(r.total_tokens),
         })),
-        recentLogs,
+        recentLogs: logs,
+        logs,
         pagination: {
-          total: Number(totalCountRows[0]?.count || 0),
+          page,
+          pageSize: limit,
           limit,
           offset,
+          total: totalRecords,
+          totalRecords,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+        filters: {
+          startDate: startDate || null,
+          endDate: endDate || null,
+          operation: operationFilter || 'ALL',
+          status: statusFilter || 'ALL',
         },
       });
     } catch (err: any) {
