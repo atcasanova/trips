@@ -22,6 +22,7 @@ import {
   ArrowRight,
   Check,
   Trash2,
+  Route,
 } from 'lucide-react';
 import {
   Trip,
@@ -34,6 +35,7 @@ import {
 } from '../types/index.js';
 import { api } from '../api/client.js';
 import { formatDateRange } from '../utils/date.js';
+import { MacroTimelineView } from '../components/MacroTimelineView.js';
 import { TimelineView } from '../components/TimelineView.js';
 import { TransportsView } from '../components/TransportsView.js';
 import { HotelsView } from '../components/HotelsView.js';
@@ -48,6 +50,7 @@ import { useAuth } from '../context/AuthContext.js';
 
 const VALID_TABS = [
   'overview',
+  'timeline',
   'itinerary',
   'transports',
   'hotels',
@@ -348,7 +351,8 @@ export const TripDetailPage: React.FC = () => {
           <nav className="flex space-x-1 sm:space-x-3 overflow-x-auto py-2.5">
             {[
               { id: 'overview', label: 'Visão Geral', icon: Sparkles },
-              { id: 'itinerary', label: 'Roteiro & Timeline', icon: Calendar, count: days.length },
+              { id: 'timeline', label: 'Timeline', icon: Route },
+              { id: 'itinerary', label: 'Roteiro', icon: Calendar, count: days.length },
               { id: 'transports', label: 'Voos & Transportes', icon: Plane, count: transports.length },
               { id: 'hotels', label: 'Hospedagens', icon: Building, count: hotels.length },
               { id: 'documents', label: 'Documentos & IA', icon: FileText, count: documents.length },
@@ -633,6 +637,18 @@ export const TripDetailPage: React.FC = () => {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'timeline' && (
+          <MacroTimelineView
+            trip={trip}
+            days={days}
+            transports={transports}
+            hotels={hotels}
+            onRefresh={loadAllTripData}
+            canEdit={canEdit}
+            onNavigateTab={(tabName) => handleTabChange(tabName as TabType)}
+          />
         )}
 
         {activeTab === 'itinerary' && (
