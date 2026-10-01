@@ -134,7 +134,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
         <div>
           <div className="flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-brand-600" />
-            <h2 className="text-xl font-bold font-serif text-slate-900">Trip Book & Relatório Editorial</h2>
+            <h2 className="text-xl font-bold font-serif text-slate-900">Trip Book</h2>
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
             Geração de dossiê completo de viagem formatado para papel A4 e web, integrando identidade visual, mapas diários, timeline, reservas de voos e hotéis.
@@ -285,7 +285,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
         {/* Left Column: Sections Configuration */}
         <div className="lg:col-span-1 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-            <Layers className="w-4 h-4 text-brand-600" /> Seções do Relatório
+            <Layers className="w-4 h-4 text-brand-600" /> Seções do Trip Book
           </h3>
 
           <div className="space-y-2.5 text-xs text-slate-700">
@@ -320,7 +320,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
         <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col h-[750px]">
           <div className="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-xs text-slate-600">
             <span className="font-semibold flex items-center gap-1.5">
-              <Eye className="w-3.5 h-3.5 text-brand-600" /> Pré-visualização do Relatório / Trip Book
+              <Eye className="w-3.5 h-3.5 text-brand-600" /> Pré-visualização do Trip Book
             </span>
             <a
               href={printHtmlUrl}

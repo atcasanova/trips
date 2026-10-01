@@ -204,50 +204,55 @@ export const TripDetailPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 pb-16">
       {/* Top Hero / Banner */}
-      <div className="relative h-64 sm:h-80 w-full overflow-hidden bg-slate-900 text-white">
-        {trip.cover_image_url ? (
-          <img
-            src={trip.cover_image_url}
-            alt={trip.title}
-            className="w-full h-full object-cover opacity-75 transform hover:scale-105 transition-transform duration-700 ease-out"
-          />
-        ) : (
-          <div
-            className="w-full h-full opacity-80"
-            style={{
-              background: `linear-gradient(135deg, ${primaryColor} 0%, #1e1b4b 100%)`,
-            }}
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+      <div className="relative min-h-[280px] sm:min-h-[320px] sm:h-80 w-full flex flex-col justify-between p-4 sm:p-6 overflow-hidden bg-slate-900 text-white">
+        <div className="absolute inset-0 z-0">
+          {trip.cover_image_url ? (
+            <img
+              src={trip.cover_image_url}
+              alt={trip.title}
+              className="w-full h-full object-cover opacity-75 transform hover:scale-105 transition-transform duration-700 ease-out"
+            />
+          ) : (
+            <div
+              className="w-full h-full opacity-80"
+              style={{
+                background: `linear-gradient(135deg, ${primaryColor} 0%, #1e1b4b 100%)`,
+              }}
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/50 to-slate-950/20" />
+        </div>
 
         {/* Back and Action Toolbar */}
-        <div className="absolute top-4 left-4 right-4 max-w-7xl mx-auto flex items-center justify-between z-10">
+        <div className="relative z-10 w-full max-w-7xl mx-auto flex items-center justify-between gap-2">
           <button
             onClick={() => navigate('/')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Minhas Viagens</span>
+            <span className="hidden sm:inline">Minhas Viagens</span>
+            <span className="sm:hidden">Viagens</span>
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
             <button
               onClick={handleCopyTabLink}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
+              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
               title="Copiar link direto para esta aba"
             >
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
-              <span>{copiedLink ? 'Link Copiado!' : 'Copiar Link'}</span>
+              <span className="hidden sm:inline">{copiedLink ? 'Link Copiado!' : 'Copiar Link'}</span>
+              <span className="sm:hidden">{copiedLink ? 'Copiado' : 'Link'}</span>
             </button>
 
             {canManage && (
               <button
                 onClick={() => setShowMembersModal(true)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
+                className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
               >
                 <Users className="w-3.5 h-3.5" />
-                <span>Viajantes ({members.length})</span>
+                <span className="hidden sm:inline">Viajantes ({members.length})</span>
+                <span className="sm:hidden">({members.length})</span>
               </button>
             )}
 
@@ -255,7 +260,7 @@ export const TripDetailPage: React.FC = () => {
               <>
                 <button
                   onClick={() => setShowPexelsModal(true)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
+                  className="flex items-center gap-1 p-1.5 sm:px-3 sm:py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
                   title="Alterar imagem de capa via Pexels"
                 >
                   <Image className="w-3.5 h-3.5" />
@@ -264,7 +269,7 @@ export const TripDetailPage: React.FC = () => {
 
                 <button
                   onClick={() => setShowThemePicker(true)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
+                  className="flex items-center gap-1 p-1.5 sm:px-3 sm:py-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white text-xs font-semibold backdrop-blur transition-colors"
                   title="Personalizar tema visual da viagem"
                 >
                   <Palette className="w-3.5 h-3.5" />
@@ -276,7 +281,7 @@ export const TripDetailPage: React.FC = () => {
             {canManage && (
               <button
                 onClick={() => setShowDeleteModal(true)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-rose-500/25 hover:bg-rose-600 text-rose-200 hover:text-white text-xs font-semibold backdrop-blur transition-all border border-rose-500/30"
+                className="flex items-center gap-1 p-1.5 sm:px-3 sm:py-1.5 rounded-full bg-rose-500/25 hover:bg-rose-600 text-rose-200 hover:text-white text-xs font-semibold backdrop-blur transition-all border border-rose-500/30"
                 title="Excluir ou arquivar esta viagem"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -287,7 +292,7 @@ export const TripDetailPage: React.FC = () => {
         </div>
 
         {/* Hero Title & Context */}
-        <div className="absolute bottom-6 left-4 right-4 max-w-7xl mx-auto z-10">
+        <div className="relative z-10 w-full max-w-7xl mx-auto pt-6">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span
               className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-sm"
@@ -348,7 +353,7 @@ export const TripDetailPage: React.FC = () => {
               { id: 'hotels', label: 'Hospedagens', icon: Building, count: hotels.length },
               { id: 'documents', label: 'Documentos & IA', icon: FileText, count: documents.length },
               { id: 'expenses', label: 'Despesas & Acertos', icon: DollarSign },
-              { id: 'report', label: 'Trip Book / Relatório', icon: BookOpen },
+              { id: 'report', label: 'Trip Book', icon: BookOpen },
             ].map((tItem) => {
               const Icon = tItem.icon;
               const isActive = activeTab === tItem.id;

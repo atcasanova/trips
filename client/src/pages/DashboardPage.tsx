@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Compass, Plane, Calendar, MapPin, Sparkles } from 'lucide-react';
+import { Plus, Search, Filter, Compass, Plane, Calendar, MapPin } from 'lucide-react';
 import { Trip } from '../types/index.js';
 import { api } from '../api/client.js';
 import { TripCard } from '../components/TripCard.js';
@@ -47,11 +47,6 @@ export const DashboardPage: React.FC = () => {
       {/* Hero Welcome Banner */}
       <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-slate-900 via-slate-800 to-brand-950 text-white p-6 sm:p-10 shadow-xl">
         <div className="relative z-10 max-w-2xl">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/10 backdrop-blur-md border border-white/15 text-brand-200 mb-4">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Sistema Trips • Dossiê Editorial & Roteiro</span>
-          </div>
-
           <h1 className="text-2xl sm:text-4xl font-bold font-serif tracking-tight leading-tight">
             Olá, {user?.name?.split(' ')[0]}! Para onde vamos a seguir?
           </h1>
