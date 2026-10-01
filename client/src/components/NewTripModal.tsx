@@ -14,12 +14,58 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({ onSuccess, onClose }
   const [subtitle, setSubtitle] = useState('');
   const [tagline, setTagline] = useState('');
   const [destinationSummary, setDestinationSummary] = useState('');
+  const [primaryCountry, setPrimaryCountry] = useState('');
+  const [isCountryAutoFilled, setIsCountryAutoFilled] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [currency, setCurrency] = useState('BRL');
   const [selectedPreset, setSelectedPreset] = useState('sakura');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const suggestCountry = (text: string): string | null => {
+    const t = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (/\b(japao|japan|toquio|tokyo|kyoto|quioto|osaka|kanazawa|takayama|hiroshima|nara)\b/.test(t)) return 'Japão';
+    if (/\b(brasil|brazil|bh|belo horizonte|sao paulo|sp|rio de janeiro|rj|brasilia|bsb|salvador|curitiba|porto alegre)\b/.test(t)) return 'Brasil';
+    if (/\b(franca|france|paris|nice|lyon|marseille|bordeaux)\b/.test(t)) return 'França';
+    if (/\b(estados unidos|eua|usa|united states|new york|nova york|las vegas|vegas|houston|miami|orlando|san francisco|los angeles)\b/.test(t)) return 'Estados Unidos';
+    if (/\b(italia|italy|roma|rome|milao|milan|florenca|veneza)\b/.test(t)) return 'Itália';
+    if (/\b(reino unido|uk|inglaterra|england|london|londres|edinburgh)\b/.test(t)) return 'Reino Unido';
+    if (/\b(portugal|lisboa|lisbon|porto)\b/.test(t)) return 'Portugal';
+    if (/\b(espanha|spain|madri|madrid|barcelona)\b/.test(t)) return 'Espanha';
+    if (/\b(alemanha|germany|berlim|berlin|munique|munich)\b/.test(t)) return 'Alemanha';
+    if (/\b(argentina|buenos aires|bariloche|mendoza)\b/.test(t)) return 'Argentina';
+    if (/\b(chile|santiago|atacama)\b/.test(t)) return 'Chile';
+    return null;
+  };
+
+  const handleTitleChange = (val: string) => {
+    setTitle(val);
+    if (!primaryCountry || isCountryAutoFilled) {
+      const suggested = suggestCountry(val) || suggestCountry(destinationSummary);
+      if (suggested) {
+        setPrimaryCountry(suggested);
+        setIsCountryAutoFilled(true);
+      } else if (isCountryAutoFilled) {
+        setPrimaryCountry('');
+        setIsCountryAutoFilled(false);
+      }
+    }
+  };
+
+  const handleDestinationChange = (val: string) => {
+    setDestinationSummary(val);
+    if (!primaryCountry || isCountryAutoFilled) {
+      const suggested = suggestCountry(val) || suggestCountry(title);
+      if (suggested) {
+        setPrimaryCountry(suggested);
+        setIsCountryAutoFilled(true);
+      } else if (isCountryAutoFilled) {
+        setPrimaryCountry('');
+        setIsCountryAutoFilled(false);
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +86,7 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({ onSuccess, onClose }
         subtitle: subtitle || null,
         tagline: tagline || null,
         destination_summary: destinationSummary || null,
+        primary_country: primaryCountry.trim() || null,
         cities,
         start_date: startDate || null,
         end_date: endDate || null,
@@ -80,7 +127,7 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({ onSuccess, onClose }
                 type="text"
                 required
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => handleTitleChange(e.target.value)}
                 placeholder="Ex: Japão, Black Hat USA, Paris"
                 className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:outline-none"
               />
@@ -97,18 +144,38 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({ onSuccess, onClose }
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Destinos / Cidades (separadas por ponto ou vírgula)
-            </label>
-            <div className="relative">
-              <MapPin className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Destinos / Cidades (separadas por ponto ou vírgula)
+              </label>
+              <div className="relative">
+                <MapPin className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={destinationSummary}
+                  onChange={(e) => handleDestinationChange(e.target.value)}
+                  placeholder="Ex: Tóquio • Kyoto • Osaka • Nara • Kanazawa"
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                <span>País Principal</span>
+                {isCountryAutoFilled && (
+                  <span className="text-[10px] text-brand-600 font-normal">Sugerido</span>
+                )}
+              </label>
               <input
                 type="text"
-                value={destinationSummary}
-                onChange={(e) => setDestinationSummary(e.target.value)}
-                placeholder="Ex: Tóquio • Kyoto • Osaka • Nara • Kanazawa"
-                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                value={primaryCountry}
+                onChange={(e) => {
+                  setPrimaryCountry(e.target.value);
+                  setIsCountryAutoFilled(false);
+                }}
+                placeholder="Ex: Japão, Brasil..."
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:outline-none"
               />
             </div>
           </div>

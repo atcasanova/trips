@@ -6,6 +6,7 @@ import { emailService } from '../services/emailService.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 import { TripRole } from '../types/index.js';
+import { resolveCountry } from '../utils/countryResolver.js';
 
 export const tripController = {
   // 1. List trips accessible to user
@@ -141,6 +142,13 @@ export const tripController = {
       text: '#2f3941',
     };
 
+    const resolvedCountry = resolveCountry({
+      primary_country,
+      title,
+      destination_summary,
+      cities,
+    });
+
     try {
       const { rows: tripRows } = await query(
         `INSERT INTO trips (
@@ -159,7 +167,7 @@ export const tripController = {
           destination_summary || null,
           start_date || null,
           end_date || null,
-          primary_country || null,
+          resolvedCountry || null,
           JSON.stringify(Array.isArray(cities) ? cities : []),
           timezone || 'UTC',
           status || 'PLANNING',
@@ -208,6 +216,30 @@ export const tripController = {
     const updates = req.body;
 
     try {
+      if (updates.primary_country !== undefined) {
+        if (updates.primary_country && typeof updates.primary_country === 'string' && updates.primary_country.trim()) {
+          updates.primary_country = resolveCountry({ primary_country: updates.primary_country }) || updates.primary_country.trim();
+        } else {
+          updates.primary_country = resolveCountry({
+            title: updates.title,
+            destination_summary: updates.destination_summary,
+            cities: updates.cities,
+          });
+        }
+      } else if (updates.title || updates.destination_summary || updates.cities) {
+        const current = await query('SELECT primary_country, title, destination_summary, cities FROM trips WHERE id = $1', [id]);
+        if (current.rows.length > 0 && !current.rows[0].primary_country) {
+          const inferred = resolveCountry({
+            title: updates.title ?? current.rows[0].title,
+            destination_summary: updates.destination_summary ?? current.rows[0].destination_summary,
+            cities: updates.cities ?? current.rows[0].cities,
+          });
+          if (inferred) {
+            updates.primary_country = inferred;
+          }
+        }
+      }
+
       const allowedFields = [
         'title', 'subtitle', 'tagline', 'description', 'destination_summary',
         'start_date', 'end_date', 'primary_country', 'cities', 'timezone',

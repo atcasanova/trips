@@ -4,6 +4,7 @@ import path from 'path';
 import { query } from '../db/pool.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { resolveCountry } from '../utils/countryResolver.js';
 
 export const adminController = {
   // 1. Overview, Tech Stack & Product Adoption
@@ -587,17 +588,37 @@ export const adminController = {
         LIMIT 25
       `);
 
-      const { rows: countryRows } = await query(`
-        SELECT 
-          COALESCE(NULLIF(TRIM(primary_country), ''), 'Não informado') as country,
-          COUNT(*) as trips_count,
-          COUNT(*) FILTER (WHERE status = 'PLANNING') as planning_trips,
-          COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed_trips
+      const { rows: allTrips } = await query(`
+        SELECT id, title, destination_summary, cities, primary_country, status
         FROM trips
         WHERE deleted_at IS NULL
-        GROUP BY country
-        ORDER BY trips_count DESC
       `);
+
+      const countryMap: Record<string, { tripsCount: number; planningTrips: number; completedTrips: number }> = {};
+
+      for (const trip of allTrips) {
+        const country = trip.primary_country?.trim() || resolveCountry(trip) || 'Não informado';
+        if (!countryMap[country]) {
+          countryMap[country] = { tripsCount: 0, planningTrips: 0, completedTrips: 0 };
+        }
+        countryMap[country].tripsCount++;
+        if (trip.status === 'PLANNING') countryMap[country].planningTrips++;
+        if (trip.status === 'COMPLETED') countryMap[country].completedTrips++;
+
+        // Auto-heal opportunistically in database if country wasn't persisted
+        if (!trip.primary_country && country !== 'Não informado') {
+          query('UPDATE trips SET primary_country = $1 WHERE id = $2', [country, trip.id]).catch(() => {});
+        }
+      }
+
+      const countries = Object.entries(countryMap)
+        .map(([country, data]) => ({
+          country,
+          tripsCount: data.tripsCount,
+          planningTrips: data.planningTrips,
+          completedTrips: data.completedTrips,
+        }))
+        .sort((a, b) => b.tripsCount - a.tripsCount);
 
       return res.json({
         cities: cityRows.map((r: any) => ({
@@ -605,12 +626,7 @@ export const adminController = {
           tripsCount: Number(r.trips_count),
           daysCount: Number(r.days_count),
         })),
-        countries: countryRows.map((r: any) => ({
-          country: r.country,
-          tripsCount: Number(r.trips_count),
-          planningTrips: Number(r.planning_trips),
-          completedTrips: Number(r.completed_trips),
-        })),
+        countries,
       });
     } catch (err: any) {
       logger.error('Erro ao obter estatísticas de destinos:', { error: err.message });
