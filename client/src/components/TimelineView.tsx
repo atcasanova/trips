@@ -81,6 +81,19 @@ const hasMapCoordinates = (item: Pick<ItineraryItem, 'latitude' | 'longitude'>) 
   );
 };
 
+function toIsoDateStr(val?: string | null): string | null {
+  if (!val) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  const d = parseSafeDate(val);
+  if (d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  return null;
+}
+
 export const TimelineView: React.FC<TimelineViewProps> = ({
   trip,
   days,
@@ -113,13 +126,65 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     return list;
   }, [transports]);
 
+  // Origin and Return Segment Resolution
+  const { originLocation, returnDateStr } = useMemo(() => {
+    if (allSegments.length === 0) {
+      return { originLocation: null, returnDateStr: null };
+    }
+    const sortedSegs = [...allSegments].sort((a, b) => {
+      const da = (toIsoDateStr(a.departure_date) || '') + (a.departure_time || '00:00');
+      const db = (toIsoDateStr(b.departure_date) || '') + (b.departure_time || '00:00');
+      return da.localeCompare(db);
+    });
+
+    const firstSeg = sortedSegs[0];
+    const origLoc = firstSeg.departure_location?.trim() || null;
+    const origCode = firstSeg.departure_station_code?.trim()?.toUpperCase() || null;
+
+    let retSeg: TransportSegment | null = null;
+    for (let i = sortedSegs.length - 1; i >= 0; i--) {
+      const s = sortedSegs[i];
+      const arrLoc = (s.arrival_location || '').toLowerCase();
+      const arrCode = (s.arrival_station_code || '').toUpperCase();
+      const isOrigin =
+        (origCode && arrCode === origCode) ||
+        (origLoc && (arrLoc.includes(origLoc.toLowerCase()) || origLoc.toLowerCase().includes(arrLoc)));
+      if (isOrigin) {
+        retSeg = s;
+        break;
+      }
+    }
+
+    const retDate = retSeg ? toIsoDateStr(retSeg.arrival_date) : null;
+    return { originLocation: origLoc, returnDateStr: retDate };
+  }, [allSegments]);
+
   const flightsByDate = useMemo(() => {
     const map: Record<string, TransportSegment[]> = {};
     for (const seg of allSegments) {
-      const date = seg.departure_date || (seg.departure_time ? seg.departure_time.slice(0, 10) : null);
-      if (date) {
-        if (!map[date]) map[date] = [];
-        map[date].push(seg);
+      const depDate = toIsoDateStr(seg.departure_date) || (seg.departure_time ? toIsoDateStr(seg.departure_time.slice(0, 10)) : null);
+      const arrDate = toIsoDateStr(seg.arrival_date) || (seg.arrival_time ? toIsoDateStr(seg.arrival_time.slice(0, 10)) : null) || depDate;
+
+      const isOvernight = Boolean(depDate && arrDate && arrDate > depDate);
+
+      // Departure segment
+      if (depDate) {
+        if (!map[depDate]) map[depDate] = [];
+        map[depDate].push({
+          ...seg,
+          isArrivalOnly: false,
+          isOvernight,
+        });
+      }
+
+      // Next-day arrival segment
+      if (arrDate && arrDate !== depDate) {
+        if (!map[arrDate]) map[arrDate] = [];
+        map[arrDate].push({
+          ...seg,
+          isArrivalOnly: true,
+          isOvernight: false,
+        });
       }
     }
     const result: Record<string, ReturnType<typeof aggregateFlightSegments>> = {};
@@ -144,28 +209,36 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   // Calendar Grid Data Generation
   const calendarMonths = useMemo(() => {
-    let minDateStr = trip.start_date || '';
-    let maxDateStr = trip.end_date || '';
+    let minDateStr = toIsoDateStr(trip.start_date) || '';
+    let maxDateStr = toIsoDateStr(trip.end_date) || '';
 
     for (const d of localDays) {
-      if (d.date) {
-        if (!minDateStr || d.date < minDateStr) minDateStr = d.date;
-        if (!maxDateStr || d.date > maxDateStr) maxDateStr = d.date;
+      const ds = toIsoDateStr(d.date);
+      if (ds) {
+        if (!minDateStr || ds < minDateStr) minDateStr = ds;
+        if (!maxDateStr || ds > maxDateStr) maxDateStr = ds;
       }
     }
     for (const seg of allSegments) {
-      const sd = seg.departure_date || (seg.departure_time ? seg.departure_time.slice(0, 10) : '');
+      const sd = toIsoDateStr(seg.departure_date) || (seg.departure_time ? toIsoDateStr(seg.departure_time.slice(0, 10)) : '');
+      const sa = toIsoDateStr(seg.arrival_date) || (seg.arrival_time ? toIsoDateStr(seg.arrival_time.slice(0, 10)) : '');
       if (sd) {
         if (!minDateStr || sd < minDateStr) minDateStr = sd;
         if (!maxDateStr || sd > maxDateStr) maxDateStr = sd;
       }
+      if (sa) {
+        if (!minDateStr || sa < minDateStr) minDateStr = sa;
+        if (!maxDateStr || sa > maxDateStr) maxDateStr = sa;
+      }
     }
     for (const h of aggregatedHotels) {
-      if (h.check_in_date) {
-        if (!minDateStr || h.check_in_date < minDateStr) minDateStr = h.check_in_date;
+      const hi = toIsoDateStr(h.check_in_date);
+      const ho = toIsoDateStr(h.check_out_date);
+      if (hi) {
+        if (!minDateStr || hi < minDateStr) minDateStr = hi;
       }
-      if (h.check_out_date) {
-        if (!maxDateStr || h.check_out_date > maxDateStr) maxDateStr = h.check_out_date;
+      if (ho) {
+        if (!maxDateStr || ho > maxDateStr) maxDateStr = ho;
       }
     }
 
@@ -183,11 +256,25 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
     const daysByDateStr: Record<string, TripDay> = {};
     for (const d of localDays) {
-      if (d.date) daysByDateStr[d.date] = d;
+      const ds = toIsoDateStr(d.date);
+      if (ds) daysByDateStr[ds] = d;
     }
 
-    const monthsMap: Record<string, { year: number; month: number; days: { dateStr: string; dayNum: number; tripDay?: TripDay; flights: ReturnType<typeof aggregateFlightSegments>; hotel?: ReturnType<typeof getHotelForDate> }[] }> = {};
+    type CalendarDayItem = {
+      dateStr: string;
+      dayNum: number;
+      tripDay?: TripDay;
+      flights: ReturnType<typeof aggregateFlightSegments>;
+      hotel?: ReturnType<typeof getHotelForDate>;
+      baseLocation: string;
+      locationIcon: string;
+      isReturnDay: boolean;
+      isPostReturnDay: boolean;
+    };
 
+    const monthsMap: Record<string, { year: number; month: number; days: CalendarDayItem[] }> = {};
+
+    let lastKnownCity = trip.destination_summary || originLocation || '';
     let cur = minDateStr;
     let safeGuard = 0;
     while (cur <= maxDateStr && safeGuard < 365) {
@@ -199,12 +286,54 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         if (!monthsMap[ym]) {
           monthsMap[ym] = { year, month, days: [] };
         }
+
+        const isReturnDay = Boolean(returnDateStr && cur === returnDateStr);
+        const isPostReturnDay = Boolean(returnDateStr && cur > returnDateStr);
+        const dayFlights = flightsByDate[cur] || [];
+        const dayHotel = getHotelForDate(cur);
+        const tripDay = daysByDateStr[cur];
+
+        let baseLocation = tripDay?.base_location || '';
+        let locationIcon = tripDay?.icon || '📍';
+
+        if (isReturnDay || isPostReturnDay) {
+          baseLocation = originLocation || 'Brasília';
+          locationIcon = '🏠';
+        } else if (!baseLocation) {
+          if (dayHotel?.city) {
+            baseLocation = dayHotel.city;
+            locationIcon = '🏨';
+          } else if (dayFlights.length > 0) {
+            const nonLayoverArrivals = dayFlights.filter((f) => (f as any).isArrivalOnly);
+            if (nonLayoverArrivals.length > 0) {
+              baseLocation = nonLayoverArrivals[nonLayoverArrivals.length - 1].arrival_location || '';
+              locationIcon = '🛬';
+            } else {
+              const firstDep = dayFlights[0];
+              baseLocation = (firstDep as any).isOvernight
+                ? `${firstDep.departure_location} ➔ Em trânsito`
+                : firstDep.departure_location;
+              locationIcon = '✈️';
+            }
+          } else if (lastKnownCity) {
+            baseLocation = lastKnownCity;
+          }
+        }
+
+        if (baseLocation && !isReturnDay && !isPostReturnDay) {
+          lastKnownCity = baseLocation;
+        }
+
         monthsMap[ym].days.push({
           dateStr: cur,
           dayNum: curDate.getDate(),
-          tripDay: daysByDateStr[cur],
-          flights: flightsByDate[cur] || [],
-          hotel: getHotelForDate(cur),
+          tripDay,
+          flights: dayFlights,
+          hotel: dayHotel,
+          baseLocation,
+          locationIcon,
+          isReturnDay,
+          isPostReturnDay,
         });
       }
       cur = addDays(cur, 1);
@@ -222,13 +351,13 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       const firstDow = new Date(year, month - 1, 1).getDay();
       const totalDays = new Date(year, month, 0).getDate();
 
-      const lookup: Record<number, typeof mDays[0]> = {};
+      const lookup: Record<number, CalendarDayItem> = {};
       for (const md of mDays) {
         lookup[md.dayNum] = md;
       }
 
-      const weeks: (typeof mDays[0] | null)[][] = [];
-      let currentWeek: (typeof mDays[0] | null)[] = [];
+      const weeks: (CalendarDayItem | null)[][] = [];
+      let currentWeek: (CalendarDayItem | null)[] = [];
 
       for (let i = 0; i < firstDow; i++) {
         currentWeek.push(null);
@@ -241,6 +370,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           tripDay: undefined,
           flights: [],
           hotel: undefined,
+          baseLocation: '',
+          locationIcon: '📍',
+          isReturnDay: false,
+          isPostReturnDay: false,
         });
         if (currentWeek.length === 7) {
           weeks.push(currentWeek);
@@ -263,7 +396,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         weeks,
       };
     });
-  }, [trip.start_date, trip.end_date, localDays, allSegments, flightsByDate, aggregatedHotels, getHotelForDate]);
+  }, [trip.start_date, trip.end_date, localDays, allSegments, flightsByDate, aggregatedHotels, getHotelForDate, originLocation, returnDateStr]);
 
   const handleCalendarDayClick = (dayId?: string) => {
     if (dayId) {
@@ -822,7 +955,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             );
                           }
 
-                          const hasDay = !!cell.tripDay;
+                          const hasDay = !!cell.tripDay || cell.flights.length > 0 || !!cell.hotel || cell.isReturnDay || cell.isPostReturnDay;
                           const dayItems = cell.tripDay?.items || [];
 
                           return (
@@ -846,6 +979,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                   >
                                     Dia {cell.tripDay.day_number}
                                   </span>
+                                ) : cell.isReturnDay ? (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs">
+                                    🏠 Retorno
+                                  </span>
+                                ) : cell.isPostReturnDay ? (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 border border-slate-200 shadow-2xs">
+                                    🏠 Em Casa
+                                  </span>
                                 ) : cell.flights.length > 0 ? (
                                   <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-100 text-sky-800">
                                     ✈️ Voo
@@ -854,26 +995,53 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                               </div>
 
                               {/* Base Location */}
-                              {cell.tripDay?.base_location && (
+                              {cell.baseLocation && (
                                 <div className="text-[10px] font-semibold text-slate-700 truncate mb-1 flex items-center gap-1">
-                                  <span>{cell.tripDay.icon || '📍'}</span>
-                                  <span className="truncate">{cell.tripDay.base_location}</span>
+                                  <span>{cell.locationIcon || '📍'}</span>
+                                  <span className="truncate">{cell.baseLocation}</span>
                                 </div>
                               )}
 
                               {/* Flights badge (aggregated: exactly 1 badge per matching flight) */}
-                              {cell.flights.map((fl, fIdx) => (
-                                <div
-                                  key={fIdx}
-                                  className="text-[10px] bg-sky-50 text-sky-900 border border-sky-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
-                                  title={`Voo ${fl.carrier_name || ''} ${fl.identification_number}: ${fl.passengersFormatted || fl.passengerCount + ' passageiros'}`}
-                                >
-                                  ✈️ <strong className="font-semibold">{fl.identification_number || fl.carrier_name || 'Voo'}</strong>
-                                  <span className="text-sky-700 font-normal ml-1">
-                                    ({fl.passengerCount > 1 ? `${fl.passengerCount} pessoas` : (fl.passengersFormatted || '1 pax')})
-                                  </span>
-                                </div>
-                              ))}
+                              {cell.flights.map((fl, fIdx) => {
+                                const isArrival = Boolean(fl.isArrivalOnly);
+                                const isOvernight = Boolean(fl.isOvernight);
+
+                                if (isArrival) {
+                                  return (
+                                    <div
+                                      key={fIdx}
+                                      className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                      title={`Pouso / Desembarque no dia seguinte: Voo ${fl.carrier_name || ''} ${fl.identification_number} (${fl.arrival_time ? `às ${fl.arrival_time.slice(0, 5)}` : 'horário previsto'} em ${fl.arrival_location}): ${fl.passengersFormatted || fl.passengerCount + ' passageiro(s)'}`}
+                                    >
+                                      🛬 <span className="font-semibold text-slate-800">Pouso: {fl.identification_number || fl.carrier_name || 'Voo'}</span>
+                                      {fl.arrival_time && (
+                                        <span className="text-slate-500 font-normal ml-1">
+                                          ({fl.arrival_time.slice(0, 5)})
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div
+                                    key={fIdx}
+                                    className="text-[10px] bg-sky-50 text-sky-900 border border-sky-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                    title={`Embarque / Voo ${fl.carrier_name || ''} ${fl.identification_number}: ${fl.passengersFormatted || fl.passengerCount + ' passageiro(s)'}`}
+                                  >
+                                    🛫 <strong className="font-semibold">{fl.identification_number || fl.carrier_name || 'Voo'}</strong>
+                                    {isOvernight && (
+                                      <span className="text-sky-700 font-bold ml-1 text-[9px] bg-sky-100 px-1 py-0.2 rounded">
+                                        +1d
+                                      </span>
+                                    )}
+                                    <span className="text-sky-700 font-normal ml-1">
+                                      ({fl.passengerCount > 1 ? `${fl.passengerCount}p` : (fl.passengersFormatted || '1p')})
+                                    </span>
+                                  </div>
+                                );
+                              })}
 
                               {/* Hotel badge (aggregated: exactly 1 badge per matching hotel) */}
                               {cell.hotel && (

@@ -78,6 +78,9 @@ export function extractPassengers(val: any, fallbackNames: string[] = []): Aggre
 export function areFlightsMatching(f1: TransportSegment, f2: TransportSegment): boolean {
   if (!f1 || !f2) return false;
 
+  // Arrival-only (next-day landing) must NOT merge with a departure flight
+  if (Boolean(f1.isArrivalOnly) !== Boolean(f2.isArrivalOnly)) return false;
+
   const d1 = f1.departure_date || f1.arrival_date;
   const d2 = f2.departure_date || f2.arrival_date;
   if (d1 && d2 && d1 !== d2) return false;

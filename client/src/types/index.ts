@@ -222,6 +222,8 @@ export interface TransportSegment {
     ticketName?: string | null;
   }>;
   passengersFormatted?: string;
+  isArrivalOnly?: boolean;
+  isOvernight?: boolean;
   notes?: string | null;
 }
 

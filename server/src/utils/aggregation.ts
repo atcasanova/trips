@@ -87,6 +87,9 @@ export function extractPassengers(val: any, fallbackNames: string[] = []): Aggre
 export function areFlightsMatching(f1: any, f2: any): boolean {
   if (!f1 || !f2) return false;
 
+  // Trecho apenas de pouso no dia seguinte não deve ser mesclado com trecho de partida
+  if (Boolean(f1.isArrivalOnly) !== Boolean(f2.isArrivalOnly)) return false;
+
   // Datas devem coincidir
   const d1 = f1.departure_date || f1.arrival_date;
   const d2 = f2.departure_date || f2.arrival_date;

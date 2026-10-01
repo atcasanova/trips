@@ -382,10 +382,12 @@ export const reportService = {
       const depDate = toDateStr(s.departure_date);
       const arrDate = toDateStr(s.arrival_date);
       const pax = extractPassengerNames(s.passenger_names);
+      const isOvernight = Boolean(depDate && arrDate && arrDate > depDate);
       const segWithPax = {
         ...s,
         passengerNames: pax,
         seat: options?.anonymize ? '' : s.seat,
+        isOvernight,
       };
 
       if (depDate) {
@@ -394,8 +396,40 @@ export const reportService = {
       }
       if (arrDate && arrDate !== depDate) {
         if (!rawSegmentsByDate[arrDate]) rawSegmentsByDate[arrDate] = [];
-        rawSegmentsByDate[arrDate].push({ ...segWithPax, isArrivalOnly: true });
+        rawSegmentsByDate[arrDate].push({ ...segWithPax, isArrivalOnly: true, isOvernight: false });
       }
+    }
+
+    // Determine trip origin and return date
+    let originLocation: string | null = null;
+    let originStationCode: string | null = null;
+    let returnSegment: any = null;
+    let returnDateStr: string | null = null;
+
+    if (allSegments.length > 0) {
+      const sortedSegs = [...allSegments].sort((a, b) => {
+        const da = (toDateStr(a.departure_date) || '') + (a.departure_time || '00:00');
+        const db = (toDateStr(b.departure_date) || '') + (b.departure_time || '00:00');
+        return da.localeCompare(db);
+      });
+
+      const firstSeg = sortedSegs[0];
+      originLocation = firstSeg.departure_location?.trim() || null;
+      originStationCode = firstSeg.departure_station_code?.trim()?.toUpperCase() || null;
+
+      for (let i = sortedSegs.length - 1; i >= 0; i--) {
+        const s = sortedSegs[i];
+        const arrLoc = (s.arrival_location || '').toLowerCase();
+        const arrCode = (s.arrival_station_code || '').toUpperCase();
+        const isOrigin =
+          (originStationCode && arrCode === originStationCode) ||
+          (originLocation && (arrLoc.includes(originLocation.toLowerCase()) || originLocation.toLowerCase().includes(arrLoc)));
+        if (isOrigin) {
+          returnSegment = s;
+          break;
+        }
+      }
+      returnDateStr = returnSegment ? toDateStr(returnSegment.arrival_date) : null;
     }
 
     const segmentsByDate: Record<string, any[]> = {};
@@ -464,25 +498,33 @@ export const reportService = {
         const dayFlights = segmentsByDate[cur] || [];
         const dayHotel = hotelsByDate[cur];
 
+        const isReturnDay = Boolean(returnDateStr && cur === returnDateStr);
+        const isPostReturnDay = Boolean(returnDateStr && cur > returnDateStr);
+
         let baseLocation = dayRecord?.base_location;
         let title = dayRecord?.title;
         let icon = dayRecord?.icon;
         let anchorId = dayRecord ? `dia-${dayRecord.day_number}` : (dayFlights.length > 0 ? 'transportes' : `data-${cur}`);
 
-        if (!dayRecord && dayFlights.length > 0) {
-          const firstFlight = dayFlights[0];
-          if (firstFlight.isArrivalOnly) {
-            baseLocation = firstFlight.arrival_location || 'Destino';
-            title = `Chegada a ${firstFlight.arrival_location || 'Destino'}`;
+        if (isReturnDay) {
+          baseLocation = baseLocation || originLocation || 'Brasília';
+          title = title || 'Retorno ao Brasil';
+          icon = icon || '🏠';
+        } else if (isPostReturnDay) {
+          baseLocation = baseLocation || originLocation || 'Brasília';
+          title = title || 'Em Casa / Retorno Concluído';
+          icon = icon || '🏠';
+        } else if (!dayRecord && dayFlights.length > 0) {
+          const nonLayoverArrivals = dayFlights.filter((f) => f.isArrivalOnly);
+          if (nonLayoverArrivals.length > 0) {
+            const lastArr = nonLayoverArrivals[nonLayoverArrivals.length - 1];
+            baseLocation = lastArr.arrival_location || 'Destino';
+            title = `Chegada a ${baseLocation}`;
             icon = '🛬';
           } else if (cur === minDateStr) {
             baseLocation = 'Em Voo (Brasil → Destino)';
             title = 'Saída do Brasil / Início da Viagem';
             icon = '✈️';
-          } else if (cur === maxDateStr || cur >= (days[days.length - 1]?.dateStr || '')) {
-            baseLocation = 'Em Voo de Retorno';
-            title = 'Retorno ao Brasil / Embarque';
-            icon = '🛫';
           } else {
             baseLocation = 'Em Trânsito Internacional';
             title = 'Voo Internacional em Trânsito';
@@ -507,6 +549,8 @@ export const reportService = {
           hotel: dayHotel,
           anchorId,
           hasDetailedCard: !!dayRecord,
+          isReturnDay,
+          isPostReturnDay,
         });
 
         cur = addDays(cur, 1);
@@ -612,7 +656,7 @@ export const reportService = {
                         <a href="#${tDay.anchorId}" class="cal-day-cell cal-day-active" title="Ver detalhes: ${escapeHtml(tDay.title)}">
                           <div class="cal-day-header">
                             <span class="cal-day-num">${cell.dayNum}</span>
-                            ${tDay.dayNumber ? `<span class="cal-day-badge">Dia ${tDay.dayNumber}</span>` : (tDay.flights && tDay.flights.length > 0 ? `<span class="cal-day-badge">✈️ Voo</span>` : '')}
+                            ${tDay.dayNumber ? `<span class="cal-day-badge">Dia ${tDay.dayNumber}</span>` : (tDay.isReturnDay ? `<span class="cal-day-badge cal-badge-return">🏠 Retorno</span>` : (tDay.isPostReturnDay ? `<span class="cal-day-badge cal-badge-home">🏠 Em Casa</span>` : (tDay.flights && tDay.flights.length > 0 ? `<span class="cal-day-badge">✈️ Voo</span>` : '')))}
                           </div>
                           <div class="cal-day-base">
                             <span>${tDay.icon || '📍'}</span>
@@ -625,9 +669,23 @@ export const reportService = {
                             const paxBadge = paxCount > 1
                               ? (options?.anonymize ? `${paxCount} pessoas` : `${paxCount} pessoas: ${paxLabel}`)
                               : paxLabel;
+                            const isArrival = Boolean(f.isArrivalOnly);
+                            const isOvernight = Boolean(f.isOvernight);
+
+                            if (isArrival) {
+                              return `
+                                <div class="cal-day-flight cal-day-flight-arrival" title="Pouso / Desembarque no dia seguinte">
+                                  🛬 <strong>Pouso: ${escapeHtml(f.identification_number || f.carrier_name || 'Voo')}</strong>
+                                  ${f.arrival_time ? `<span style="font-size: 5.8pt; color: #64748b;"> (${escapeHtml(f.arrival_time.slice(0, 5))})</span>` : ''}
+                                  ${paxBadge ? `<span class="cal-day-flight-pax">👤 ${escapeHtml(paxBadge)}</span>` : ''}
+                                </div>
+                              `;
+                            }
+
                             return `
-                              <div class="cal-day-flight">
-                                ✈️ <strong>${escapeHtml(f.identification_number || f.carrier_name || 'Voo')}</strong>
+                              <div class="cal-day-flight" title="Embarque / Voo">
+                                🛫 <strong>${escapeHtml(f.identification_number || f.carrier_name || 'Voo')}</strong>
+                                ${isOvernight ? `<span style="font-size: 5.8pt; font-weight: bold; color: #0284c7; background: #e0f2fe; padding: 0 2px; border-radius: 2px;">+1d</span>` : ''}
                                 ${paxBadge ? `<span class="cal-day-flight-pax">👤 ${escapeHtml(paxBadge)}</span>` : ''}
                               </div>
                             `;
@@ -684,12 +742,13 @@ export const reportService = {
                   const paxCount = f.passengerCount || (f.passengerNames ? f.passengerNames.length : 1);
                   const paxTitle = paxCount > 1 ? `Passageiro(s) (${paxCount}):` : 'Passageiro(s):';
                   return `
-                    <div class="table-flight-pill">
+                    <div class="table-flight-pill ${f.isArrivalOnly ? 'table-flight-pill-arrival' : ''}">
                       <div class="table-flight-header">
-                        ✈️ <strong>${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number || '')}</strong>
+                        ${f.isArrivalOnly ? '🛬' : '🛫'} <strong>${f.isArrivalOnly ? 'Pouso: ' : ''}${escapeHtml(f.carrier_name || '')} ${escapeHtml(f.identification_number || '')}</strong>
+                        ${f.isOvernight ? `<span style="font-size: 6pt; color: #0284c7; background: #e0f2fe; padding: 0 3px; border-radius: 2px;">+1 dia</span>` : ''}
                       </div>
                       <div class="table-flight-route">
-                        ${f.isArrivalOnly ? '🛬 Pouso: ' : '🛫 Partida: '}
+                        ${f.isArrivalOnly ? '🛬 Desembarque previsto: ' : '🛫 Partida: '}
                         ${escapeHtml(f.departure_station_code || f.departure_location || '—')} (${f.departure_time || '—'}) ➔ 
                         ${escapeHtml(f.arrival_station_code || f.arrival_location || '—')} (${f.arrival_time || '—'})
                       </div>
@@ -1317,6 +1376,28 @@ export const reportService = {
       line-height: 1.2;
     }
 
+    .cal-day-flight-arrival {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      color: #334155;
+    }
+
+    .cal-day-flight-arrival .cal-day-flight-pax {
+      color: #64748b;
+    }
+
+    .cal-badge-return {
+      background: #fef3c7 !important;
+      color: #92400e !important;
+      border: 1px solid #fde68a !important;
+    }
+
+    .cal-badge-home {
+      background: #f1f5f9 !important;
+      color: #475569 !important;
+      border: 1px solid #cbd5e1 !important;
+    }
+
     .cal-day-flight-pax {
       font-size: 6pt;
       color: #2563eb;
@@ -1390,6 +1471,20 @@ export const reportService = {
       margin-bottom: 4px;
       font-size: 7.5pt;
       color: #1e3a8a;
+    }
+
+    .table-flight-pill-arrival {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      color: #334155;
+    }
+
+    .table-flight-pill-arrival .table-flight-route {
+      color: #64748b;
+    }
+
+    .table-flight-pill-arrival .table-flight-pax {
+      color: #475569;
     }
 
     .table-flight-header {
