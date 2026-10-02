@@ -129,11 +129,16 @@ router.post('/trips/:tripId/share', requireAuth, requireTripRole('EDITOR'), repo
 router.get('/public/tripbook/:shareToken/html', reportController.renderPublicSharedHtml);
 router.get('/public/tripbook/:shareToken/pdf', reportController.exportPublicSharedPdf);
 
-// 11. Expenses
+// 11. Expenses & Transfers
 router.get('/trips/:tripId/expenses', requireAuth, requireTripRole('VIEWER'), expenseController.listExpenses);
 router.post('/trips/:tripId/expenses', requireAuth, requireTripRole('EDITOR'), expenseController.createExpense);
 router.put('/trips/:tripId/expenses/:expenseId', requireAuth, requireTripRole('EDITOR'), expenseController.updateExpense);
 router.delete('/trips/:tripId/expenses/:expenseId', requireAuth, requireTripRole('EDITOR'), expenseController.deleteExpense);
+
+// 11.1 Expense Transfers (Direct settlements between travelers)
+router.post('/trips/:tripId/expenses/transfers', requireAuth, requireTripRole('EDITOR'), expenseController.createTransfer);
+router.put('/trips/:tripId/expenses/transfers/:transferId', requireAuth, requireTripRole('EDITOR'), expenseController.updateTransfer);
+router.delete('/trips/:tripId/expenses/transfers/:transferId', requireAuth, requireTripRole('EDITOR'), expenseController.deleteTransfer);
 
 // 12. Inbound Email Ingestion (Protected by X-Inbound-Secret)
 router.post(

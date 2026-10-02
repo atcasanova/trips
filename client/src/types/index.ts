@@ -292,6 +292,8 @@ export interface TravelerBalance {
   name: string;
   paid: number;
   owed: number;
+  transfersSent: number;
+  transfersReceived: number;
   netBalance: number;
 }
 
@@ -303,8 +305,26 @@ export interface Settlement {
   amount: number;
 }
 
+export interface ExpenseTransfer {
+  id: string;
+  trip_id: string;
+  from_traveler_id: string;
+  from_name: string;
+  to_traveler_id: string;
+  to_name: string;
+  amount: number;
+  currency: string;
+  date: string;
+  payment_method?: string;
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ExpensesResponse {
   expenses: ExpenseItem[];
+  transfers: ExpenseTransfer[];
   travelers: TripTraveler[];
   totalsByCurrency: Record<string, number>;
   sharedTotalsByCurrency: Record<string, number>;

@@ -7,6 +7,8 @@ interface TravelerBalance {
   name: string;
   paid: number;
   owed: number;
+  transfersSent: number;
+  transfersReceived: number;
   netBalance: number;
 }
 
@@ -83,10 +85,12 @@ export const expenseController = {
       // 2. Get all expenses
       const { rows: expenses } = await query(
         `SELECT e.*,
-                COALESCE(tt.display_name, u.name, 'Viajante') as paid_by_name,
-                COALESCE(e.paid_by_traveler_id, tt.id) as traveler_id
+                COALESCE(tt.display_name, tt_user.display_name, u.name, 'Viajante') as paid_by_name,
+                COALESCE(e.paid_by_traveler_id, tt_user.id) as paid_by_traveler_id,
+                COALESCE(e.paid_by_traveler_id, tt_user.id) as traveler_id
          FROM expenses e
          LEFT JOIN trip_travelers tt ON e.paid_by_traveler_id = tt.id
+         LEFT JOIN trip_travelers tt_user ON (e.paid_by_user_id IS NOT NULL AND tt_user.trip_id = e.trip_id AND tt_user.user_id = e.paid_by_user_id)
          LEFT JOIN users u ON e.paid_by_user_id = u.id
          WHERE e.trip_id = $1
          ORDER BY e.date DESC, e.created_at DESC`,
@@ -114,6 +118,19 @@ export const expenseController = {
         exp.splits = splitsByExpense[exp.id] || [];
       }
 
+      // 3.5. Get all transfers between travelers
+      const { rows: transfers } = await query(
+        `SELECT et.*,
+                ft.display_name as from_name,
+                tt.display_name as to_name
+         FROM expense_transfers et
+         JOIN trip_travelers ft ON et.from_traveler_id = ft.id
+         JOIN trip_travelers tt ON et.to_traveler_id = tt.id
+         WHERE et.trip_id = $1
+         ORDER BY et.date DESC, et.created_at DESC`,
+        [tripId]
+      );
+
       // 4. Calculate totals, shared totals, personal totals
       const totalsByCurrency: Record<string, number> = {};
       const sharedTotalsByCurrency: Record<string, number> = {};
@@ -132,6 +149,7 @@ export const expenseController = {
       const balancesMap: Record<string, Record<string, TravelerBalance>> = {};
 
       const currencies = new Set<string>();
+      const defaultOwner = travelers.find((t) => t.role === 'OWNER') || travelers[0];
 
       for (const exp of expenses) {
         const curr = exp.currency || 'BRL';
@@ -154,7 +172,15 @@ export const expenseController = {
         categoryBreakdown[curr].total[cat] = (categoryBreakdown[curr].total[cat] || 0) + amt;
 
         // Traveler category breakdown
-        const payerId = exp.paid_by_traveler_id || exp.traveler_id;
+        let payerId = exp.paid_by_traveler_id || exp.traveler_id;
+        if (!payerId && exp.paid_by_user_id) {
+          const userTr = travelers.find((t) => t.user_id === exp.paid_by_user_id);
+          if (userTr) payerId = userTr.id;
+        }
+        if (!payerId && defaultOwner) {
+          payerId = defaultOwner.id;
+        }
+
         if (payerId) {
           if (!categoryBreakdown[curr].byTraveler[payerId]) {
             categoryBreakdown[curr].byTraveler[payerId] = {};
@@ -172,6 +198,8 @@ export const expenseController = {
               name: t.display_name,
               paid: 0,
               owed: 0,
+              transfersSent: 0,
+              transfersReceived: 0,
               netBalance: 0,
             };
           }
@@ -205,6 +233,35 @@ export const expenseController = {
         }
       }
 
+      // Process transfers into balances (direct payments between travelers)
+      for (const tr of transfers) {
+        const curr = tr.currency || 'BRL';
+        const amt = parseFloat(tr.amount) || 0;
+        currencies.add(curr);
+
+        if (!balancesMap[curr]) {
+          balancesMap[curr] = {};
+          for (const t of travelers) {
+            balancesMap[curr][t.id] = {
+              travelerId: t.id,
+              name: t.display_name,
+              paid: 0,
+              owed: 0,
+              transfersSent: 0,
+              transfersReceived: 0,
+              netBalance: 0,
+            };
+          }
+        }
+
+        if (balancesMap[curr][tr.from_traveler_id]) {
+          balancesMap[curr][tr.from_traveler_id].transfersSent += amt;
+        }
+        if (balancesMap[curr][tr.to_traveler_id]) {
+          balancesMap[curr][tr.to_traveler_id].transfersReceived += amt;
+        }
+      }
+
       // Compute net balances & settlements per currency
       const balancesByCurrency: Record<string, TravelerBalance[]> = {};
       const settlementsByCurrency: Record<string, Settlement[]> = {};
@@ -214,7 +271,9 @@ export const expenseController = {
           ...b,
           paid: Math.round(b.paid * 100) / 100,
           owed: Math.round(b.owed * 100) / 100,
-          netBalance: Math.round((b.paid - b.owed) * 100) / 100,
+          transfersSent: Math.round(b.transfersSent * 100) / 100,
+          transfersReceived: Math.round(b.transfersReceived * 100) / 100,
+          netBalance: Math.round(((b.paid - b.owed) + b.transfersSent - b.transfersReceived) * 100) / 100,
         }));
 
         balancesByCurrency[curr] = currBalances;
@@ -223,6 +282,7 @@ export const expenseController = {
 
       return res.json({
         expenses,
+        transfers,
         travelers,
         totalsByCurrency,
         sharedTotalsByCurrency,
@@ -477,6 +537,188 @@ export const expenseController = {
       return res.json({ message: 'Despesa removida com sucesso' });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover despesa' });
+    }
+  },
+
+  // 5. Create transfer between travelers
+  async createTransfer(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const {
+      from_traveler_id,
+      to_traveler_id,
+      amount,
+      currency = 'BRL',
+      date,
+      payment_method = 'PIX',
+      notes,
+    } = req.body;
+
+    if (!from_traveler_id || !to_traveler_id) {
+      return res.status(400).json({ error: 'Participante de origem e destino são obrigatórios' });
+    }
+
+    if (from_traveler_id === to_traveler_id) {
+      return res.status(400).json({ error: 'A transferência deve ser feita entre participantes diferentes' });
+    }
+
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: 'Valor da transferência deve ser maior que zero' });
+    }
+
+    try {
+      // Verify both travelers belong to this trip
+      const { rows: travelers } = await query(
+        `SELECT id, display_name FROM trip_travelers WHERE trip_id = $1 AND id IN ($2, $3)`,
+        [tripId, from_traveler_id, to_traveler_id]
+      );
+
+      if (travelers.length < 2) {
+        return res.status(400).json({ error: 'Um ou ambos os participantes não pertencem a esta viagem' });
+      }
+
+      const { rows } = await query(
+        `INSERT INTO expense_transfers (
+          trip_id, from_traveler_id, to_traveler_id, amount, currency,
+          date, payment_method, notes, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *`,
+        [
+          tripId,
+          from_traveler_id,
+          to_traveler_id,
+          numAmount,
+          currency,
+          date || new Date().toISOString().split('T')[0],
+          payment_method || 'PIX',
+          notes ? notes.trim() : null,
+          req.user?.id || null,
+        ]
+      );
+
+      const transfer = rows[0];
+
+      // Audit log
+      await query(
+        `INSERT INTO audit_logs (user_id, trip_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, $2, 'EXPENSE_TRANSFER_CREATED', 'EXPENSE_TRANSFER', $3, $4)`,
+        [
+          req.user?.id || null,
+          tripId,
+          transfer.id,
+          JSON.stringify({
+            from_traveler_id,
+            to_traveler_id,
+            amount: numAmount,
+            currency,
+            payment_method,
+          }),
+        ]
+      );
+
+      logger.info('Transferência entre participantes registrada com sucesso', {
+        transferId: transfer.id,
+        tripId,
+        from: from_traveler_id,
+        to: to_traveler_id,
+        amount: numAmount,
+        currency,
+      });
+
+      return res.status(201).json({ transfer });
+    } catch (err: any) {
+      logger.error('Erro ao registrar transferência:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao registrar transferência' });
+    }
+  },
+
+  // 6. Update transfer
+  async updateTransfer(req: Request, res: Response) {
+    const { tripId, transferId } = req.params;
+    const {
+      from_traveler_id,
+      to_traveler_id,
+      amount,
+      currency,
+      date,
+      payment_method,
+      notes,
+    } = req.body;
+
+    try {
+      const updates: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      if (from_traveler_id && to_traveler_id && from_traveler_id === to_traveler_id) {
+        return res.status(400).json({ error: 'A transferência deve ser feita entre participantes diferentes' });
+      }
+
+      if (from_traveler_id !== undefined) {
+        updates.push(`from_traveler_id = $${idx++}`);
+        values.push(from_traveler_id);
+      }
+      if (to_traveler_id !== undefined) {
+        updates.push(`to_traveler_id = $${idx++}`);
+        values.push(to_traveler_id);
+      }
+      if (amount !== undefined) {
+        const numAmount = parseFloat(amount);
+        if (isNaN(numAmount) || numAmount <= 0) {
+          return res.status(400).json({ error: 'Valor da transferência deve ser maior que zero' });
+        }
+        updates.push(`amount = $${idx++}`);
+        values.push(numAmount);
+      }
+      if (currency !== undefined) {
+        updates.push(`currency = $${idx++}`);
+        values.push(currency);
+      }
+      if (date !== undefined) {
+        updates.push(`date = $${idx++}`);
+        values.push(date);
+      }
+      if (payment_method !== undefined) {
+        updates.push(`payment_method = $${idx++}`);
+        values.push(payment_method);
+      }
+      if (notes !== undefined) {
+        updates.push(`notes = $${idx++}`);
+        values.push(notes ? notes.trim() : null);
+      }
+
+      if (updates.length > 0) {
+        updates.push(`updated_at = NOW()`);
+        values.push(transferId, tripId);
+        const sql = `UPDATE expense_transfers SET ${updates.join(', ')} WHERE id = $${idx++} AND trip_id = $${idx} RETURNING *`;
+        const { rows } = await query(sql, values);
+        if (rows.length === 0) {
+          return res.status(404).json({ error: 'Transferência não encontrada' });
+        }
+      }
+
+      return res.json({ message: 'Transferência atualizada com sucesso' });
+    } catch (err: any) {
+      logger.error('Erro ao atualizar transferência:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao atualizar transferência' });
+    }
+  },
+
+  // 7. Delete transfer
+  async deleteTransfer(req: Request, res: Response) {
+    const { tripId, transferId } = req.params;
+    try {
+      const { rowCount } = await query(
+        'DELETE FROM expense_transfers WHERE id = $1 AND trip_id = $2',
+        [transferId, tripId]
+      );
+      if (rowCount === 0) {
+        return res.status(404).json({ error: 'Transferência não encontrada' });
+      }
+      return res.json({ message: 'Transferência removida com sucesso' });
+    } catch (err: any) {
+      logger.error('Erro ao remover transferência:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao remover transferência' });
     }
   },
 };

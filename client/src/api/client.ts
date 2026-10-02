@@ -9,6 +9,7 @@ import {
   HotelReservation,
   DocumentItem,
   ExpenseItem,
+  ExpenseTransfer,
   ExpensesResponse,
   PexelsPhoto,
   UserInvitation,
@@ -388,6 +389,43 @@ export const api = {
       }),
     delete: (tripId: string, expenseId: string) =>
       request<{ message: string }>(`/trips/${tripId}/expenses/${expenseId}`, {
+        method: 'DELETE',
+      }),
+    createTransfer: (
+      tripId: string,
+      data: {
+        from_traveler_id: string;
+        to_traveler_id: string;
+        amount: number;
+        currency?: string;
+        date?: string;
+        payment_method?: string;
+        notes?: string;
+      }
+    ) =>
+      request<{ transfer: ExpenseTransfer }>(`/trips/${tripId}/expenses/transfers`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateTransfer: (
+      tripId: string,
+      transferId: string,
+      data: {
+        from_traveler_id?: string;
+        to_traveler_id?: string;
+        amount?: number;
+        currency?: string;
+        date?: string;
+        payment_method?: string;
+        notes?: string;
+      }
+    ) =>
+      request<{ message: string }>(`/trips/${tripId}/expenses/transfers/${transferId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    deleteTransfer: (tripId: string, transferId: string) =>
+      request<{ message: string }>(`/trips/${tripId}/expenses/transfers/${transferId}`, {
         method: 'DELETE',
       }),
   },

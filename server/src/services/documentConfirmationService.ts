@@ -879,7 +879,30 @@ async function upsertDocumentExpense(params: {
   // Single traveler on reservation = personal expense (is_shared: false)
   // Multiple travelers on reservation = shared expense (is_shared: true)
   const isShared = forceShared !== undefined ? forceShared : resolvedTravelers.length > 1;
-  const primaryTravelerId = resolvedTravelers[0]?.travelerId || null;
+  let primaryTravelerId = resolvedTravelers.find((t) => Boolean(t.travelerId))?.travelerId || null;
+
+  // Fallback 1: match by userId if primaryTravelerId is null
+  if (!primaryTravelerId && userId) {
+    const { rows: ut } = await query(
+      `SELECT id FROM trip_travelers WHERE trip_id = $1 AND user_id = $2`,
+      [tripId, userId]
+    );
+    if (ut.length > 0) {
+      primaryTravelerId = ut[0].id;
+    }
+  }
+
+  // Fallback 2: default to trip owner / first traveler
+  if (!primaryTravelerId) {
+    const { rows: ownerTr } = await query(
+      `SELECT id FROM trip_travelers WHERE trip_id = $1 ORDER BY CASE WHEN role = 'OWNER' THEN 0 ELSE 1 END, created_at ASC LIMIT 1`,
+      [tripId]
+    );
+    if (ownerTr.length > 0) {
+      primaryTravelerId = ownerTr[0].id;
+    }
+  }
+
   const splitType = 'EQUAL';
 
   const { rows: existingExp } = await query('SELECT id FROM expenses WHERE document_id = $1', [documentId]);
@@ -891,9 +914,10 @@ async function upsertDocumentExpense(params: {
       `UPDATE expenses 
        SET category = $1, description = $2, amount = $3, currency = $4, payment_method = $5,
            date = $6, notes = $7, is_shared = $8, paid_by_traveler_id = COALESCE($9, paid_by_traveler_id),
-           split_type = $10, updated_at = NOW()
-       WHERE id = $11`,
-      [category, description, amount, currency, paymentMethod, date, notes, isShared, primaryTravelerId, splitType, expenseId]
+           paid_by_user_id = COALESCE($10, paid_by_user_id),
+           split_type = $11, updated_at = NOW()
+       WHERE id = $12`,
+      [category, description, amount, currency, paymentMethod, date, notes, isShared, primaryTravelerId, userId || null, splitType, expenseId]
     );
   } else {
     const { rows: inserted } = await query(

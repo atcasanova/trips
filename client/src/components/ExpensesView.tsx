@@ -33,7 +33,7 @@ import {
   Percent,
   X,
 } from 'lucide-react';
-import { ExpenseItem, TripTraveler, TravelerBalance, Settlement, ExpensesResponse } from '../types/index.js';
+import { ExpenseItem, ExpenseTransfer, TripTraveler, TravelerBalance, Settlement, ExpensesResponse } from '../types/index.js';
 import { api } from '../api/client.js';
 import { formatDateBr } from '../utils/date.js';
 import { ExpensesDoughnutChart } from './ExpensesDoughnutChart.js';
@@ -87,6 +87,18 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
   const [exactAmounts, setExactAmounts] = useState<Record<string, number>>({});
   const [lockedTravelers, setLockedTravelers] = useState<Record<string, boolean>>({});
 
+  // Transfer Modal state
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [editingTransferId, setEditingTransferId] = useState<string | null>(null);
+  const [transferFromId, setTransferFromId] = useState<string>('');
+  const [transferToId, setTransferToId] = useState<string>('');
+  const [transferAmount, setTransferAmount] = useState<string>('');
+  const [transferCurrency, setTransferCurrency] = useState<string>('BRL');
+  const [transferDate, setTransferDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [transferPaymentMethod, setTransferPaymentMethod] = useState<string>('PIX');
+  const [transferNotes, setTransferNotes] = useState<string>('');
+  const [savingTransfer, setSavingTransfer] = useState(false);
+
   const loadExpenses = async () => {
     try {
       setLoading(true);
@@ -131,6 +143,112 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
       return true;
     });
   }, [data, selectedCurrency, scopeFilter]);
+
+  // Filtered transfers between travelers
+  const filteredTransfers = useMemo(() => {
+    if (!data?.transfers) return [];
+    return data.transfers.filter((tr) => {
+      if (selectedCurrency !== 'ALL' && tr.currency !== selectedCurrency) return false;
+      return true;
+    });
+  }, [data, selectedCurrency]);
+
+  const handleOpenCreateTransfer = (preset?: {
+    fromId?: string;
+    toId?: string;
+    amount?: number;
+    currency?: string;
+  }) => {
+    const travelers = data?.travelers || [];
+    const defaultFrom = preset?.fromId || travelers[0]?.id || '';
+    const defaultTo = preset?.toId || travelers.find((t) => t.id !== defaultFrom)?.id || travelers[1]?.id || '';
+
+    setEditingTransferId(null);
+    setTransferFromId(defaultFrom);
+    setTransferToId(defaultTo);
+    setTransferAmount(preset?.amount ? String(preset.amount) : '');
+    setTransferCurrency(preset?.currency || activeSettlementCurrency);
+    setTransferDate(new Date().toISOString().split('T')[0]);
+    setTransferPaymentMethod('PIX');
+    setTransferNotes('');
+    setShowTransferModal(true);
+  };
+
+  const handleOpenEditTransfer = (tr: ExpenseTransfer) => {
+    setEditingTransferId(tr.id);
+    setTransferFromId(tr.from_traveler_id);
+    setTransferToId(tr.to_traveler_id);
+    setTransferAmount(String(tr.amount));
+    setTransferCurrency(tr.currency);
+    setTransferDate(tr.date ? tr.date.split('T')[0] : new Date().toISOString().split('T')[0]);
+    setTransferPaymentMethod(tr.payment_method || 'PIX');
+    setTransferNotes(tr.notes || '');
+    setShowTransferModal(true);
+  };
+
+  const handleSaveTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferFromId || !transferToId) {
+      alert('Selecione quem transferiu e quem recebeu o pagamento.');
+      return;
+    }
+    if (transferFromId === transferToId) {
+      alert('A transferência deve ser feita entre participantes diferentes.');
+      return;
+    }
+    const val = parseFloat(transferAmount);
+    if (isNaN(val) || val <= 0) {
+      alert('Informe um valor de transferência válido e maior que zero.');
+      return;
+    }
+
+    try {
+      setSavingTransfer(true);
+      if (editingTransferId) {
+        await api.expenses.updateTransfer(tripId, editingTransferId, {
+          from_traveler_id: transferFromId,
+          to_traveler_id: transferToId,
+          amount: val,
+          currency: transferCurrency,
+          date: transferDate,
+          payment_method: transferPaymentMethod,
+          notes: transferNotes,
+        });
+      } else {
+        await api.expenses.createTransfer(tripId, {
+          from_traveler_id: transferFromId,
+          to_traveler_id: transferToId,
+          amount: val,
+          currency: transferCurrency,
+          date: transferDate,
+          payment_method: transferPaymentMethod,
+          notes: transferNotes,
+        });
+      }
+
+      setShowTransferModal(false);
+      await loadExpenses();
+    } catch (err: any) {
+      console.error('Erro ao salvar transferência:', err);
+      alert(err.message || 'Erro ao salvar transferência.');
+    } finally {
+      setSavingTransfer(false);
+    }
+  };
+
+  const handleDeleteTransfer = async (transferId: string) => {
+    if (!window.confirm('Deseja realmente remover esta transferência? O saldo dos participantes será recalculado.')) {
+      return;
+    }
+
+    try {
+      await api.expenses.deleteTransfer(tripId, transferId);
+      await loadExpenses();
+    } catch (err: any) {
+      console.error('Erro ao remover transferência:', err);
+      alert(err.message || 'Erro ao remover transferência.');
+    }
+  };
 
   const counts = useMemo(() => {
     if (!data) return { all: 0, shared: 0, personal: 0 };
@@ -656,24 +774,36 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
             </p>
           </div>
 
-          {availableCurrencies.length > 1 && (
-            <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-slate-400 text-[11px]">Ver acertos em:</span>
-              {availableCurrencies.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setSelectedCurrency(c)}
-                  className={`px-2 py-0.5 rounded text-xs font-bold ${
-                    activeSettlementCurrency === c
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {canEdit && (
+              <button
+                onClick={() => handleOpenCreateTransfer()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-xs transition-all hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                <span>+ Registrar Transferência</span>
+              </button>
+            )}
+
+            {availableCurrencies.length > 1 && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-slate-400 text-[11px]">Ver acertos em:</span>
+                {availableCurrencies.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setSelectedCurrency(c)}
+                    className={`px-2 py-0.5 rounded text-xs font-bold ${
+                      activeSettlementCurrency === c
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Suggestion alert for largest debtor */}
@@ -756,6 +886,25 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                       </strong>
                     </div>
                   </div>
+
+                  {(b.transfersSent > 0 || b.transfersReceived > 0) && (
+                    <div className="grid grid-cols-2 gap-2 mt-2 pt-1.5 border-t border-dashed border-slate-200 text-[10px] text-slate-500">
+                      <div>
+                        <span>Transferiu (+):</span>
+                        <strong className="block text-emerald-700 font-mono">
+                          +{activeSettlementCurrency}{' '}
+                          {b.transfersSent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Recebeu (-):</span>
+                        <strong className="block text-rose-700 font-mono">
+                          -{activeSettlementCurrency}{' '}
+                          {b.transfersReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -778,9 +927,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
               {currentSettlements.map((st, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+                  className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs gap-3"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded">
                       {st.fromName}
                     </span>
@@ -790,10 +939,126 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                     </span>
                   </div>
 
-                  <strong className="font-mono font-bold text-slate-900 text-sm">
-                    {activeSettlementCurrency}{' '}
-                    {st.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </strong>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <strong className="font-mono font-bold text-slate-900 text-sm">
+                      {activeSettlementCurrency}{' '}
+                      {st.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </strong>
+
+                    {canEdit && (
+                      <button
+                        onClick={() =>
+                          handleOpenCreateTransfer({
+                            fromId: st.fromTravelerId,
+                            toId: st.toTravelerId,
+                            amount: st.amount,
+                            currency: activeSettlementCurrency,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs shadow-2xs transition-colors shrink-0"
+                        title={`Registrar transferência de ${st.fromName} para ${st.toName}`}
+                      >
+                        <ArrowRightLeft className="w-3 h-3" />
+                        <span>Quitar</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* SECTION: TRANSFERÊNCIAS & PAGAMENTOS REALIZADOS */}
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-emerald-600" />
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Transferências & Pagamentos Registrados ({filteredTransfers.length})
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Pagamentos diretos (Pix, dinheiro, etc.) realizados entre os viajantes para abater dívidas
+              </p>
+            </div>
+
+            {canEdit && (
+              <button
+                onClick={() => handleOpenCreateTransfer()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 font-bold rounded-xl text-xs transition-colors border border-slate-200 hover:border-indigo-200 self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Nova Transferência</span>
+              </button>
+            )}
+          </div>
+
+          {filteredTransfers.length === 0 ? (
+            <div className="p-4 bg-slate-50/70 border border-dashed border-slate-200 rounded-xl text-xs text-slate-500 text-center">
+              Nenhuma transferência direta registrada nesta moeda. Quando alguém fizer um Pix ou pagamento a outro viajante para acertar contas, registre aqui para abater as dívidas automaticamente!
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredTransfers.map((tr) => (
+                <div
+                  key={tr.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs transition-colors"
+                >
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] text-slate-500 font-medium">
+                      {formatDateBr(tr.date)}
+                    </span>
+
+                    <span className="font-bold text-slate-900 bg-white px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                      {tr.from_name}
+                    </span>
+
+                    <span className="text-slate-400 text-xs">pagou a</span>
+
+                    <span className="font-bold text-slate-900 bg-white px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                      {tr.to_name}
+                    </span>
+
+                    {tr.payment_method && (
+                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-bold rounded text-[10px] uppercase tracking-wide">
+                        {tr.payment_method}
+                      </span>
+                    )}
+
+                    {tr.notes && (
+                      <span className="text-slate-500 italic text-[11px]">
+                        "{tr.notes}"
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 self-end sm:self-center">
+                    <strong className="font-mono font-extrabold text-emerald-700 text-sm">
+                      {tr.currency}{' '}
+                      {Number(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </strong>
+
+                    {canEdit && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleOpenEditTransfer(tr)}
+                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors"
+                          title="Editar transferência"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTransfer(tr.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg transition-colors"
+                          title="Remover transferência"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1419,6 +1684,182 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                   className="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-sm"
                 >
                   {editingExpenseId ? 'Salvar Alterações' : 'Registrar Despesa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer Modal */}
+      {showTransferModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                  <ArrowRightLeft className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {editingTransferId ? 'Editar Transferência' : 'Registrar Transferência'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Pagamento direto entre participantes para equilibrar acertos
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTransferModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveTransfer} className="p-6 space-y-4">
+              {/* Who paid -> Who received */}
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Quem pagou / enviou</label>
+                  <select
+                    value={transferFromId}
+                    onChange={(e) => setTransferFromId(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                    required
+                  >
+                    <option value="">Selecione...</option>
+                    {data?.travelers.map((t) => (
+                      <option key={t.id} value={t.id} disabled={t.id === transferToId}>
+                        {t.display_name} {t.id === transferToId ? '(Destinatário)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Quem recebeu</label>
+                  <select
+                    value={transferToId}
+                    onChange={(e) => setTransferToId(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                    required
+                  >
+                    <option value="">Selecione...</option>
+                    {data?.travelers.map((t) => (
+                      <option key={t.id} value={t.id} disabled={t.id === transferFromId}>
+                        {t.display_name} {t.id === transferFromId ? '(Pagador)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Amount & Currency */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Valor Transferido</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-xs text-slate-400 font-mono font-medium">
+                      {transferCurrency}
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      placeholder="0.00"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      className="w-full pl-12 pr-3 py-2 text-sm font-semibold border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Moeda</label>
+                  <select
+                    value={transferCurrency}
+                    onChange={(e) => setTransferCurrency(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white font-mono"
+                  >
+                    {availableCurrencies.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    {!availableCurrencies.includes('BRL') && <option value="BRL">BRL</option>}
+                    {!availableCurrencies.includes('USD') && <option value="USD">USD</option>}
+                    {!availableCurrencies.includes('EUR') && <option value="EUR">EUR</option>}
+                    {!availableCurrencies.includes('JPY') && <option value="JPY">JPY</option>}
+                  </select>
+                </div>
+              </div>
+
+              {/* Date & Payment Method */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Data</label>
+                  <input
+                    type="date"
+                    required
+                    value={transferDate}
+                    onChange={(e) => setTransferDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Meio de Pagamento</label>
+                  <select
+                    value={transferPaymentMethod}
+                    onChange={(e) => setTransferPaymentMethod(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                  >
+                    <option value="PIX">Pix</option>
+                    <option value="BANK_TRANSFER">Transferência Bancária</option>
+                    <option value="CASH">Dinheiro / Espécie</option>
+                    <option value="OTHER">Outro</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Observações (Opcional)</label>
+                <textarea
+                  rows={2}
+                  value={transferNotes}
+                  onChange={(e) => setTransferNotes(e.target.value)}
+                  placeholder="Ex: Acerto parcial do jantar, comprovante enviado no WhatsApp..."
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              <div className="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100 flex items-start gap-2 text-xs text-indigo-900">
+                <AlertCircle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <span>
+                  Esta transferência <strong>não é somada</strong> como custo total da viagem. Ela é usada exclusivamente para abater o saldo devedor e credor entre os dois participantes selecionados.
+                </span>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowTransferModal(false)}
+                  disabled={savingTransfer}
+                  className="px-3.5 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingTransfer}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-sm flex items-center gap-1.5"
+                >
+                  {savingTransfer ? 'Salvando...' : (editingTransferId ? 'Salvar Alterações' : 'Confirmar Transferência')}
                 </button>
               </div>
             </form>
