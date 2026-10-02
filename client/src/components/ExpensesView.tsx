@@ -35,6 +35,8 @@ import {
   ArrowUpDown,
   ChevronUp,
   ChevronDown,
+  UserCheck,
+  Info,
 } from 'lucide-react';
 import { ExpenseItem, ExpenseTransfer, TripTraveler, TravelerBalance, Settlement, ExpensesResponse } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -135,6 +137,55 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     if (selectedCurrency !== 'ALL') return selectedCurrency;
     return availableCurrencies[0] || 'BRL';
   }, [selectedCurrency, availableCurrencies]);
+
+  // Custo total da viagem do usuário logado: despesas pessoais + cotas devidas nas despesas divididas
+  const userTotalsByCurrency = useMemo(() => {
+    if (!data) return {};
+    const totals: Record<string, number> = {};
+    const userTraveler =
+      data.travelers.find((t) => t.user_id === currentUserId) ||
+      (data.travelers.length === 1 ? data.travelers[0] : null);
+    const userTravelerId = userTraveler?.id;
+
+    for (const exp of data.expenses) {
+      const curr = exp.currency || 'BRL';
+      const amt = parseFloat(String(exp.amount)) || 0;
+
+      if (!exp.is_shared) {
+        // Despesa pessoal: pertence ao usuário logado?
+        const isUserExpense =
+          (userTravelerId &&
+            (exp.paid_by_traveler_id === userTravelerId || exp.traveler_id === userTravelerId)) ||
+          (currentUserId && exp.paid_by_user_id === currentUserId) ||
+          (!currentUserId && !exp.paid_by_traveler_id && !exp.paid_by_user_id);
+
+        if (isUserExpense) {
+          totals[curr] = (totals[curr] || 0) + amt;
+        }
+      } else {
+        // Despesa compartilhada: cota devida do usuário
+        if (exp.splits && exp.splits.length > 0) {
+          const mySplit = userTravelerId
+            ? exp.splits.find((s) => s.traveler_id === userTravelerId)
+            : null;
+          if (mySplit) {
+            totals[curr] = (totals[curr] || 0) + (parseFloat(String(mySplit.amount)) || 0);
+          }
+        } else {
+          // Divisão igualitária padrão entre todos os membros
+          const numTravelers = data.travelers.length || 1;
+          totals[curr] = (totals[curr] || 0) + amt / numTravelers;
+        }
+      }
+    }
+
+    // Inicializa todas as moedas com 0 se não houver gastos
+    for (const c of availableCurrencies) {
+      if (totals[c] === undefined) totals[c] = 0;
+    }
+
+    return totals;
+  }, [data, currentUserId, availableCurrencies]);
 
   // Filtered expenses
   const filteredExpenses = useMemo(() => {
@@ -661,9 +712,6 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold font-serif text-slate-900">Controle Financeiro & Acertos</h2>
-          <p className="text-xs text-slate-500">
-            Divisão inteligente de despesas (estilo Splitwise & Tricount) com normalização independente por moeda
-          </p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -742,6 +790,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                 ))
             )}
           </div>
+          <span className="text-[11px] text-slate-400 mt-1 block">Custo total de todas as despesas da viagem</span>
         </div>
 
         {/* Compartilhadas do Grupo */}
@@ -771,23 +820,23 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
           <span className="text-[11px] text-slate-400 mt-1 block">Divididas entre os membros do grupo</span>
         </div>
 
-        {/* Individuais / Apenas Minhas */}
-        <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm">
+        {/* Suas Despesas (Custo Total do Usuário) */}
+        <div className="p-5 bg-white border border-emerald-100 rounded-2xl shadow-sm bg-gradient-to-br from-white to-emerald-50/25">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-              Despesas Individuais (Pessoais)
+            <span className="text-[10px] uppercase font-bold text-emerald-600 tracking-wider">
+              Suas Despesas
             </span>
-            <User className="w-4 h-4 text-slate-400" />
+            <UserCheck className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="mt-2 space-y-1">
-            {Object.entries(data?.personalTotalsByCurrency || {}).length === 0 ? (
+            {Object.entries(userTotalsByCurrency).length === 0 ? (
               <span className="text-lg font-bold text-slate-400">0,00</span>
             ) : (
-              Object.entries(data?.personalTotalsByCurrency || {})
+              Object.entries(userTotalsByCurrency)
                 .filter(([curr]) => selectedCurrency === 'ALL' || selectedCurrency === curr)
                 .map(([curr, total]) => (
                   <div key={curr} className="flex items-baseline gap-1.5">
-                    <span className="text-xs font-mono font-bold text-slate-500">{curr}</span>
+                    <span className="text-xs font-mono font-bold text-emerald-600">{curr}</span>
                     <span className="text-xl font-extrabold text-slate-900">
                       {total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
@@ -795,7 +844,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                 ))
             )}
           </div>
-          <span className="text-[11px] text-slate-400 mt-1 block">Custos particulares sem divisão</span>
+          <span className="text-[11px] text-slate-400 mt-1 block">
+            Seus gastos pessoais + sua cota nas despesas divididas
+          </span>
         </div>
       </div>
 
@@ -809,9 +860,6 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                 Divisão & Acertos do Grupo ({activeSettlementCurrency})
               </h3>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Normalização de saldos: quem pagou, quanto deve e quem deve pagar a quem em {activeSettlementCurrency}
-            </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -893,7 +941,16 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                           : 'bg-slate-200 text-slate-600'
                       }`}
                     >
-                      {isCreditor ? 'Deve Receber' : isDebtor ? 'Deve Pagar' : 'Equilibrado ✓'}
+                      {isCreditor ? (
+                        'Deve Receber'
+                      ) : isDebtor ? (
+                        'Deve Pagar'
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          <Check className="w-3 h-3" />
+                          Equilibrado
+                        </span>
+                      )}
                     </span>
                   </div>
 
@@ -1258,7 +1315,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                       ? 'Recebedor'
                       : 'Valor'}
                   </strong>{' '}
-                  ({transferSortDir === 'asc' ? 'crescente ↑' : 'decrescente ↓'})
+                  ({transferSortDir === 'asc' ? (
+                    <span className="inline-flex items-center gap-0.5">crescente <ChevronUp className="w-3 h-3 inline text-slate-500" /></span>
+                  ) : (
+                    <span className="inline-flex items-center gap-0.5">decrescente <ChevronDown className="w-3 h-3 inline text-slate-500" /></span>
+                  )})
                 </span>
 
                 <div className="flex items-center gap-2">
@@ -1284,34 +1345,33 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                 Gráfico de Gastos por Categoria ({activeSettlementCurrency})
               </h3>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Visualize a distribuição em {activeSettlementCurrency}, no total ou filtrada por cada viajante
-            </p>
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto">
             <span className="text-xs font-semibold text-slate-400 shrink-0">Filtrar por:</span>
             <button
               onClick={() => setChartTravelerId('ALL')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors inline-flex items-center gap-1.5 ${
                 chartTravelerId === 'ALL'
                   ? 'bg-purple-600 text-white shadow-sm'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              👥 Grupo Todo
+              <Users className="w-3.5 h-3.5" />
+              <span>Grupo Todo</span>
             </button>
             {data?.travelers.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setChartTravelerId(t.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap inline-flex items-center gap-1.5 ${
                   chartTravelerId === t.id
                     ? 'bg-purple-600 text-white shadow-sm'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                👤 {t.display_name}
+                <User className="w-3.5 h-3.5" />
+                <span>{t.display_name}</span>
               </button>
             ))}
           </div>
@@ -1607,7 +1667,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                     }`}
                   >
                     <Users className="w-4 h-4 text-indigo-600" />
-                    <span>👥 Compartilhada (Grupo)</span>
+                    <span>Compartilhada (Grupo)</span>
                   </button>
                   <button
                     type="button"
@@ -1619,7 +1679,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                     }`}
                   >
                     <User className="w-4 h-4 text-slate-600" />
-                    <span>👤 Despesa Individual (Pessoal)</span>
+                    <span>Despesa Individual (Pessoal)</span>
                   </button>
                 </div>
               </div>
@@ -1700,12 +1760,14 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                   {/* Mode explanation */}
                   <div className="text-[11px] text-slate-500 flex items-center justify-between">
                     {splitMode === 'PARTS' ? (
-                      <span>
-                        💡 Defina o número de cotas de cada um (ex: 6 para você e 3 para os demais = 50% e 25%).
+                      <span className="flex items-center gap-1.5">
+                        <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        Defina o número de cotas de cada um (ex: 6 para você e 3 para os demais = 50% e 25%).
                       </span>
                     ) : (
-                      <span>
-                        💡 Digite o valor de quem desejar. O saldo restante é rateado igualmente entre os não editados.
+                      <span className="flex items-center gap-1.5">
+                        <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        Digite o valor de quem desejar. O saldo restante é rateado igualmente entre os não editados.
                       </span>
                     )}
 

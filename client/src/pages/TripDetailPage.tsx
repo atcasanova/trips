@@ -23,6 +23,7 @@ import {
   Check,
   Trash2,
   Route,
+  Info,
 } from 'lucide-react';
 import {
   Trip,
@@ -509,7 +510,7 @@ export const TripDetailPage: React.FC = () => {
                         {/* Suggestion alert for the largest debtor */}
                         {debtor && (
                           <div className="p-3 bg-amber-50 border border-amber-200/70 rounded-lg text-xs text-amber-900 flex items-center gap-2.5">
-                            <span className="text-base shrink-0">💡</span>
+                            <Info className="w-4 h-4 text-amber-600 shrink-0" />
                             <span>
                               <strong>Dica de equilíbrio:</strong> {debtor.name} está com o maior saldo devedor (
                               {curr}{' '}
