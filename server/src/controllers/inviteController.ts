@@ -59,12 +59,28 @@ export const inviteController = {
             [tripId, existing.id, role]
           );
 
-          await query(
-            `INSERT INTO trip_travelers (trip_id, user_id, display_name, email, role)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (trip_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET role = EXCLUDED.role, updated_at = NOW()`,
-            [tripId, existing.id, existing.name, existing.email, role]
+          // Vincula a viajante existente ou cria novo sem duplicar
+          const { rows: existingTravelers } = await query(
+            `SELECT id FROM trip_travelers 
+             WHERE trip_id = $1 AND (user_id = $2 OR (email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(TRIM($3))))`,
+            [tripId, existing.id, existing.email]
           );
+
+          if (existingTravelers.length > 0) {
+            await query(
+              `UPDATE trip_travelers
+               SET user_id = $1, display_name = $2, email = $3, role = $4, updated_at = NOW()
+               WHERE id = $5`,
+              [existing.id, existing.name, existing.email, role, existingTravelers[0].id]
+            );
+          } else {
+            await query(
+              `INSERT INTO trip_travelers (trip_id, user_id, display_name, email, role)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (trip_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET role = EXCLUDED.role, updated_at = NOW()`,
+              [tripId, existing.id, existing.name, existing.email, role]
+            );
+          }
 
           emailService.sendTripInvite(existing.email, inviter.name, tripTitle || 'Viagem', role, tripId)
             .catch((e) => logger.warn('Falha no envio de aviso de viagem', { error: e.message }));
@@ -252,15 +268,54 @@ export const inviteController = {
           [invite.trip_id, user.id, invite.trip_role || 'VIEWER']
         );
 
-        await query(
-          `INSERT INTO trip_travelers (trip_id, user_id, display_name, email, role)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (trip_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET
-             display_name = EXCLUDED.display_name,
-             role = EXCLUDED.role,
-             updated_at = NOW()`,
-          [invite.trip_id, user.id, user.name, user.email, invite.trip_role || 'VIEWER']
+        // Vincula ou atualiza viajante na viagem, evitando duplicidade
+        const { rows: existingTravelers } = await query(
+          `SELECT id, user_id, display_name FROM trip_travelers
+           WHERE trip_id = $1 AND (user_id = $2 OR (email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(TRIM($3))))
+           ORDER BY (user_id IS NOT NULL) DESC, created_at ASC`,
+          [invite.trip_id, user.id, user.email]
         );
+
+        if (existingTravelers.length > 0) {
+          const primaryTraveler = existingTravelers[0];
+          await query(
+            `UPDATE trip_travelers
+             SET user_id = $1, display_name = $2, email = $3, role = $4, updated_at = NOW()
+             WHERE id = $5`,
+            [user.id, user.name, user.email, invite.trip_role || 'VIEWER', primaryTraveler.id]
+          );
+
+          // Se houver mais de um registro para este e-mail/usuário, consolida e remove duplicatas
+          if (existingTravelers.length > 1) {
+            const duplicateIds = existingTravelers.slice(1).map((t: any) => t.id);
+            await query(
+              `UPDATE expenses SET paid_by_traveler_id = $1 WHERE paid_by_traveler_id = ANY($2::uuid[])`,
+              [primaryTraveler.id, duplicateIds]
+            );
+            for (const dupId of duplicateIds) {
+              await query(
+                `DELETE FROM expense_splits WHERE traveler_id = $1 
+                 AND expense_id IN (SELECT expense_id FROM expense_splits WHERE traveler_id = $2)`,
+                [dupId, primaryTraveler.id]
+              );
+              await query(
+                `UPDATE expense_splits SET traveler_id = $1 WHERE traveler_id = $2`,
+                [primaryTraveler.id, dupId]
+              );
+            }
+            await query(`DELETE FROM trip_travelers WHERE id = ANY($1::uuid[])`, [duplicateIds]);
+          }
+        } else {
+          await query(
+            `INSERT INTO trip_travelers (trip_id, user_id, display_name, email, role)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (trip_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET
+               display_name = EXCLUDED.display_name,
+               role = EXCLUDED.role,
+               updated_at = NOW()`,
+            [invite.trip_id, user.id, user.name, user.email, invite.trip_role || 'VIEWER']
+          );
+        }
       }
 
       // Marca convite como aceito

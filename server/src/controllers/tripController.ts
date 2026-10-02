@@ -340,14 +340,6 @@ export const tripController = {
           [cleanEmail, id, memberRole, req.user?.id, tokenHash, expiresAt]
         );
 
-        // Pre-registra viajante provisório para a viagem
-        await query(
-          `INSERT INTO trip_travelers (trip_id, display_name, email, role)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT DO NOTHING`,
-          [id, cleanEmail.split('@')[0], cleanEmail, memberRole]
-        );
-
         // Envia e-mail de convite com link exclusivo de definição de senha
         emailService.sendInvitationEmail(
           cleanEmail,
@@ -383,13 +375,28 @@ export const tripController = {
         [id, targetUser.id, memberRole]
       );
 
-      // Sync with trip_travelers
-      await query(
-        `INSERT INTO trip_travelers (trip_id, user_id, display_name, email, role)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (trip_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET role = EXCLUDED.role, updated_at = NOW()`,
-        [id, targetUser.id, targetUser.name, targetUser.email, memberRole]
+      // Sync with trip_travelers - vincula a registro existente por user_id ou e-mail, ou insere novo
+      const { rows: existingTravelers } = await query(
+        `SELECT id FROM trip_travelers 
+         WHERE trip_id = $1 AND (user_id = $2 OR (email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(TRIM($3))))`,
+        [id, targetUser.id, targetUser.email]
       );
+
+      if (existingTravelers.length > 0) {
+        await query(
+          `UPDATE trip_travelers
+           SET user_id = $1, display_name = $2, email = $3, role = $4, updated_at = NOW()
+           WHERE id = $5`,
+          [targetUser.id, targetUser.name, targetUser.email, memberRole, existingTravelers[0].id]
+        );
+      } else {
+        await query(
+          `INSERT INTO trip_travelers (trip_id, user_id, display_name, email, role)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (trip_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET role = EXCLUDED.role, updated_at = NOW()`,
+          [id, targetUser.id, targetUser.name, targetUser.email, memberRole]
+        );
+      }
 
       // Send email notification
       emailService.sendTripInvite(
