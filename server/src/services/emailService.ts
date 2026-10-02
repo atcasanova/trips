@@ -262,4 +262,66 @@ export const emailService = {
       return false;
     }
   },
+
+  async sendInboundUnrecognizedEmail(params: {
+    to: string;
+    userName: string;
+    subject?: string;
+  }) {
+    try {
+      const tripsUrl = `${env.APP_URL}/trips`;
+      const subjectClean = (params.subject || 'E-mail recebido').replace(/^(fwd|enc|re):\s*/gi, '').trim();
+      const info = await transporter.sendMail({
+        from: env.MAIL_FROM,
+        to: params.to,
+        subject: `⚠️ Documento não identificado: ${subjectClean}`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+              <span style="font-size: 24px;">ℹ️</span>
+              <h2 style="color: #475569; margin: 0; font-size: 18px;">
+                Não identificamos dados de reserva
+              </h2>
+            </div>
+
+            <p style="font-size: 14px; line-height: 1.5; color: #334155;">
+              Olá, <strong>${params.userName}</strong>. Recebemos a sua mensagem com o assunto <em>"${escapeHtml(subjectClean)}"</em>, porém nossa inteligência artificial não identificou informações legíveis de viagem (como passagens aéreas, reservas de hotéis, ingressos ou despesas) no conteúdo ou anexos enviados.
+            </p>
+
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin: 18px 0; font-size: 13px; color: #475569;">
+              💡 <strong>Dicas para envio:</strong>
+              <ul style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.6;">
+                <li>Encaminhe o e-mail completo original de confirmação da companhia aérea, hotel ou agência (Booking, Decolar, etc.).</li>
+                <li>Se for anexar arquivos, utilize comprovantes em <strong>PDF</strong> ou imagens/fotos nítidas e completas.</li>
+                <li>Nenhuma viagem ou documento em branco foi criado na plataforma.</li>
+              </ul>
+            </div>
+
+            <p style="margin: 24px 0; text-align: center;">
+              <a href="${tripsUrl}" style="background: #b94a5d; color: white; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block;">
+                Acessar Minhas Viagens
+              </a>
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+            <small style="color: #94a3b8; display: block; text-align: center;">Trips — Gestão Inteligente de Viagens</small>
+          </div>
+        `,
+      });
+      logger.info('E-mail de documento não reconhecido enviado', { messageId: info.messageId, to: params.to });
+      return true;
+    } catch (err: any) {
+      logger.error('Falha ao enviar e-mail de documento não reconhecido (SMTP)', { error: err.message, to: params.to });
+      return false;
+    }
+  },
 };
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}

@@ -122,6 +122,18 @@ export const inboundEmailService = {
 
       // Analyze extracted data for dates, cities, and categories
       const tripInfo = this.extractTripMatchingInfo(aiResult);
+
+      // Check if this document contains actionable travel data
+      const isActionable = isActionableTravelDocument(tripInfo);
+
+      if (!isActionable) {
+        logger.warn('Arquivo processado não contém dados mínimos de viagem (categoria OTHER, sem cidades e sem datas). Ignorando.', {
+          fileName: file.originalName,
+          detectedType: aiResult.detectedType,
+        });
+        continue;
+      }
+
       latestExtractedInfo = tripInfo;
 
       // Filter 2 & 3: Match with existing trip or auto-create if this is the first file,
@@ -130,6 +142,13 @@ export const inboundEmailService = {
         const matchResult = await this.matchOrCreateTrip(user, tripInfo);
         finalTrip = matchResult.trip;
         finalIsNewTrip = matchResult.isNewTrip;
+      }
+
+      if (!finalTrip) {
+        logger.warn('Nenhuma viagem correspondente e o documento não qualificou para criar uma nova viagem. Pulando arquivo.', {
+          fileName: file.originalName,
+        });
+        continue;
       }
 
       // Save document record in DB
@@ -206,6 +225,12 @@ export const inboundEmailService = {
     }
 
     if (processedDocIds.length === 0 || !finalTrip) {
+      logger.info('Nenhum documento de viagem reconhecido no e-mail recebido. Notificando usuário...');
+      await emailService.sendInboundUnrecognizedEmail({
+        to: user.email,
+        userName: user.name,
+        subject,
+      });
       return { success: false, reason: 'extraction_failed_for_all_files' };
     }
 
@@ -315,61 +340,69 @@ export const inboundEmailService = {
       fs.mkdirSync(env.UPLOAD_PATH, { recursive: true });
     }
 
-    const allowedMimes = [
-      'application/pdf',
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-      'application/vnd.apple.pkpass',
-      'application/octet-stream',
-    ];
-
-    const allowedExts = ['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.pkpass'];
-
-    // 1. Process valid attachments
+    // 1. Process valid standalone attachments
     if (Array.isArray(parsed.attachments) && parsed.attachments.length > 0) {
       for (const att of parsed.attachments) {
-        const filename = att.filename || `anexo-${Date.now()}`;
-        const ext = path.extname(filename).toLowerCase();
+        if (!isRealDocumentAttachment(att)) {
+          logger.info('Anexo descartado (considerado ícone, tracking pixel ou asset inline do e-mail)', {
+            filename: att.filename,
+            contentType: att.contentType,
+            size: att.size || att.content?.length,
+            cid: att.cid,
+            related: att.related,
+            disposition: att.contentDisposition,
+          });
+          continue;
+        }
+
+        const rawFilename = (att.filename || `documento-${Date.now()}`).trim();
+        const ext = path.extname(rawFilename).toLowerCase();
         const contentType = att.contentType?.toLowerCase() || '';
 
-        const isAllowed =
-          allowedMimes.includes(contentType) ||
-          allowedExts.includes(ext);
+        const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext || '.pdf'}`;
+        const savePath = path.join(env.UPLOAD_PATH, uniqueName);
 
-        if (isAllowed && att.content && att.content.length > 500) {
-          const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext || '.pdf'}`;
-          const savePath = path.join(env.UPLOAD_PATH, uniqueName);
+        fs.writeFileSync(savePath, att.content);
+        const hash = crypto.createHash('sha256').update(att.content).digest('hex');
 
-          fs.writeFileSync(savePath, att.content);
-          const hash = crypto.createHash('sha256').update(att.content).digest('hex');
+        let normalizedMime = att.contentType || 'application/pdf';
+        if (ext === '.pdf') normalizedMime = 'application/pdf';
+        else if (ext === '.jpg' || ext === '.jpeg') normalizedMime = 'image/jpeg';
+        else if (ext === '.png') normalizedMime = 'image/png';
+        else if (ext === '.webp') normalizedMime = 'image/webp';
+        else if (ext === '.pkpass') normalizedMime = 'application/vnd.apple.pkpass';
 
-          let normalizedMime = att.contentType || 'application/pdf';
-          if (ext === '.pdf') normalizedMime = 'application/pdf';
-          else if (ext === '.jpg' || ext === '.jpeg') normalizedMime = 'image/jpeg';
-          else if (ext === '.png') normalizedMime = 'image/png';
-          else if (ext === '.webp') normalizedMime = 'image/webp';
-
-          validFiles.push({
-            filePath: savePath,
-            originalName: filename,
-            mimeType: normalizedMime,
-            size: att.size || att.content.length,
-            fileHash: hash,
-          });
-        }
+        validFiles.push({
+          filePath: savePath,
+          originalName: rawFilename,
+          mimeType: normalizedMime,
+          size: att.size || att.content.length,
+          fileHash: hash,
+        });
       }
     }
 
-    // 2. If no valid attachments, render the email body (HTML or plain text) as a PDF
+    // 2. If no valid standalone attachments found, render the email body (HTML or plain text) as a PDF
     if (validFiles.length === 0 && (parsed.html || parsed.text)) {
       try {
-        logger.info('Nenhum anexo suportado encontrado. Renderizando corpo do e-mail em PDF...');
+        logger.info('Nenhum anexo isolado de documento encontrado. Renderizando corpo do e-mail em PDF...');
         const emailSubject = parsed.subject || 'Confirmação de Reserva';
         const emailSender = parsed.from?.text || 'Remetente';
         const emailDate = parsed.date ? parsed.date.toLocaleDateString('pt-BR') : '';
 
-        const bodyContent = parsed.html || `<pre style="white-space: pre-wrap; font-family: sans-serif;">${parsed.text || ''}</pre>`;
+        let bodyContent = parsed.html || `<pre style="white-space: pre-wrap; font-family: sans-serif;">${escapeHtml(parsed.text || '')}</pre>`;
+
+        // If HTML email has CID embedded attachments, replace cid:... with base64 data URIs so Puppeteer renders cleanly
+        if (parsed.html && Array.isArray(parsed.attachments)) {
+          for (const att of parsed.attachments) {
+            if (att.cid && att.content && att.contentType) {
+              const base64Data = `data:${att.contentType};base64,${att.content.toString('base64')}`;
+              const cleanCid = att.cid.replace(/^<|>$/g, '');
+              const regex = new RegExp(`cid:<?${cleanCid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}>?`, 'gi');
+              bodyContent = bodyContent.replace(regex, base64Data);
+            }
+          }
+        }
 
         const fullHtml = `
           <!DOCTYPE html>
@@ -709,15 +742,34 @@ export const inboundEmailService = {
       return { trip: bestTrip, isNewTrip: false };
     }
 
-    // Filter 3: No existing trip matches the period/city -> Automatically create a new trip!
+    // Filter 3: Check if this document has minimum data to justify creating a new trip
+    if (!isActionableTravelDocument(info)) {
+      logger.warn('Documento não possui dados mínimos de viagem (categoria OTHER, sem cidades e sem datas). Abortando criação automática de viagem.', {
+        category: info.category,
+        cities: info.cities,
+        startDate: info.startDate,
+      });
+      return { trip: null, isNewTrip: false };
+    }
+
+    // No existing trip matches the period/city -> Automatically create a new trip!
     logger.info('Nenhuma viagem correspondente encontrada. Criando nova viagem automaticamente...', {
       cities: info.cities,
       startDate: info.startDate,
       endDate: info.endDate,
     });
 
-    const primaryCity = info.cities[0] || 'Viagem';
-    const tripTitle = info.cities.length > 0 ? `Viagem para ${primaryCity}` : (info.summaryTitle || 'Minha Viagem');
+    const primaryCity = info.cities[0];
+    let tripTitle = primaryCity ? `Viagem para ${primaryCity}` : 'Nova Viagem';
+
+    if (!primaryCity && info.summaryTitle && isValidTripTitle(info.summaryTitle)) {
+      tripTitle = info.summaryTitle;
+    }
+
+    const destinationSummary = info.cities.length > 0
+      ? info.cities.join(', ')
+      : (isValidTripTitle(info.summaryTitle) ? info.summaryTitle : null);
+
     const startDate = info.startDate || new Date().toISOString().split('T')[0];
     const endDate = info.endDate || startDate;
 
@@ -726,7 +778,7 @@ export const inboundEmailService = {
     let coverThumb: string | null = null;
     let coverAttribution: any = null;
 
-    if (info.cities.length > 0) {
+    if (info.cities.length > 0 && primaryCity) {
       try {
         const photoResults = await pexelsService.searchPhotos(primaryCity, 1);
         if (photoResults.photos.length > 0) {
@@ -761,7 +813,7 @@ export const inboundEmailService = {
       RETURNING *`,
       [
         tripTitle,
-        info.summaryTitle || null,
+        destinationSummary,
         startDate,
         endDate,
         info.country || null,
@@ -800,7 +852,7 @@ export const inboundEmailService = {
         newTrip.id,
         JSON.stringify({
           source: 'inbound_email',
-          city: primaryCity,
+          city: primaryCity || 'Viagem',
           startDate,
           endDate,
         }),
@@ -817,6 +869,117 @@ export const inboundEmailService = {
   },
 };
 
+function isRealDocumentAttachment(att: Attachment): boolean {
+  if (!att || !att.content) return false;
+
+  const filename = (att.filename || '').trim();
+  const ext = path.extname(filename).toLowerCase();
+  const contentType = (att.contentType || '').toLowerCase();
+
+  // 1. PDF documents are always considered real documents
+  if (contentType === 'application/pdf' || ext === '.pdf') {
+    return att.content.length > 500;
+  }
+
+  // 2. Apple Wallet passes are always considered real documents
+  if (contentType === 'application/vnd.apple.pkpass' || ext === '.pkpass') {
+    return att.content.length > 500;
+  }
+
+  // 3. For images: filter out inline, CID, related, or decorative assets
+  const isImage =
+    ['image/jpeg', 'image/png', 'image/webp'].includes(contentType) ||
+    ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
+
+  if (!isImage) {
+    return false;
+  }
+
+  // Reject inline CID attachments or multipart/related assets
+  if (att.related === true) {
+    return false;
+  }
+  if (att.contentDisposition?.toLowerCase() === 'inline') {
+    return false;
+  }
+  if (att.cid) {
+    return false;
+  }
+
+  // Real attachments have a meaningful filename with extension
+  if (!filename || ext === '') {
+    return false;
+  }
+
+  const lowerName = filename.toLowerCase();
+  if (
+    lowerName === 'noname' ||
+    lowerName.startsWith('noname') ||
+    lowerName.startsWith('untitled') ||
+    lowerName.startsWith('image00') ||
+    lowerName.startsWith('icon') ||
+    lowerName.startsWith('logo')
+  ) {
+    return false;
+  }
+
+  // Real document images (photos of boarding passes, receipts, vouchers, tickets) are at least 25 KB
+  // Email icons, tracking pixels, badges, star ratings are virtually always < 15-20 KB
+  if (att.content.length < 25 * 1024) {
+    return false;
+  }
+
+  return true;
+}
+
+function isActionableTravelDocument(info: ExtractedTripInfo): boolean {
+  if (['FLIGHT', 'HOTEL', 'EVENT', 'RECEIPT'].includes(info.category)) {
+    return true;
+  }
+  if (info.cities && info.cities.length > 0) {
+    return true;
+  }
+  if (info.startDate) {
+    return true;
+  }
+  return false;
+}
+
+function isValidTripTitle(title?: string | null): boolean {
+  if (!title || typeof title !== 'string') return false;
+  const trimmed = title.trim();
+  if (trimmed.length < 3 || trimmed.length > 80) return false;
+
+  const forbidden = [
+    'não contém',
+    'nao contem',
+    'não foi possível',
+    'nao foi possivel',
+    'em branco',
+    'apenas um ícone',
+    'apenas um icone',
+    'não legíveis',
+    'nao legiveis',
+    'sem informações',
+    'sem informacoes',
+    'não identificado',
+    'nao identificado',
+    'erro',
+    'desconhecido',
+    'nenhuma informação',
+    'nenhuma informacao',
+    'imagem fornecida',
+    'documento fornecido',
+  ];
+
+  const lower = trimmed.toLowerCase();
+  for (const f of forbidden) {
+    if (lower.includes(f)) return false;
+  }
+
+  return true;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -828,9 +991,10 @@ function escapeHtml(text: string): string {
 
 function cleanSubjectForFilename(subject: string): string {
   return subject
-    .replace(/^(fwd|enc|re):\s*/gi, '')
+    .replace(/^(fwd|enc|re|res|fw):\s*/gi, '')
     .replace(/[^\w\s\u00C0-\u00FF-]/gi, '')
     .trim()
     .replace(/\s+/g, '_')
-    .slice(0, 50) || 'reserva';
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60) || 'reserva';
 }
