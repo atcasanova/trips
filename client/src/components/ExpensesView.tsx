@@ -32,6 +32,9 @@ import {
   Divide,
   Percent,
   X,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import { ExpenseItem, ExpenseTransfer, TripTraveler, TravelerBalance, Settlement, ExpensesResponse } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -152,6 +155,43 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
       return true;
     });
   }, [data, selectedCurrency]);
+
+  // Sorting state for transfers
+  const [transferSortField, setTransferSortField] = useState<'date' | 'from' | 'to' | 'amount'>('date');
+  const [transferSortDir, setTransferSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const handleToggleTransferSort = (field: 'date' | 'from' | 'to' | 'amount') => {
+    if (transferSortField === field) {
+      setTransferSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setTransferSortField(field);
+      setTransferSortDir(field === 'date' || field === 'amount' ? 'desc' : 'asc');
+    }
+  };
+
+  const sortedFilteredTransfers = useMemo(() => {
+    const list = [...filteredTransfers];
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (transferSortField === 'date') {
+        const timeA = new Date(a.date).getTime() || 0;
+        const timeB = new Date(b.date).getTime() || 0;
+        cmp = timeA - timeB;
+      } else if (transferSortField === 'from') {
+        cmp = (a.from_name || '').localeCompare(b.from_name || '', 'pt-BR');
+      } else if (transferSortField === 'to') {
+        cmp = (a.to_name || '').localeCompare(b.to_name || '', 'pt-BR');
+      } else if (transferSortField === 'amount') {
+        cmp = Number(a.amount) - Number(b.amount);
+      }
+      return transferSortDir === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  }, [filteredTransfers, transferSortField, transferSortDir]);
+
+  const totalFilteredTransfersAmount = useMemo(() => {
+    return filteredTransfers.reduce((sum, tr) => sum + (Number(tr.amount) || 0), 0);
+  }, [filteredTransfers]);
 
   const handleOpenCreateTransfer = (preset?: {
     fromId?: string;
@@ -969,18 +1009,18 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
           )}
         </div>
 
-        {/* SECTION: TRANSFERÊNCIAS & PAGAMENTOS REALIZADOS */}
+        {/* SECTION: PLANILHA DE TRANSFERÊNCIAS & PAGAMENTOS ORDENÁVEL */}
         <div className="pt-4 border-t border-slate-100 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <div className="flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-emerald-600" />
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  Transferências & Pagamentos Registrados ({filteredTransfers.length})
+                  Planilha de Pagamentos & Transferências ({filteredTransfers.length})
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Pagamentos diretos (Pix, dinheiro, etc.) realizados entre os viajantes para abater dívidas
+                Registro de pagamentos diretos entre viajantes (Pix, dinheiro, etc.) para abater dívidas
               </p>
             </div>
 
@@ -996,71 +1036,239 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
           </div>
 
           {filteredTransfers.length === 0 ? (
-            <div className="p-4 bg-slate-50/70 border border-dashed border-slate-200 rounded-xl text-xs text-slate-500 text-center">
-              Nenhuma transferência direta registrada nesta moeda. Quando alguém fizer um Pix ou pagamento a outro viajante para acertar contas, registre aqui para abater as dívidas automaticamente!
+            <div className="p-6 bg-slate-50/70 border border-dashed border-slate-200 rounded-xl text-xs text-slate-500 text-center space-y-1">
+              <p className="font-semibold text-slate-700">Nenhum pagamento registrado nesta moeda.</p>
+              <p className="text-[11px] text-slate-400">
+                Quando alguém fizer um Pix ou pagamento a outro participante para acertar as contas, registre aqui para abater o saldo automaticamente.
+              </p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {filteredTransfers.map((tr) => (
-                <div
-                  key={tr.id}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs transition-colors"
-                >
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] text-slate-500 font-medium">
-                      {formatDateBr(tr.date)}
-                    </span>
-
-                    <span className="font-bold text-slate-900 bg-white px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs">
-                      {tr.from_name}
-                    </span>
-
-                    <span className="text-slate-400 text-xs">pagou a</span>
-
-                    <span className="font-bold text-slate-900 bg-white px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs">
-                      {tr.to_name}
-                    </span>
-
-                    {tr.payment_method && (
-                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-bold rounded text-[10px] uppercase tracking-wide">
-                        {tr.payment_method}
-                      </span>
-                    )}
-
-                    {tr.notes && (
-                      <span className="text-slate-500 italic text-[11px]">
-                        "{tr.notes}"
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-3 self-end sm:self-center">
-                    <strong className="font-mono font-extrabold text-emerald-700 text-sm">
-                      {tr.currency}{' '}
-                      {Number(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </strong>
-
-                    {canEdit && (
-                      <div className="flex items-center gap-1">
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+              {/* Tabela com tamanho fixo e barras de rolagem vertical e horizontal */}
+              <div className="max-h-[340px] overflow-y-auto overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse min-w-[720px]">
+                  <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 shadow-2xs">
+                    <tr className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      {/* Data */}
+                      <th scope="col" className="px-4 py-3 whitespace-nowrap">
                         <button
-                          onClick={() => handleOpenEditTransfer(tr)}
-                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors"
-                          title="Editar transferência"
+                          type="button"
+                          onClick={() => handleToggleTransferSort('date')}
+                          className="flex items-center gap-1.5 hover:text-slate-900 transition-colors group cursor-pointer"
+                          title="Ordenar por data"
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Data</span>
+                          {transferSortField === 'date' ? (
+                            transferSortDir === 'asc' ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-indigo-600" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-400" />
+                          )}
                         </button>
+                      </th>
+
+                      {/* Pagador */}
+                      <th scope="col" className="px-4 py-3 whitespace-nowrap">
                         <button
-                          onClick={() => handleDeleteTransfer(tr.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg transition-colors"
-                          title="Remover transferência"
+                          type="button"
+                          onClick={() => handleToggleTransferSort('from')}
+                          className="flex items-center gap-1.5 hover:text-slate-900 transition-colors group cursor-pointer"
+                          title="Ordenar por pagador"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Quem pagou</span>
+                          {transferSortField === 'from' ? (
+                            transferSortDir === 'asc' ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-indigo-600" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-400" />
+                          )}
                         </button>
-                      </div>
-                    )}
-                  </div>
+                      </th>
+
+                      {/* Recebedor */}
+                      <th scope="col" className="px-4 py-3 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTransferSort('to')}
+                          className="flex items-center gap-1.5 hover:text-slate-900 transition-colors group cursor-pointer"
+                          title="Ordenar por recebedor"
+                        >
+                          <span>Quem recebeu</span>
+                          {transferSortField === 'to' ? (
+                            transferSortDir === 'asc' ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-indigo-600" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-400" />
+                          )}
+                        </button>
+                      </th>
+
+                      {/* Meio / Método */}
+                      <th scope="col" className="px-4 py-3 whitespace-nowrap">
+                        Meio
+                      </th>
+
+                      {/* Observações */}
+                      <th scope="col" className="px-4 py-3 min-w-[160px]">
+                        Observações
+                      </th>
+
+                      {/* Valor */}
+                      <th scope="col" className="px-4 py-3 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTransferSort('amount')}
+                          className="inline-flex items-center gap-1.5 hover:text-slate-900 transition-colors group cursor-pointer ml-auto"
+                          title="Ordenar por valor"
+                        >
+                          <span>Valor</span>
+                          {transferSortField === 'amount' ? (
+                            transferSortDir === 'asc' ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-indigo-600" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-400" />
+                          )}
+                        </button>
+                      </th>
+
+                      {/* Ações */}
+                      {canEdit && (
+                        <th scope="col" className="px-4 py-3 text-center whitespace-nowrap w-20">
+                          Ações
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {sortedFilteredTransfers.map((tr) => (
+                      <tr key={tr.id} className="hover:bg-slate-50/80 transition-colors group">
+                        {/* Data */}
+                        <td className="px-4 py-2.5 whitespace-nowrap font-mono text-[11px] text-slate-600">
+                          {formatDateBr(tr.date)}
+                        </td>
+
+                        {/* Pagador */}
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                            <span className="font-semibold text-slate-900">{tr.from_name}</span>
+                          </div>
+                        </td>
+
+                        {/* Recebedor */}
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                            <span className="font-semibold text-slate-900">{tr.to_name}</span>
+                          </div>
+                        </td>
+
+                        {/* Meio */}
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              tr.payment_method === 'PIX'
+                                ? 'bg-teal-50 text-teal-700 border border-teal-200/60'
+                                : tr.payment_method === 'BANK_TRANSFER'
+                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/60'
+                                : tr.payment_method === 'CASH'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200/60'
+                                : 'bg-slate-100 text-slate-600 border border-slate-200/60'
+                            }`}
+                          >
+                            {tr.payment_method === 'PIX'
+                              ? 'Pix'
+                              : tr.payment_method === 'BANK_TRANSFER'
+                              ? 'Transf. Bancária'
+                              : tr.payment_method === 'CASH'
+                              ? 'Dinheiro'
+                              : tr.payment_method || 'Outro'}
+                          </span>
+                        </td>
+
+                        {/* Observações */}
+                        <td className="px-4 py-2.5 text-slate-500 text-[11px] truncate max-w-[220px]" title={tr.notes || ''}>
+                          {tr.notes ? (
+                            <span className="italic">"{tr.notes}"</span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+
+                        {/* Valor */}
+                        <td className="px-4 py-2.5 text-right font-mono whitespace-nowrap">
+                          <strong className="text-emerald-700 font-bold text-xs">
+                            {tr.currency}{' '}
+                            {Number(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </strong>
+                        </td>
+
+                        {/* Ações */}
+                        {canEdit && (
+                          <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditTransfer(tr)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                title="Editar transferência"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTransfer(tr.id)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                                title="Remover transferência"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Barra inferior de totais e status da planilha */}
+              <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
+                <span className="text-[11px]">
+                  Exibindo <strong>{sortedFilteredTransfers.length}</strong> {sortedFilteredTransfers.length === 1 ? 'registro' : 'registros'} ordenados por{' '}
+                  <strong className="text-slate-700">
+                    {transferSortField === 'date'
+                      ? 'Data'
+                      : transferSortField === 'from'
+                      ? 'Pagador'
+                      : transferSortField === 'to'
+                      ? 'Recebedor'
+                      : 'Valor'}
+                  </strong>{' '}
+                  ({transferSortDir === 'asc' ? 'crescente ↑' : 'decrescente ↓'})
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-600">Total Transferido:</span>
+                  <span className="font-mono font-extrabold text-emerald-800 text-xs bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                    {activeSettlementCurrency}{' '}
+                    {totalFilteredTransfersAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
                 </div>
-              ))}
+              </div>
             </div>
           )}
         </div>
