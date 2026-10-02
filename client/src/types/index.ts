@@ -364,3 +364,15 @@ export interface PexelsPhoto {
   };
   alt: string;
 }
+
+export interface PdfStatusResponse {
+  hasPreGenerated: boolean;
+  fullGeneratedAt?: string | null;
+  anonGeneratedAt?: string | null;
+  fullSizeBytes?: number;
+  anonSizeBytes?: number;
+  fullSizeFormatted?: string | null;
+  anonSizeFormatted?: string | null;
+  needsRegeneration: boolean;
+  isGenerating: boolean;
+}

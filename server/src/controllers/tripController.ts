@@ -7,6 +7,7 @@ import { refreshItineraryLocations } from '../services/itineraryLocationService.
 import { logger } from '../utils/logger.js';
 import { TripRole } from '../types/index.js';
 import { resolveCountry } from '../utils/countryResolver.js';
+import { tripBookPdfService } from '../services/tripBookPdfService.js';
 
 export const tripController = {
   // 1. List trips accessible to user
@@ -281,6 +282,9 @@ export const tripController = {
       )
         ? await refreshItineraryLocations({ tripId: id, userId: req.user?.id })
         : undefined;
+
+      // Queue pre-generation of TripBook PDFs
+      tripBookPdfService.queuePreGeneration(id);
 
       logger.info('Viagem atualizada', { tripId: id });
       return res.json({ trip: rows[0], locationRefresh });

@@ -1700,6 +1700,23 @@ export const reportService = {
     .tripbook-btn.pdf-btn:hover, .public-share-btn.pdf-btn:hover {
       filter: brightness(1.1);
     }
+    .tripbook-btn:disabled {
+      opacity: 0.85;
+      cursor: wait;
+      pointer-events: none;
+    }
+    .tripbook-btn.btn-loading {
+      background: #0284c7 !important;
+      color: #ffffff !important;
+    }
+    .tripbook-btn.btn-success {
+      background: #16a34a !important;
+      color: #ffffff !important;
+    }
+    .tripbook-btn.btn-error {
+      background: #dc2626 !important;
+      color: #ffffff !important;
+    }
 
     /* Table Responsive Wrapper */
     .table-responsive {
@@ -1911,7 +1928,11 @@ export const reportService = {
       </div>
       <div class="tripbook-top-actions public-share-actions">
         <button onclick="window.print()" class="tripbook-btn public-share-btn print-btn">🖨️ Imprimir</button>
-        ${options.pdfDownloadUrl ? `<a href="${options.pdfDownloadUrl}" class="tripbook-btn public-share-btn pdf-btn">📥 Baixar PDF</a>` : ''}
+        ${options.pdfDownloadUrl ? `
+          <button id="tripbook-download-btn" onclick="downloadTripBookPdf(this, '${options.pdfDownloadUrl}')" class="tripbook-btn public-share-btn pdf-btn">
+            <span class="btn-icon">📥</span> <span class="btn-text">Baixar PDF</span>
+          </button>
+        ` : ''}
       </div>
     </div>
   </div>
@@ -2481,6 +2502,60 @@ export const reportService = {
         initTripBookMaps();
       }
     })();
+
+    window.downloadTripBookPdf = async function(btn, url) {
+      if (!btn || btn.disabled) return;
+      var originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.classList.add('btn-loading');
+      btn.innerHTML = '<span class="btn-icon">⏳</span> <span class="btn-text">Baixando PDF...</span>';
+
+      try {
+        var response = await fetch(url);
+        if (!response.ok) {
+          throw new Error('Falha ao baixar PDF (Status ' + response.status + ')');
+        }
+        var disposition = response.headers.get('content-disposition');
+        var filename = 'TripBook.pdf';
+        if (disposition && disposition.indexOf('filename=') !== -1) {
+          var parts = disposition.split('filename=');
+          if (parts[1]) {
+            filename = parts[1].split(';')[0].replace(/['"]/g, '').trim();
+          }
+        }
+        var blob = await response.blob();
+        var blobUrl = window.URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function() {
+          window.URL.revokeObjectURL(blobUrl);
+          if (a.parentNode) a.parentNode.removeChild(a);
+        }, 1000);
+
+        btn.classList.remove('btn-loading');
+        btn.classList.add('btn-success');
+        btn.innerHTML = '<span class="btn-icon">✅</span> <span class="btn-text">Download Concluído!</span>';
+        setTimeout(function() {
+          btn.classList.remove('btn-success');
+          btn.innerHTML = originalHtml;
+          btn.disabled = false;
+        }, 3500);
+      } catch (err) {
+        console.error('Download error:', err);
+        btn.classList.remove('btn-loading');
+        btn.classList.add('btn-error');
+        btn.innerHTML = '<span class="btn-icon">⚠️</span> <span class="btn-text">Erro ao baixar</span>';
+        setTimeout(function() {
+          btn.classList.remove('btn-error');
+          btn.innerHTML = originalHtml;
+          btn.disabled = false;
+        }, 3000);
+      }
+    };
   </script>
 </body>
 </html>`;

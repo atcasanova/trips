@@ -3,6 +3,7 @@ import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { aggregateItineraryItems } from '../utils/aggregation.js';
+import { tripBookPdfService } from '../services/tripBookPdfService.js';
 
 /**
  * Re-orders all days of a trip chronologically by date and creation time,
@@ -38,6 +39,8 @@ export async function reorderTripDaysChronologically(tripId: string) {
       );
     }
   }
+
+  tripBookPdfService.queuePreGeneration(tripId);
 }
 
 export const itineraryController = {
@@ -226,6 +229,8 @@ export const itineraryController = {
           ? await refreshItineraryLocations({ tripId, dayIds: [dayId], userId: req.user?.id })
           : undefined;
 
+      tripBookPdfService.queuePreGeneration(tripId);
+
       return res.json({ day: freshRows[0] || rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao atualizar dia do roteiro:', { error: err.message });
@@ -311,6 +316,8 @@ export const itineraryController = {
           userId: req.user?.id,
         });
       }
+
+      tripBookPdfService.queuePreGeneration(tripId);
 
       return res.status(201).json({ item: rows[0], locationRefresh });
     } catch (err: any) {
@@ -398,6 +405,8 @@ export const itineraryController = {
         [itemId]
       );
 
+      tripBookPdfService.queuePreGeneration(tripId);
+
       return res.json({ item: fullItem[0] || rows[0], locationRefresh });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao atualizar atividade' });
@@ -409,6 +418,7 @@ export const itineraryController = {
     const { tripId, itemId } = req.params;
     try {
       await query('DELETE FROM itinerary_items WHERE id = $1 AND trip_id = $2', [itemId, tripId]);
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ message: 'Atividade removida com sucesso' });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover atividade' });
@@ -442,6 +452,8 @@ export const itineraryController = {
         userId: req.user?.id,
       });
 
+      tripBookPdfService.queuePreGeneration(tripId);
+
       return res.json({ item: rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao mover atividade:', { error: err.message });
@@ -465,6 +477,7 @@ export const itineraryController = {
           [i, itemIds[i], tripId]
         );
       }
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao reordenar atividades' });
@@ -487,6 +500,7 @@ export const itineraryController = {
           [i + 1, i, dayIds[i], tripId]
         );
       }
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao reordenar dias' });
@@ -507,6 +521,7 @@ export const itineraryController = {
       userId: req.user?.id,
       dayIds: dayId ? [dayId] : undefined,
     });
+    tripBookPdfService.queuePreGeneration(tripId);
     return res.json({ locationRefresh });
   },
 
@@ -538,6 +553,7 @@ export const itineraryController = {
         return res.status(422).json({ error: 'Localize o ponto no mapa antes de confirmá-lo.' });
       }
 
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ item: rows[0] });
     } catch (err: any) {
       logger.error('Erro ao confirmar ponto do mapa:', { error: err.message, tripId, itemId });
@@ -568,6 +584,7 @@ export const itineraryController = {
         return res.status(404).json({ error: 'Item não encontrado.' });
       }
 
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ item: rows[0] });
     } catch (err: any) {
       logger.error('Erro ao alterar visibilidade do item no mapa:', { error: err.message, tripId, itemId });

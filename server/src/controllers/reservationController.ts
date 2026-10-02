@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
 import { aggregateHotels, extractPassengers } from '../utils/aggregation.js';
+import { tripBookPdfService } from '../services/tripBookPdfService.js';
 
 export const reservationController = {
   // === TRANSPORTS ===
@@ -129,6 +130,8 @@ export const reservationController = {
         }
       }
 
+      tripBookPdfService.queuePreGeneration(tripId);
+
       return res.status(201).json({
         transport: {
           ...reservation,
@@ -145,6 +148,7 @@ export const reservationController = {
     const { tripId, transportId } = req.params;
     try {
       await query('DELETE FROM transport_reservations WHERE id = $1 AND trip_id = $2', [transportId, tripId]);
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ message: 'Transporte excluído com sucesso' });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover transporte' });
@@ -232,6 +236,8 @@ export const reservationController = {
         ]
       );
 
+      tripBookPdfService.queuePreGeneration(tripId);
+
       return res.status(201).json({ hotel: rows[0] });
     } catch (err: any) {
       logger.error('Erro ao cadastrar hotel:', { error: err.message });
@@ -243,6 +249,7 @@ export const reservationController = {
     const { tripId, hotelId } = req.params;
     try {
       await query('DELETE FROM hotel_reservations WHERE id = $1 AND trip_id = $2', [hotelId, tripId]);
+      tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ message: 'Hospedagem removida com sucesso' });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover hospedagem' });

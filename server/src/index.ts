@@ -4,6 +4,7 @@ import { logger } from './utils/logger.js';
 import { runMigrations } from './db/migrate.js';
 import { seedDemoData } from './db/seed.js';
 import { pool } from './db/pool.js';
+import { tripBookPdfService } from './services/tripBookPdfService.js';
 
 async function startServer() {
   try {
@@ -24,6 +25,11 @@ async function startServer() {
     const server = app.listen(env.PORT, '0.0.0.0', () => {
       logger.info(`Trips Server rodando com sucesso em http://0.0.0.0:${env.PORT}`);
       logger.info(`Healthcheck disponível em http://0.0.0.0:${env.PORT}/api/health`);
+
+      // Trigger background pre-generation of pending TripBook PDFs
+      tripBookPdfService.preGenerateAllPendingTrips().catch((err: any) => {
+        logger.warn('Falha na pré-geração em lote na inicialização:', { error: err.message });
+      });
     });
 
     // Graceful Shutdown

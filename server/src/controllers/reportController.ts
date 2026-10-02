@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
+import path from 'path';
 import { reportService } from '../services/reportService.js';
 import { pdfService } from '../services/pdfService.js';
+import { tripBookPdfService } from '../services/tripBookPdfService.js';
 import { query } from '../db/pool.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -55,22 +57,21 @@ export const reportController = {
     }
   },
 
-  // 3. Export PDF
+  // 3. Export PDF (Served from pre-generated cache or generated on-demand)
   async exportPdf(req: Request, res: Response) {
     const { tripId } = req.params;
 
     try {
-      const data = await reportService.getTripBookData(tripId);
-      const html = reportService.generateTripBookHtml(data);
+      const { rows } = await query('SELECT title, subtitle FROM trips WHERE id = $1 AND deleted_at IS NULL', [tripId]);
+      if (rows.length === 0) return res.status(404).json({ error: 'Viagem não encontrada' });
+      const trip = rows[0];
 
-      const pdfBuffer = await pdfService.htmlToPdf(html);
-
-      const filename = `TripBook_${data.trip.title.replace(/[^a-zA-Z0-9]/g, '_')}_${data.trip.subtitle || ''}.pdf`;
+      const pdfPath = await tripBookPdfService.getOrGeneratePdf(tripId, false);
+      const filename = `TripBook_${trip.title.replace(/[^a-zA-Z0-9]/g, '_')}_completo.pdf`;
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', pdfBuffer.length);
-      return res.end(pdfBuffer);
+      return res.sendFile(path.resolve(pdfPath));
     } catch (err: any) {
       logger.error('Erro na exportação de PDF:', { error: err.message });
       return res.status(500).json({ error: `Erro ao gerar PDF: ${err.message}` });
@@ -147,6 +148,8 @@ export const reportController = {
       const baseUrl = env.APP_URL || `${req.protocol}://${req.get('host')}`;
       const shareUrl = `${baseUrl}/s/${trip.share_token}`;
 
+      tripBookPdfService.queuePreGeneration(tripId);
+
       return res.json({
         share_token: trip.share_token,
         share_enabled: Boolean(trip.share_enabled),
@@ -214,7 +217,7 @@ export const reportController = {
     }
   },
 
-  // 7. Public Shared PDF Export (Anonymized & Non-indexable)
+  // 7. Public Shared PDF Export (Anonymized, Served from pre-generated cache)
   async exportPublicSharedPdf(req: Request, res: Response) {
     const { shareToken } = req.params;
 
@@ -229,23 +232,49 @@ export const reportController = {
       }
 
       const trip = rows[0];
-      const data = await reportService.getTripBookData(trip.id);
-      const html = reportService.generateTripBookHtml(data, {
-        anonymize: true,
-        isPublicShare: false,
-      });
-
-      const pdfBuffer = await pdfService.htmlToPdf(html);
+      const pdfPath = await tripBookPdfService.getOrGeneratePdf(trip.id, true);
       const filename = `TripBook_${trip.title.replace(/[^a-zA-Z0-9]/g, '_')}_compartilhado.pdf`;
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', pdfBuffer.length);
-      return res.end(pdfBuffer);
+      return res.sendFile(path.resolve(pdfPath));
     } catch (err: any) {
       logger.error('Erro na exportação de PDF compartilhado:', { error: err.message });
       return res.status(500).json({ error: `Erro ao gerar PDF: ${err.message}` });
+    }
+  },
+
+  // 8. Get PDF Pre-generation Status
+  async getPdfStatus(req: Request, res: Response) {
+    const { tripId } = req.params;
+
+    try {
+      const status = await tripBookPdfService.getPdfStatus(tripId);
+      if (!status) {
+        return res.status(404).json({ error: 'Viagem não encontrada' });
+      }
+      return res.json(status);
+    } catch (err: any) {
+      logger.error('Erro ao consultar status de PDF:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao consultar status de PDF' });
+    }
+  },
+
+  // 9. Force Immediate PDF Regeneration
+  async regeneratePdf(req: Request, res: Response) {
+    const { tripId } = req.params;
+
+    try {
+      await tripBookPdfService.generateBothPdfs(tripId);
+      const status = await tripBookPdfService.getPdfStatus(tripId);
+      return res.json({
+        message: 'Trip Book PDFs regenerados com sucesso!',
+        status,
+      });
+    } catch (err: any) {
+      logger.error('Erro ao regenerar PDFs do Trip Book:', { error: err.message });
+      return res.status(500).json({ error: `Erro ao regenerar PDFs: ${err.message}` });
     }
   },
 };

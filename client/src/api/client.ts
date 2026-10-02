@@ -13,6 +13,7 @@ import {
   PexelsPhoto,
   UserInvitation,
   InviteDetails,
+  PdfStatusResponse,
 } from '../types/index.js';
 
 const API_BASE = '/api';
@@ -326,6 +327,43 @@ export const api = {
     getData: (tripId: string) => request<any>(`/trips/${tripId}/report/data`),
     getHtmlUrl: (tripId: string) => `/api/trips/${tripId}/report/html`,
     getPdfUrl: (tripId: string) => `/api/trips/${tripId}/report/pdf`,
+    getPdfStatus: (tripId: string) => request<PdfStatusResponse>(`/trips/${tripId}/report/pdf-status`),
+    regeneratePdf: (tripId: string) =>
+      request<{ message: string; status: PdfStatusResponse }>(`/trips/${tripId}/report/regenerate-pdf`, {
+        method: 'POST',
+      }),
+    downloadPdf: async (tripId: string, customFilename?: string): Promise<void> => {
+      const url = `${API_BASE}/trips/${tripId}/report/pdf`;
+      const response = await fetch(url, { credentials: 'include' });
+      if (!response.ok) {
+        let errorMsg = `Erro ${response.status}: ${response.statusText}`;
+        try {
+          const err = await response.json();
+          if (err.error) errorMsg = err.error;
+        } catch (e) {}
+        throw new Error(errorMsg);
+      }
+      const disposition = response.headers.get('content-disposition');
+      let filename = customFilename || 'TripBook.pdf';
+      if (!customFilename && disposition) {
+        const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (match && match[1]) {
+          filename = match[1].replace(/['"]/g, '');
+        }
+      }
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 1000);
+    },
     getShareStatus: (tripId: string) =>
       request<{ share_token: string | null; share_enabled: boolean; share_url: string }>(`/trips/${tripId}/share`),
     updateShare: (tripId: string, data: { enabled?: boolean; regenerate?: boolean }) =>

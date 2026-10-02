@@ -122,6 +122,8 @@ router.get('/pexels/search', requireAuth, pexelsController.search);
 router.get('/trips/:tripId/report/data', requireAuth, requireTripRole('VIEWER'), reportController.getReportData);
 router.get('/trips/:tripId/report/html', requireAuth, requireTripRole('VIEWER'), reportController.renderHtml);
 router.get('/trips/:tripId/report/pdf', requireAuth, requireTripRole('VIEWER'), reportController.exportPdf);
+router.get('/trips/:tripId/report/pdf-status', requireAuth, requireTripRole('VIEWER'), reportController.getPdfStatus);
+router.post('/trips/:tripId/report/regenerate-pdf', requireAuth, requireTripRole('EDITOR'), reportController.regeneratePdf);
 router.get('/trips/:tripId/share', requireAuth, requireTripRole('VIEWER'), reportController.getShareStatus);
 router.post('/trips/:tripId/share', requireAuth, requireTripRole('EDITOR'), reportController.updateShare);
 router.get('/public/tripbook/:shareToken/html', reportController.renderPublicSharedHtml);

@@ -13,8 +13,11 @@ import {
   Globe,
   ChevronDown,
   ChevronUp,
+  Zap,
+  CheckCircle2,
+  Clock,
 } from 'lucide-react';
-import { Trip } from '../types/index.js';
+import { Trip, PdfStatusResponse } from '../types/index.js';
 import { api } from '../api/client.js';
 
 interface ReportEditorViewProps {
@@ -24,6 +27,10 @@ interface ReportEditorViewProps {
 
 export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdit = true }) => {
   const [downloading, setDownloading] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState<PdfStatusResponse | null>(null);
+  const [loadingPdfStatus, setLoadingPdfStatus] = useState(false);
+  const [regeneratingPdf, setRegeneratingPdf] = useState(false);
   const [shareData, setShareData] = useState<{
     share_token: string | null;
     share_enabled: boolean;
@@ -56,8 +63,21 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
     }
   };
 
+  const loadPdfStatus = async () => {
+    try {
+      setLoadingPdfStatus(true);
+      const res = await api.reports.getPdfStatus(trip.id);
+      setPdfStatus(res);
+    } catch (err: any) {
+      console.error('Erro ao carregar status do PDF:', err);
+    } finally {
+      setLoadingPdfStatus(false);
+    }
+  };
+
   useEffect(() => {
     loadShareStatus();
+    loadPdfStatus();
   }, [trip.id]);
 
   const handleToggleShare = async () => {
@@ -68,6 +88,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
         enabled: !shareData.share_enabled,
       });
       setShareData(res);
+      loadPdfStatus();
     } catch (err: any) {
       alert(err.message || 'Erro ao alterar compartilhamento');
     } finally {
@@ -91,10 +112,23 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
       });
       setShareData(res);
       setCopySuccess(false);
+      loadPdfStatus();
     } catch (err: any) {
       alert(err.message || 'Erro ao gerar novo link');
     } finally {
       setLoadingShare(false);
+    }
+  };
+
+  const handleRegeneratePdf = async () => {
+    try {
+      setRegeneratingPdf(true);
+      const res = await api.reports.regeneratePdf(trip.id);
+      setPdfStatus(res.status);
+    } catch (err: any) {
+      alert(err.message || 'Erro ao regenerar PDFs do Trip Book');
+    } finally {
+      setRegeneratingPdf(false);
     }
   };
 
@@ -115,11 +149,15 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
 
   const handleDownloadPdf = async () => {
     setDownloading(true);
+    setDownloadSuccess(false);
     try {
-      const url = api.reports.getPdfUrl(trip.id);
-      window.open(url, '_blank');
+      const filename = `TripBook_${trip.title.replace(/[^a-zA-Z0-9]/g, '_')}_completo.pdf`;
+      await api.reports.downloadPdf(trip.id, filename);
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 3500);
+      loadPdfStatus();
     } catch (err: any) {
-      alert(err.message || 'Erro ao gerar PDF');
+      alert(err.message || 'Erro ao gerar/baixar PDF');
     } finally {
       setDownloading(false);
     }
@@ -139,6 +177,45 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
             Geração de dossiê completo de viagem formatado para papel A4 e web, integrando identidade visual, mapas diários, timeline, reservas de voos e hotéis.
           </p>
+
+          {/* Pre-generated PDF status pill */}
+          <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 flex-wrap">
+            {pdfStatus?.hasPreGenerated ? (
+              <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                <Zap className="w-3.5 h-3.5 text-emerald-600 fill-emerald-500" />
+                <span className="font-semibold">PDF Pré-gerado Pronto</span>
+                <span className="text-emerald-600">({pdfStatus.fullSizeFormatted || '10 MB'})</span>
+                {pdfStatus.fullGeneratedAt && (
+                  <span className="text-emerald-500 hidden sm:inline">
+                    • {new Date(pdfStatus.fullGeneratedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+              </div>
+            ) : pdfStatus?.isGenerating || regeneratingPdf ? (
+              <div className="flex items-center gap-1.5 text-xs text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200">
+                <RefreshCw className="w-3.5 h-3.5 text-sky-600 animate-spin" />
+                <span className="font-semibold">Gerando PDF em segundo plano...</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                <span>Aguardando geração do PDF</span>
+              </div>
+            )}
+
+            {canEdit && (
+              <button
+                type="button"
+                onClick={handleRegeneratePdf}
+                disabled={regeneratingPdf || downloading}
+                title="Forçar atualização e re-renderização dos arquivos PDF"
+                className="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`w-3 h-3 ${regeneratingPdf ? 'animate-spin' : ''}`} />
+                <span>{regeneratingPdf ? 'Regenerando...' : 'Regenerar PDF'}</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -171,10 +248,28 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
           <button
             onClick={handleDownloadPdf}
             disabled={downloading}
-            className="flex items-center gap-1.5 px-5 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-sm transition-colors"
+            className={`flex items-center gap-1.5 px-5 py-2 disabled:opacity-75 text-white rounded-xl text-xs font-semibold shadow-sm transition-all cursor-pointer ${
+              downloadSuccess
+                ? 'bg-emerald-600 hover:bg-emerald-700'
+                : 'bg-brand-600 hover:bg-brand-700'
+            }`}
           >
-            <Download className="w-4 h-4" />
-            {downloading ? 'Renderizando PDF...' : 'Baixar Trip Book em PDF (A4)'}
+            {downloading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Baixando PDF...</span>
+              </>
+            ) : downloadSuccess ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-white" />
+                <span>Download Concluído!</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                <span>Baixar Trip Book em PDF (A4)</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -259,6 +354,24 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
                     </button>
                   )}
                 </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Zap className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>
+                    <strong>Versão PDF Anonimizada:</strong> Pronta para download público imediato ({pdfStatus?.anonSizeFormatted || 'otimizada'}).
+                  </span>
+                </div>
+                <a
+                  href={`${shareData.share_url}/pdf`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 font-medium text-emerald-700 hover:text-emerald-800 hover:underline flex-shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Testar Download do PDF</span>
+                </a>
               </div>
 
             </div>

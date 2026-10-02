@@ -1,0 +1,8 @@
+-- Migration 016: Add columns for pre-generated TripBook PDFs
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_full_path VARCHAR(255);
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_full_generated_at TIMESTAMPTZ;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_full_size_bytes BIGINT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_anon_path VARCHAR(255);
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_anon_generated_at TIMESTAMPTZ;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_anon_size_bytes BIGINT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pdf_needs_generation BOOLEAN NOT NULL DEFAULT TRUE;

@@ -4,6 +4,7 @@ import { openaiService } from '../services/openaiService.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 import { reorderTripDaysChronologically } from './itineraryController.js';
+import { tripBookPdfService } from '../services/tripBookPdfService.js';
 
 export const aiController = {
   // 1. Generate Narrative for a Day
@@ -33,6 +34,8 @@ export const aiController = {
 
       // Save generated narrative to the day
       await query('UPDATE trip_days SET narrative = $1, updated_at = NOW() WHERE id = $2', [result.narrative, dayId]);
+
+      tripBookPdfService.queuePreGeneration(tripId);
 
       return res.json({
         narrative: result.narrative,

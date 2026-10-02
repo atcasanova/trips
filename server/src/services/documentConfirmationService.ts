@@ -2,6 +2,7 @@ import { query } from '../db/pool.js';
 import { openaiService } from './openaiService.js';
 import { refreshItineraryLocations } from './itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
+import { tripBookPdfService } from './tripBookPdfService.js';
 import {
   areFlightsMatching,
   areHotelsMatching,
@@ -841,6 +842,9 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
      VALUES ($1, $2, 'AI_EXTRACTION_CONFIRMED', 'DOCUMENT', $3, $4)`,
     [userId || null, tripId, documentId, JSON.stringify({ confirmedType })]
   );
+
+  // Queue pre-generation of TripBook PDFs
+  tripBookPdfService.queuePreGeneration(tripId);
 }
 
 async function upsertDocumentExpense(params: {
