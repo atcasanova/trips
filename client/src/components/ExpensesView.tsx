@@ -359,22 +359,51 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     return data.settlementsByCurrency[activeSettlementCurrency] || [];
   }, [data, activeSettlementCurrency]);
 
-  // Chart category breakdown
+  // Chart category breakdown: shows personal expenses + split quotas for each traveler
   const chartCategoryData = useMemo(() => {
-    if (!data?.categoryBreakdown) return [];
-    const currData = data.categoryBreakdown[activeSettlementCurrency];
-    if (!currData) return [];
+    if (!data?.expenses) return [];
 
     let categoryMap: Record<string, number> = {};
-    if (chartTravelerId === 'ALL') {
-      categoryMap = currData.total || {};
-    } else {
-      categoryMap = currData.byTraveler[chartTravelerId] || {};
+
+    for (const exp of data.expenses) {
+      if ((exp.currency || 'BRL') !== activeSettlementCurrency) continue;
+      const cat = exp.category || 'OTHER';
+      const amt = parseFloat(String(exp.amount)) || 0;
+
+      if (chartTravelerId === 'ALL') {
+        categoryMap[cat] = (categoryMap[cat] || 0) + amt;
+      } else {
+        if (!exp.is_shared) {
+          // Despesa pessoal: pertence a este viajante selecionado?
+          const targetTraveler = data.travelers.find((t) => t.id === chartTravelerId);
+          const isThisTraveler =
+            exp.paid_by_traveler_id === chartTravelerId ||
+            exp.traveler_id === chartTravelerId ||
+            (targetTraveler?.user_id && exp.paid_by_user_id === targetTraveler.user_id);
+          if (isThisTraveler) {
+            categoryMap[cat] = (categoryMap[cat] || 0) + amt;
+          }
+        } else {
+          // Despesa compartilhada: cota discriminada deste viajante
+          if (exp.splits && exp.splits.length > 0) {
+            const split = exp.splits.find((s) => s.traveler_id === chartTravelerId);
+            if (split) {
+              const splitAmt = parseFloat(String(split.amount)) || 0;
+              categoryMap[cat] = (categoryMap[cat] || 0) + splitAmt;
+            }
+          } else {
+            // Rateio igualitário padrão entre todos os membros
+            const numTravelers = data.travelers.length || 1;
+            categoryMap[cat] = (categoryMap[cat] || 0) + amt / numTravelers;
+          }
+        }
+      }
     }
 
     const total = Object.values(categoryMap).reduce((acc, val) => acc + val, 0);
 
     return Object.entries(categoryMap)
+      .filter(([_, val]) => val > 0.001)
       .map(([catKey, val]) => {
         const conf = CATEGORY_CONFIG[catKey] || CATEGORY_CONFIG.OTHER;
         const pct = total > 0 ? (val / total) * 100 : 0;

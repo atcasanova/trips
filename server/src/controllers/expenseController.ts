@@ -171,7 +171,7 @@ export const expenseController = {
         const cat = exp.category || 'OTHER';
         categoryBreakdown[curr].total[cat] = (categoryBreakdown[curr].total[cat] || 0) + amt;
 
-        // Traveler category breakdown
+        // Determine payer of the transaction
         let payerId = exp.paid_by_traveler_id || exp.traveler_id;
         if (!payerId && exp.paid_by_user_id) {
           const userTr = travelers.find((t) => t.user_id === exp.paid_by_user_id);
@@ -181,12 +181,41 @@ export const expenseController = {
           payerId = defaultOwner.id;
         }
 
-        if (payerId) {
-          if (!categoryBreakdown[curr].byTraveler[payerId]) {
-            categoryBreakdown[curr].byTraveler[payerId] = {};
+        // Traveler category breakdown: personal expenses belong to the payer/owner,
+        // while shared expenses are distributed among travelers according to their splits/quotas
+        if (!exp.is_shared) {
+
+          if (payerId) {
+            if (!categoryBreakdown[curr].byTraveler[payerId]) {
+              categoryBreakdown[curr].byTraveler[payerId] = {};
+            }
+            categoryBreakdown[curr].byTraveler[payerId][cat] =
+              (categoryBreakdown[curr].byTraveler[payerId][cat] || 0) + amt;
           }
-          categoryBreakdown[curr].byTraveler[payerId][cat] =
-            (categoryBreakdown[curr].byTraveler[payerId][cat] || 0) + amt;
+        } else {
+          if (exp.splits && exp.splits.length > 0) {
+            for (const sp of exp.splits) {
+              const spAmt = parseFloat(sp.amount) || 0;
+              const spTravelerId = sp.traveler_id;
+              if (spTravelerId) {
+                if (!categoryBreakdown[curr].byTraveler[spTravelerId]) {
+                  categoryBreakdown[curr].byTraveler[spTravelerId] = {};
+                }
+                categoryBreakdown[curr].byTraveler[spTravelerId][cat] =
+                  (categoryBreakdown[curr].byTraveler[spTravelerId][cat] || 0) + spAmt;
+              }
+            }
+          } else {
+            const numTravelers = travelers.length || 1;
+            const equalShare = amt / numTravelers;
+            for (const t of travelers) {
+              if (!categoryBreakdown[curr].byTraveler[t.id]) {
+                categoryBreakdown[curr].byTraveler[t.id] = {};
+              }
+              categoryBreakdown[curr].byTraveler[t.id][cat] =
+                (categoryBreakdown[curr].byTraveler[t.id][cat] || 0) + equalShare;
+            }
+          }
         }
 
         // Initialize balances for currency
