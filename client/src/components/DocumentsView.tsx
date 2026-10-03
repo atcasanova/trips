@@ -24,6 +24,7 @@ import {
 import { DocumentItem, TripTraveler } from '../types/index.js';
 import { api } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.js';
+import { formatDateBr } from '../utils/date.js';
 
 interface DocumentsViewProps {
   tripId: string;
@@ -31,6 +32,242 @@ interface DocumentsViewProps {
   onRefresh: () => void;
   canEdit: boolean;
 }
+
+const formatCurrencyValue = (amount?: number | string | null, currency?: string | null): string | null => {
+  if (amount === undefined || amount === null || amount === '') return null;
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount));
+  if (isNaN(num)) return null;
+  const curr = (currency || 'BRL').toUpperCase();
+  const formattedNum = curr === 'JPY'
+    ? Math.round(num).toLocaleString('pt-BR')
+    : num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  if (curr === 'BRL') return `R$ ${formattedNum}`;
+  if (curr === 'USD') return `US$ ${formattedNum}`;
+  if (curr === 'EUR') return `€ ${formattedNum}`;
+  if (curr === 'JPY') return `¥ ${formattedNum}`;
+  return `${curr} ${formattedNum}`;
+};
+
+const getExtractedSummary = (doc: DocumentItem): { text: string; icon: React.ReactNode } | null => {
+  if (!doc.extraction) return null;
+
+  const type = doc.extraction.detected_type || '';
+  const data = doc.extraction.normalized_data || doc.extraction.raw_extraction?.data || doc.extraction.raw_extraction || {};
+  const raw = doc.extraction.raw_extraction || {};
+
+  // 1. HOTEL RESERVATION
+  if (type === 'hotel_reservation') {
+    const rawName = data.hotelName || data.hotel_name || data.accommodationName || 'hotel';
+    const hotelPrefix = /^hotel\b/i.test(rawName) ? 'no ' : 'no hotel ';
+
+    // Calculate number of guests
+    let peopleCount = 1;
+    if (Array.isArray(data.guests) && data.guests.length > 0) {
+      peopleCount = data.guests.length;
+    } else if (data.guestNames && typeof data.guestNames === 'string') {
+      const parts = data.guestNames.split(',').filter(Boolean);
+      if (parts.length > 0) peopleCount = parts.length;
+    } else if (data.guestsCount || data.numberOfGuests || data.adults) {
+      peopleCount = Number(data.guestsCount || data.numberOfGuests || data.adults) || 1;
+    }
+    const peopleStr = peopleCount === 1 ? 'para 1 pessoa' : `para ${peopleCount} pessoas`;
+
+    // Dates
+    const checkIn = formatDateBr(data.checkInDate || data.check_in_date);
+    const checkOut = formatDateBr(data.checkOutDate || data.check_out_date);
+    let dateStr = '';
+    if (checkIn && checkOut) {
+      dateStr = `de ${checkIn} a ${checkOut}`;
+    } else if (checkIn) {
+      dateStr = `a partir de ${checkIn}`;
+    } else if (checkOut) {
+      dateStr = `até ${checkOut}`;
+    }
+
+    const valueStr = formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency);
+
+    const parts = [
+      `Reserva ${hotelPrefix}${rawName} ${peopleStr}`,
+      dateStr,
+      valueStr,
+    ].filter(Boolean);
+
+    return {
+      text: parts.join(', '),
+      icon: <Building className="w-3.5 h-3.5 text-purple-600 shrink-0" />,
+    };
+  }
+
+  // 2. FLIGHT RESERVATION
+  if (type === 'flight_reservation') {
+    const airline = data.airline || data.airline_name || '';
+    const pnr = data.reservationCode || data.bookingReference || data.pnr || '';
+
+    // Passengers
+    let pCount = 1;
+    if (Array.isArray(data.passengers) && data.passengers.length > 0) {
+      pCount = data.passengers.length;
+    } else if (data.passengersCount) {
+      pCount = Number(data.passengersCount) || 1;
+    }
+    const peopleStr = pCount === 1 ? 'para 1 pessoa' : `para ${pCount} pessoas`;
+
+    // Segments
+    const segments = Array.isArray(data.segments) ? data.segments : [];
+    let origin = '';
+    let destination = '';
+    let dateStr = '';
+    let tripKind = '';
+
+    if (segments.length > 0) {
+      const seg0 = segments[0];
+      const segLast = segments[segments.length - 1];
+      origin = seg0.departureCity || seg0.departureAirport || '';
+      const lastArr = segLast.arrivalCity || segLast.arrivalAirport || '';
+
+      const isRoundTrip = segments.length > 1 && origin.toLowerCase() === lastArr.toLowerCase();
+      if (isRoundTrip) {
+        tripKind = '(Ida e Volta) ';
+        const intermediate = segments
+          .map((s: any) => s.arrivalCity || s.arrivalAirport)
+          .filter((c: any) => c && String(c).toLowerCase() !== origin.toLowerCase());
+        destination = intermediate.length > 0
+          ? intermediate[Math.floor((intermediate.length - 1) / 2)]
+          : lastArr;
+      } else {
+        destination = lastArr;
+      }
+
+      const depDate = formatDateBr(seg0.departureDate);
+      const lastArrDate = formatDateBr(segLast.arrivalDate || segLast.departureDate);
+
+      if (depDate && lastArrDate && depDate !== lastArrDate) {
+        dateStr = `de ${depDate} a ${lastArrDate}`;
+      } else if (depDate) {
+        dateStr = `em ${depDate}`;
+      }
+    } else {
+      const depDate = formatDateBr(data.departureDate);
+      if (depDate) dateStr = `em ${depDate}`;
+    }
+
+    const valueStr = formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency);
+    const routeStr = origin && destination ? ` de ${origin} a ${destination}` : '';
+    const airlineStr = airline ? ` ${airline}` : '';
+    const pnrStr = pnr ? ` (${pnr})` : '';
+
+    const parts = [
+      `Voo ${tripKind}${airlineStr}${routeStr} ${peopleStr}`.replace(/\s+/g, ' ').trim(),
+      dateStr,
+      valueStr,
+    ].filter(Boolean);
+
+    return {
+      text: `${parts.join(', ')}${pnrStr}`,
+      icon: <Plane className="w-3.5 h-3.5 text-blue-600 shrink-0" />,
+    };
+  }
+
+  // 3. ACTIVITY TICKET
+  if (type === 'activity_ticket') {
+    const rawTitle = data.title || data.activityName || 'Evento';
+    const cleanTitle = rawTitle.replace(/^[🎸⚽🎪🎭🎟️🏎️🏀🎾🍿\s]+/, '').replace(/^Show:\s*/i, '').trim();
+    const venue = data.venueName || data.venue || '';
+
+    let pCount = 1;
+    if (Array.isArray(data.attendees) && data.attendees.length > 0) {
+      pCount = data.attendees.length;
+    } else if (data.ticketsCount) {
+      pCount = Number(data.ticketsCount) || 1;
+    } else if (data.notes && typeof data.notes === 'string') {
+      const match = data.notes.match(/(\d+)\s+ingressos?/i);
+      if (match) pCount = parseInt(match[1], 10);
+    }
+    const peopleStr = pCount === 1 ? 'para 1 pessoa' : `para ${pCount} pessoas`;
+
+    const eventDate = formatDateBr(data.eventDate || data.date);
+    const startTime = data.startTime ? ` às ${data.startTime}` : '';
+    const dateStr = eventDate ? `em ${eventDate}${startTime}` : '';
+
+    const valueStr = formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency);
+
+    let venuePrep = 'em ';
+    if (/^(arena|sala|praça|fundação|pista)\b/i.test(venue)) venuePrep = 'na ';
+    else if (/^(estádio|teatro|parque|museu|autódromo|ginásio|espaço|clube)\b/i.test(venue)) venuePrep = 'no ';
+    const venueStr = venue ? ` ${venuePrep}${venue}` : '';
+
+    const parts = [
+      `Ingresso para ${cleanTitle}${venueStr} ${peopleStr}`,
+      dateStr,
+      valueStr,
+    ].filter(Boolean);
+
+    return {
+      text: parts.join(', '),
+      icon: <Ticket className="w-3.5 h-3.5 text-emerald-600 shrink-0" />,
+    };
+  }
+
+  // 4. OTHER TRANSPORT
+  if (type === 'transport_other') {
+    const transportType = data.transportType || 'Transporte';
+    const origin = data.departureCity || data.departureStation || '';
+    const destination = data.arrivalCity || data.arrivalStation || '';
+    const routeStr = origin && destination ? ` de ${origin} a ${destination}` : '';
+
+    let pCount = 1;
+    if (Array.isArray(data.passengers) && data.passengers.length > 0) {
+      pCount = data.passengers.length;
+    }
+    const peopleStr = pCount === 1 ? 'para 1 pessoa' : `para ${pCount} pessoas`;
+
+    const depDate = formatDateBr(data.departureDate || data.date);
+    const depTime = data.departureTime ? ` às ${data.departureTime}` : '';
+    const dateStr = depDate ? `em ${depDate}${depTime}` : '';
+
+    const valueStr = formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency);
+
+    const parts = [
+      `${transportType}${routeStr} ${peopleStr}`,
+      dateStr,
+      valueStr,
+    ].filter(Boolean);
+
+    return {
+      text: parts.join(', '),
+      icon: <Plane className="w-3.5 h-3.5 text-indigo-600 shrink-0" />,
+    };
+  }
+
+  // 5. EXPENSE RECEIPT
+  if (type === 'expense_receipt') {
+    const merchant = data.merchantName || data.merchant || 'Comprovante';
+    const dateStr = formatDateBr(data.date) ? `em ${formatDateBr(data.date)}` : '';
+    const valueStr = formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency);
+
+    const parts = [
+      `Recibo em ${merchant}`,
+      dateStr,
+      valueStr,
+    ].filter(Boolean);
+
+    return {
+      text: parts.join(', '),
+      icon: <Receipt className="w-3.5 h-3.5 text-amber-600 shrink-0" />,
+    };
+  }
+
+  // 6. FALLBACK / OTHER
+  if (raw.summary && typeof raw.summary === 'string' && raw.summary.length > 5) {
+    return {
+      text: raw.summary,
+      icon: <Sparkles className="w-3.5 h-3.5 text-slate-500 shrink-0" />,
+    };
+  }
+
+  return null;
+};
 
 export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents, onRefresh, canEdit }) => {
   const { user: currentUser } = useAuth();
@@ -468,6 +705,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
             {documents.map((doc) => {
               const hasExtraction = Boolean(doc.extraction);
               const isConfirmed = doc.extraction?.status === 'CONFIRMED';
+              const summary = getExtractedSummary(doc);
 
               return (
                 <div
@@ -511,10 +749,25 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                     </div>
 
                     {/* AI summary snippet */}
-                    {doc.extraction?.raw_extraction?.summary && (
+                    {doc.extraction?.raw_extraction?.summary &&
+                      doc.extraction.raw_extraction.summary !== summary?.text && (
                       <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg my-2 line-clamp-2">
                         {doc.extraction.raw_extraction.summary}
                       </p>
+                    )}
+
+                    {/* Resumo estruturado das informações extraídas */}
+                    {summary && (
+                      <div className="mt-2.5 p-2.5 rounded-xl bg-purple-50/70 border border-purple-100/90 text-slate-800 text-xs flex items-start gap-2 shadow-2xs">
+                        <span className="p-1 rounded-lg bg-white border border-purple-200 shrink-0 mt-0.5 shadow-2xs">
+                          {summary.icon}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-slate-900 leading-snug">
+                            {summary.text}
+                          </p>
+                        </div>
+                      </div>
                     )}
                   </div>
 
