@@ -72,6 +72,8 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
     };
   }, []);
 
+  const prevCoordsKeyRef = useRef<string>('');
+
   useEffect(() => {
     const map = mapRef.current;
     const markerLayer = markerLayerRef.current;
@@ -80,12 +82,17 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
     markerLayer.clearLayers();
 
     if (points.length === 0) {
-      map.setView(initialView, 2, { animate: false });
-      requestAnimationFrame(() => map.invalidateSize());
+      if (prevCoordsKeyRef.current !== '') {
+        prevCoordsKeyRef.current = '';
+        map.setView(initialView, 2, { animate: false });
+        requestAnimationFrame(() => map.invalidateSize());
+      }
       return;
     }
 
-    const bounds = L.latLngBounds(points.map((point) => [point.latitude, point.longitude] as L.LatLngTuple));
+    const currentCoordsKey = points
+      .map((p) => `${p.number}:${p.latitude.toFixed(5)},${p.longitude.toFixed(5)}`)
+      .join(';');
 
     for (const point of points) {
       const tooltipContent = document.createElement('span');
@@ -96,11 +103,17 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
       marker.addTo(markerLayer);
     }
 
-    if (points.length === 1) {
-      map.setView(bounds.getCenter(), 14, { animate: false });
-    } else {
-      map.fitBounds(bounds.pad(0.18), { maxZoom: 14, animate: false });
+    // Only refit bounds if coordinates/points structure actually changed
+    if (prevCoordsKeyRef.current !== currentCoordsKey) {
+      prevCoordsKeyRef.current = currentCoordsKey;
+      const bounds = L.latLngBounds(points.map((point) => [point.latitude, point.longitude] as L.LatLngTuple));
+      if (points.length === 1) {
+        map.setView(bounds.getCenter(), 14, { animate: false });
+      } else {
+        map.fitBounds(bounds.pad(0.18), { maxZoom: 14, animate: false });
+      }
     }
+
     requestAnimationFrame(() => map.invalidateSize());
   }, [points, onPointSelect]);
 

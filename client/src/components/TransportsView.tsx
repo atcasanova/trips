@@ -11,6 +11,12 @@ interface TransportsViewProps {
 }
 
 export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transports, onRefresh, canEdit }) => {
+  const [localTransports, setLocalTransports] = useState<TransportReservation[]>(transports);
+
+  React.useEffect(() => {
+    setLocalTransports(transports);
+  }, [transports]);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [type, setType] = useState('FLIGHT');
   const [provider, setProvider] = useState('');
@@ -64,10 +70,13 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Excluir esta reserva de transporte?')) return;
+    const prev = localTransports;
+    setLocalTransports((current) => current.filter((t) => t.id !== id));
     try {
       await api.reservations.deleteTransport(tripId, id);
       onRefresh();
     } catch (err: any) {
+      setLocalTransports(prev);
       alert(err.message || 'Erro ao excluir transporte');
     }
   };
@@ -104,13 +113,13 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
         )}
       </div>
 
-      {transports.length === 0 ? (
+      {localTransports.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-xs">
           Nenhuma reserva de voo ou transporte cadastrada. Envie um PDF de passagem na aba Documentos para extrair automaticamente com IA!
         </div>
       ) : (
         <div className="space-y-4">
-          {transports
+          {localTransports
             .filter((tr) => {
               if (tr.segments && tr.segments.length > 0) return true;
               if (tr.booking_code) {

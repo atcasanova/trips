@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Upload,
   FileText,
@@ -285,6 +285,12 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   canEdit,
 }) => {
   const { user: currentUser } = useAuth();
+  const [localDocuments, setLocalDocuments] = useState<DocumentItem[]>(documents);
+
+  useEffect(() => {
+    setLocalDocuments(documents);
+  }, [documents]);
+
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
@@ -660,11 +666,14 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
   const handleDelete = async (docId: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este documento?')) return;
+    const prev = localDocuments;
+    setLocalDocuments((current) => current.filter((d) => d.id !== docId));
     try {
       await api.documents.delete(tripId, docId);
       if (selectedDoc?.id === docId) setSelectedDoc(null);
       onRefresh();
     } catch (err: any) {
+      setLocalDocuments(prev);
       alert(err.message || 'Erro ao excluir documento');
     }
   };
@@ -791,16 +800,16 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       <div>
         <h3 className="text-base font-bold text-slate-900 mb-3 flex items-center gap-2">
           <FileText className="w-4 h-4 text-brand-600" />
-          Documentos Armazenados ({documents.length})
+          Documentos Armazenados ({localDocuments.length})
         </h3>
 
-        {documents.length === 0 ? (
+        {localDocuments.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 text-xs">
             Nenhum documento anexado a esta viagem até o momento.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {documents.map((doc) => {
+            {localDocuments.map((doc) => {
               const hasExtraction = Boolean(doc.extraction);
               const isConfirmed = doc.extraction?.status === 'CONFIRMED';
               const summary = getExtractedSummary(doc);

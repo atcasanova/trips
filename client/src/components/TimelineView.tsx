@@ -554,20 +554,61 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   const handleLocationConfirmation = async (item: ItineraryItem) => {
     const confirmed = !item.location_confirmed_at;
+    const newConfirmedAt = confirmed ? new Date().toISOString() : null;
+
+    // 1. Instant optimistic update in localDays
+    setLocalDays((prevDays) =>
+      prevDays.map((d) => ({
+        ...d,
+        items: (d.items || []).map((it) =>
+          it.id === item.id ? { ...it, location_confirmed_at: newConfirmedAt } : it
+        ),
+      }))
+    );
+
     try {
       await api.days.setLocationConfirmation(trip.id, item.id, confirmed);
       onRefresh();
     } catch (err: any) {
+      // Revert on error
+      setLocalDays((prevDays) =>
+        prevDays.map((d) => ({
+          ...d,
+          items: (d.items || []).map((it) =>
+            it.id === item.id ? { ...it, location_confirmed_at: item.location_confirmed_at } : it
+          ),
+        }))
+      );
       alert(err.message || 'Não foi possível alterar a confirmação deste ponto.');
     }
   };
 
   const handleMapMode = async (item: ItineraryItem) => {
     const mapMode = item.map_mode === 'SKIP' ? 'AUTO' : 'SKIP';
+
+    // 1. Instant optimistic update in localDays
+    setLocalDays((prevDays) =>
+      prevDays.map((d) => ({
+        ...d,
+        items: (d.items || []).map((it) =>
+          it.id === item.id ? { ...it, map_mode: mapMode } : it
+        ),
+      }))
+    );
+
     try {
       await api.days.setMapMode(trip.id, item.id, mapMode);
       onRefresh();
     } catch (err: any) {
+      // Revert on error
+      setLocalDays((prevDays) =>
+        prevDays.map((d) => ({
+          ...d,
+          items: (d.items || []).map((it) =>
+            it.id === item.id ? { ...it, map_mode: item.map_mode } : it
+          ),
+        }))
+      );
       alert(err.message || 'Não foi possível alterar a visibilidade deste item no mapa.');
     }
   };
@@ -647,10 +688,13 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   // Delete Day
   const handleDeleteDay = async (dayId: string) => {
     if (!window.confirm('Tem certeza que deseja remover este dia do roteiro?')) return;
+    const prevDays = localDays;
+    setLocalDays((current) => current.filter((d) => d.id !== dayId));
     try {
       await api.days.delete(trip.id, dayId);
       onRefresh();
     } catch (err: any) {
+      setLocalDays(prevDays);
       alert(err.message || 'Erro ao remover dia');
     }
   };
@@ -731,10 +775,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   // Delete Item
   const handleDeleteItem = async (dayId: string, itemId: string) => {
     if (!window.confirm('Deseja remover esta atividade?')) return;
+    const prevDays = localDays;
+    setLocalDays((current) =>
+      current.map((d) => (d.id === dayId ? { ...d, items: (d.items || []).filter((i) => i.id !== itemId) } : d))
+    );
     try {
       await api.days.deleteItem(trip.id, dayId, itemId);
       onRefresh();
     } catch (err: any) {
+      setLocalDays(prevDays);
       alert(err.message || 'Erro ao remover item');
     }
   };
@@ -1542,9 +1591,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     </button>
                                   )}
                                   {item.location_confirmed_at && (
-                                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200" title="Localização confirmada">
+                                    <button
+                                      type="button"
+                                      disabled={!canEdit}
+                                      onClick={() => canEdit && handleLocationConfirmation(item)}
+                                      className={`inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 transition-colors ${canEdit ? 'hover:bg-emerald-100 cursor-pointer' : ''}`}
+                                      title={canEdit ? 'Localização confirmada (clique para alternar)' : 'Localização confirmada'}
+                                    >
                                       <CheckCircle className="h-3 w-3 text-emerald-600" /> Confirmado
-                                    </span>
+                                    </button>
                                   )}
                                   {item.location_kind === 'AREA' && (
                                     <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200" title={item.location_anchor_name ? `Âncora no mapa: ${item.location_anchor_name}` : 'Área visitável'}>

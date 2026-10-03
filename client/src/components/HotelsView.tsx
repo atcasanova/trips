@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building,
   Plus,
@@ -47,6 +47,12 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
   const [customModalGuest, setCustomModalGuest] = useState('');
 
   // Inline guest picker state per hotel card
+  const [localHotels, setLocalHotels] = useState<HotelReservation[]>(hotels);
+
+  useEffect(() => {
+    setLocalHotels(hotels);
+  }, [hotels]);
+
   const [activeAddGuestHotelId, setActiveAddGuestHotelId] = useState<string | null>(null);
   const [customGuestInput, setCustomGuestInput] = useState('');
   const [updatingHotelId, setUpdatingHotelId] = useState<string | null>(null);
@@ -62,17 +68,25 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
   };
 
   const handleUpdateGuests = async (hotelId: string, updatedList: string[]) => {
+    const newGuestNames = updatedList.join(', ');
+    const prevHotels = localHotels;
+
+    // 1. Instant optimistic update
+    setLocalHotels((prev) =>
+      prev.map((h) => (h.id === hotelId ? { ...h, guest_names: newGuestNames } : h))
+    );
+
     try {
       setUpdatingHotelId(hotelId);
-      const newGuestNames = updatedList.join(', ');
       await api.reservations.updateHotel(tripId, hotelId, {
         guest_names: newGuestNames,
       });
 
-      setStatusMessage({ hotelId, text: 'Hóspedes atualizados com sucesso!' });
+      setStatusMessage({ hotelId, text: 'Hóspedes atualizados!' });
       setTimeout(() => setStatusMessage(null), 3000);
       onRefresh();
     } catch (err: any) {
+      setLocalHotels(prevHotels);
       alert(err.message || 'Erro ao atualizar hóspedes da reserva');
     } finally {
       setUpdatingHotelId(null);
@@ -131,10 +145,13 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Excluir esta hospedagem?')) return;
+    const prevHotels = localHotels;
+    setLocalHotels((prev) => prev.filter((h) => h.id !== id));
     try {
       await api.reservations.deleteHotel(tripId, id);
       onRefresh();
     } catch (err: any) {
+      setLocalHotels(prevHotels);
       alert(err.message || 'Erro ao excluir hotel');
     }
   };
@@ -156,13 +173,13 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
         )}
       </div>
 
-      {hotels.length === 0 ? (
+      {localHotels.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-xs">
           Nenhuma hospedagem cadastrada nesta viagem. Você pode enviar a confirmação de reserva na aba Documentos para preenchimento automático por IA!
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {hotels.map((h) => {
+          {localHotels.map((h) => {
             const guestList = parseGuests(h.guest_names);
             const isAddingGuest = activeAddGuestHotelId === h.id;
             const isUpdating = updatingHotelId === h.id;

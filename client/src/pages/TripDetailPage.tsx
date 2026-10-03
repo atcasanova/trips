@@ -100,25 +100,8 @@ export const TripDetailPage: React.FC = () => {
   const handleTabChange = (newTab: TabType) => {
     setActiveTab(newTab);
     navigate(`/trips/${tripId}/${newTab}`, { replace: false });
-    // Fresh background sync on tab switch to avoid desync
-    if (tripId) {
-      Promise.all([
-        api.trips.get(tripId).catch(() => null),
-        api.reservations.listHotels(tripId).catch(() => null),
-        api.reservations.listTransports(tripId).catch(() => null),
-        api.documents.list(tripId).catch(() => null),
-        api.trips.listTravelers(tripId).catch(() => null),
-      ]).then(([tRes, hRes, trRes, dRes, tvRes]) => {
-        if (tRes?.trip) {
-          setTrip(tRes.trip);
-          setMembers(tRes.trip.members || []);
-        }
-        if (hRes?.hotels) setHotels(hRes.hotels);
-        if (trRes?.transports) setTransports(trRes.transports);
-        if (dRes?.documents) setDocuments(dRes.documents);
-        if (tvRes?.travelers) setTravelers(tvRes.travelers);
-      });
-    }
+    // Fresh silent background sync on tab switch
+    loadAllTripData({ silent: true });
   };
 
   const handleCopyTabLink = () => {
@@ -128,10 +111,13 @@ export const TripDetailPage: React.FC = () => {
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
-  const loadAllTripData = async () => {
+  const loadAllTripData = async (options?: { silent?: boolean }) => {
     if (!tripId) return;
+    const isInitial = !trip;
     try {
-      setLoading(true);
+      if (isInitial && !options?.silent) {
+        setLoading(true);
+      }
       const [tripRes, daysRes, transRes, hotelsRes, docsRes, expRes, travelersRes] = await Promise.all([
         api.trips.get(tripId),
         api.days.list(tripId),
@@ -151,10 +137,14 @@ export const TripDetailPage: React.FC = () => {
       setDocuments(docsRes.documents || []);
       if (expRes) setExpensesData(expRes);
     } catch (err: any) {
-      console.error(err);
-      navigate('/');
+      console.error('Erro ao sincronizar dados da viagem:', err);
+      if (isInitial) {
+        navigate('/');
+      }
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   };
 
