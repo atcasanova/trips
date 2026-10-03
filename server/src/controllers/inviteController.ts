@@ -271,9 +271,16 @@ export const inviteController = {
         // Vincula ou atualiza viajante na viagem, evitando duplicidade
         const { rows: existingTravelers } = await query(
           `SELECT id, user_id, display_name FROM trip_travelers
-           WHERE trip_id = $1 AND (user_id = $2 OR (email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(TRIM($3))))
+           WHERE trip_id = $1 AND (
+             user_id = $2 
+             OR (email IS NOT NULL AND LOWER(TRIM(email)) = LOWER(TRIM($3)))
+             OR (user_id IS NULL AND (
+               LOWER(TRIM(display_name)) = LOWER(TRIM($4))
+               OR LOWER(TRIM(ticket_name)) = LOWER(TRIM($4))
+             ))
+           )
            ORDER BY (user_id IS NOT NULL) DESC, created_at ASC`,
-          [invite.trip_id, user.id, user.email]
+          [invite.trip_id, user.id, user.email, user.name]
         );
 
         if (existingTravelers.length > 0) {
