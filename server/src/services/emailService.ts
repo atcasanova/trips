@@ -182,6 +182,11 @@ export const emailService = {
         from: env.MAIL_FROM,
         to: params.to,
         subject,
+        headers: {
+          'Auto-Submitted': 'auto-generated',
+          'X-Auto-Response-Suppress': 'All',
+          'Precedence': 'bulk',
+        },
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
@@ -236,6 +241,11 @@ export const emailService = {
         from: env.MAIL_FROM,
         to,
         subject: 'Trips — E-mail não associado a uma conta ativa',
+        headers: {
+          'Auto-Submitted': 'auto-generated',
+          'X-Auto-Response-Suppress': 'All',
+          'Precedence': 'bulk',
+        },
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">
             <h2 style="color: #b94a5d; margin-top: 0;">Recebemos sua mensagem!</h2>
@@ -275,6 +285,11 @@ export const emailService = {
         from: env.MAIL_FROM,
         to: params.to,
         subject: `⚠️ Documento não identificado: ${subjectClean}`,
+        headers: {
+          'Auto-Submitted': 'auto-generated',
+          'X-Auto-Response-Suppress': 'All',
+          'Precedence': 'bulk',
+        },
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">

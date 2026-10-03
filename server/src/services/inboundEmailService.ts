@@ -71,6 +71,15 @@ export const inboundEmailService = {
       hasText: Boolean(parsed.text),
     });
 
+    // 0. Filter Out Automated Emails & Bounces (Loop Prevention)
+    if (this.isBounceOrAutomatedEmail(parsed, fromAddress, subject)) {
+      logger.warn('Inbound email descartado silenciosamente: detectado e-mail automático, bounce ou notificação de entrega (DSN)', {
+        from: fromAddress,
+        subject,
+      });
+      return { success: false, reason: 'automated_or_bounce_email_ignored' };
+    }
+
     // 1. Identify User (Filter 1 - Sender)
     const user = await this.resolveSenderUser(parsed, fromAddress);
 
@@ -304,11 +313,23 @@ export const inboundEmailService = {
       }
     }
 
-    // Search body text for forwarded user patterns (e.g. "De: Fulano <fulano@email.com>")
-    const bodyText = (parsed.text || '') + (parsed.html || '');
-    const emailMatches = bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
-    if (emailMatches && emailMatches.length > 0) {
-      const candidates = Array.from(new Set(emailMatches.map((e) => e.toLowerCase()))).slice(0, 10);
+    // Search body text strictly for forwarded user header patterns (e.g. "De: Fulano <fulano@email.com>" or "From: Fulano <fulano@email.com>")
+    const bodyText = (parsed.text || '') + '\n' + (parsed.html || '');
+    const forwardRegexes = [
+      /(?:de|from|remetente|enviado por):\s*[^<\r\n]*<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>/gi,
+      /(?:de|from|remetente|enviado por):\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi,
+    ];
+
+    const forwardMatches: string[] = [];
+    for (const regex of forwardRegexes) {
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(bodyText)) !== null) {
+        if (m[1]) forwardMatches.push(m[1].toLowerCase().trim());
+      }
+    }
+
+    if (forwardMatches.length > 0) {
+      const candidates = Array.from(new Set(forwardMatches)).slice(0, 5);
       const { rows } = await query(
         `SELECT id, name, email FROM users WHERE LOWER(email) = ANY($1) AND status = 'ACTIVE' LIMIT 1`,
         [candidates]
@@ -317,6 +338,78 @@ export const inboundEmailService = {
     }
 
     return null;
+  },
+
+  // Check if incoming email is an automated message, bounce, delivery failure, or out-of-office notification
+  isBounceOrAutomatedEmail(parsed: ParsedMail, fromAddress: string, subject: string): boolean {
+    const sub = (subject || '').toLowerCase().trim();
+    const from = (fromAddress || '').toLowerCase().trim();
+
+    // 1. Sender check
+    const bounceSenders = [
+      'mailer-daemon',
+      'postmaster',
+      'mail-daemon',
+      'no-reply',
+      'noreply',
+      'bounce',
+      'bounces',
+      'notification',
+      'notifications',
+    ];
+    if (bounceSenders.some((bs) => from.includes(bs))) {
+      return true;
+    }
+
+    // 2. Standard bounce / automated headers
+    const autoSubmitted = (parsed.headers?.get('auto-submitted') as string || '').toLowerCase();
+    if (autoSubmitted && autoSubmitted !== 'no') {
+      return true;
+    }
+
+    if (parsed.headers?.has('x-failed-recipients') || parsed.headers?.has('x-autoreply')) {
+      return true;
+    }
+
+    const returnPath = (parsed.headers?.get('return-path') as string || '').trim();
+    if (returnPath === '<>' || returnPath === '') {
+      if (
+        sub.includes('undelivered') ||
+        sub.includes('delivery') ||
+        sub.includes('failure') ||
+        sub.includes('returned')
+      ) {
+        return true;
+      }
+    }
+
+    // 3. Subject patterns for delivery status notifications & bounces
+    const bounceKeywords = [
+      'undelivered mail returned to sender',
+      'delivery status notification',
+      'mail delivery failed',
+      'failure notice',
+      'returned mail:',
+      'warning: message',
+      'não foi possível entregar',
+      'nao foi possivel entregar',
+      'falha no envio',
+      'falha na entrega',
+      'aviso de não entrega',
+      'aviso de nao entrega',
+      'out of office',
+      'automatic reply:',
+      'resposta automática:',
+      'resposta automatica:',
+      'ausente do escritório',
+      'ausente do escritorio',
+    ];
+
+    if (bounceKeywords.some((bk) => sub.includes(bk))) {
+      return true;
+    }
+
+    return false;
   },
 
   // Prepare attachments or convert HTML/text email body to PDF
