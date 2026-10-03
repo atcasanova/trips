@@ -93,6 +93,7 @@ router.delete('/trips/:tripId/transports/:transportId', requireAuth, requireTrip
 
 router.get('/trips/:tripId/hotels', requireAuth, requireTripRole('VIEWER'), reservationController.listHotels);
 router.post('/trips/:tripId/hotels', requireAuth, requireTripRole('EDITOR'), reservationController.createHotel);
+router.put('/trips/:tripId/hotels/:hotelId', requireAuth, requireTripRole('EDITOR'), reservationController.updateHotel);
 router.delete('/trips/:tripId/hotels/:hotelId', requireAuth, requireTripRole('EDITOR'), reservationController.deleteHotel);
 
 // 7. Documents & AI Extraction

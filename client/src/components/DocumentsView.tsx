@@ -20,6 +20,13 @@ import {
   Plus,
   AlertTriangle,
   MapPin,
+  User,
+  Check,
+  X,
+  Music,
+  Trophy,
+  Calendar,
+  Ban,
 } from 'lucide-react';
 import { DocumentItem, TripTraveler } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -29,6 +36,7 @@ import { formatDateBr } from '../utils/date.js';
 interface DocumentsViewProps {
   tripId: string;
   documents: DocumentItem[];
+  travelers?: TripTraveler[];
   onRefresh: () => void;
   canEdit: boolean;
 }
@@ -269,11 +277,20 @@ const getExtractedSummary = (doc: DocumentItem): { text: string; icon: React.Rea
   return null;
 };
 
-export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents, onRefresh, canEdit }) => {
+export const DocumentsView: React.FC<DocumentsViewProps> = ({
+  tripId,
+  documents,
+  travelers = [],
+  onRefresh,
+  canEdit,
+}) => {
   const { user: currentUser } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
+
+  // Success toast for feedback
+  const [successToast, setSuccessToast] = useState<string | null>(null);
 
   // Review & Confirmation Modal state
   const [reviewModalDoc, setReviewModalDoc] = useState<DocumentItem | null>(null);
@@ -282,7 +299,9 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
   const [savingConfirmation, setSavingConfirmation] = useState(false);
 
   // Travelers & Detected People state
-  const [tripTravelers, setTripTravelers] = useState<TripTraveler[]>([]);
+  const [tripTravelers, setTripTravelers] = useState<TripTraveler[]>(travelers);
+  const [showAddPersonDropdown, setShowAddPersonDropdown] = useState(false);
+  const [newCompanionInputName, setNewCompanionInputName] = useState('');
   const [detectedPeople, setDetectedPeople] = useState<Array<{
     id: string;
     detectedName: string;
@@ -530,6 +549,46 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
     });
   };
 
+  const handleAddExistingTraveler = (traveler: TripTraveler) => {
+    const isUser = Boolean(traveler.user_id);
+    const alreadyIn = detectedPeople.some(
+      (p) =>
+        (p.targetTravelerId && p.targetTravelerId === traveler.id) ||
+        (p.targetUserId && traveler.user_id && p.targetUserId === traveler.user_id) ||
+        p.detectedName.toLowerCase() === traveler.display_name.toLowerCase()
+    );
+    if (alreadyIn) return;
+
+    setDetectedPeople((prev) => [
+      ...prev,
+      {
+        id: Math.random().toString(36).substring(7),
+        detectedName: traveler.display_name,
+        action: isUser ? 'LINK_USER' : 'LINK_TRAVELER',
+        targetUserId: traveler.user_id || undefined,
+        targetTravelerId: traveler.id,
+        newCompanionName: traveler.display_name,
+      },
+    ]);
+    setShowAddPersonDropdown(false);
+  };
+
+  const handleAddNewCompanion = (name: string) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setDetectedPeople((prev) => [
+      ...prev,
+      {
+        id: Math.random().toString(36).substring(7),
+        detectedName: clean,
+        action: 'CREATE_COMPANION',
+        newCompanionName: clean,
+      },
+    ]);
+    setNewCompanionInputName('');
+    setShowAddPersonDropdown(false);
+  };
+
   const addManualPerson = () => {
     setDetectedPeople((prev) => [
       ...prev,
@@ -560,6 +619,27 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
         return;
       }
 
+      // Synchronize confirmed traveler associations into parsedData before sending!
+      const activeTravelers = detectedPeople.filter((p) => p.action !== 'IGNORE');
+      if (activeTravelers.length > 0) {
+        const activeNames = activeTravelers.map((p) => p.newCompanionName || p.detectedName);
+        if (confirmedType === 'hotel_reservation') {
+          parsedData.guestNames = activeNames.join(', ');
+          parsedData.guests = activeNames.map((n) => ({ name: n }));
+          parsedData.guestsCount = activeNames.length;
+        } else if (confirmedType === 'flight_reservation') {
+          parsedData.passengers = activeTravelers.map((p) => ({
+            name: p.newCompanionName || p.detectedName,
+            seat: p.seat || null,
+            ticketNumber: p.ticketNumber || null,
+          }));
+          parsedData.passengersCount = activeTravelers.length;
+        } else if (confirmedType === 'activity_ticket') {
+          parsedData.attendees = activeNames.map((n) => ({ name: n }));
+          parsedData.ticketsCount = activeNames.length;
+        }
+      }
+
       await api.documents.confirmExtraction(tripId, reviewModalDoc.id, {
         confirmedType,
         normalizedData: parsedData,
@@ -568,8 +648,9 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
       });
 
       setReviewModalDoc(null);
+      setSuccessToast('Reserva e participantes confirmados com sucesso na viagem!');
+      setTimeout(() => setSuccessToast(null), 4000);
       onRefresh();
-      alert('Dados gravados e confirmados com sucesso na viagem!');
     } catch (err: any) {
       alert(err.message || 'Erro ao confirmar extração');
     } finally {
@@ -630,6 +711,23 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
 
   return (
     <div className="space-y-6">
+      {/* Success Notification */}
+      {successToast && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-between shadow-2xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{successToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSuccessToast(null)}
+            className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Upload Drag & Drop Zone */}
       {canEdit && (
         <div
@@ -841,9 +939,9 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
               </div>
               <button
                 onClick={() => setReviewModalDoc(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -861,10 +959,10 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                       onChange={(e) => setConfirmedType(e.target.value)}
                       className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-brand-500 bg-white font-medium text-slate-800"
                     >
-                      <option value="flight_reservation">✈️ Passagem Aérea / Bilhete de Voo</option>
-                      <option value="hotel_reservation">🏨 Reserva de Hotel / Hospedagem</option>
-                      <option value="activity_ticket">🎟️ Ingresso / Passeio / Atração</option>
-                      <option value="expense_receipt">🧾 Recibo de Despesa / Comprovante</option>
+                      <option value="flight_reservation">Passagem Aérea / Bilhete de Voo</option>
+                      <option value="hotel_reservation">Reserva de Hotel / Hospedagem</option>
+                      <option value="activity_ticket">Ingresso / Atração / Evento</option>
+                      <option value="expense_receipt">Recibo de Despesa / Comprovante</option>
                       <option value="other">Outro Documento</option>
                     </select>
                   </div>
@@ -873,13 +971,20 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                   {confirmedType === 'activity_ticket' && (
                     <div className="mb-5 p-4 bg-gradient-to-br from-amber-50 to-orange-50/60 border border-amber-200/80 rounded-2xl shadow-xs">
                       <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl">
-                            {currentParsedData.eventType === 'CONCERT' || currentParsedData.artistOrPerformer ? '🎸' :
-                             currentParsedData.eventType === 'SPORTS_MATCH' || currentParsedData.teams ? '⚽' :
-                             currentParsedData.eventType === 'THEATER_SHOW' ? '🎭' :
-                             currentParsedData.eventType === 'FESTIVAL' ? '🎪' : '🎟️'}
-                          </span>
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                            {currentParsedData.eventType === 'CONCERT' || currentParsedData.artistOrPerformer ? (
+                              <Music className="w-5 h-5 text-amber-700" />
+                            ) : currentParsedData.eventType === 'SPORTS_MATCH' || currentParsedData.teams ? (
+                              <Trophy className="w-5 h-5 text-amber-700" />
+                            ) : currentParsedData.eventType === 'THEATER_SHOW' ? (
+                              <Ticket className="w-5 h-5 text-amber-700" />
+                            ) : currentParsedData.eventType === 'FESTIVAL' ? (
+                              <Sparkles className="w-5 h-5 text-amber-700" />
+                            ) : (
+                              <Ticket className="w-5 h-5 text-amber-700" />
+                            )}
+                          </div>
                           <div>
                             <h4 className="text-sm font-bold text-slate-900 leading-snug">
                               {currentParsedData.title || currentParsedData.activityName || 'Evento Identificado'}
@@ -932,10 +1037,13 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                         {currentParsedData.eventDate && (
                           <div>
                             <span className="text-[10px] font-bold text-slate-400 uppercase block">Data e Horário</span>
-                            <p className="font-semibold text-slate-800">
-                              📅 {currentParsedData.eventDate}
-                              {currentParsedData.startTime ? ` às ${currentParsedData.startTime}` : ''}
-                              {currentParsedData.doorsOpenTime ? ` (Portões: ${currentParsedData.doorsOpenTime})` : ''}
+                            <p className="font-semibold text-slate-800 flex items-center gap-1">
+                              <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>
+                                {currentParsedData.eventDate}
+                                {currentParsedData.startTime ? ` às ${currentParsedData.startTime}` : ''}
+                                {currentParsedData.doorsOpenTime ? ` (Portões: ${currentParsedData.doorsOpenTime})` : ''}
+                              </span>
                             </p>
                           </div>
                         )}
@@ -961,8 +1069,8 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                           <div>
                             <span className="font-medium">{currentParsedData.address}</span>
                             {currentParsedData.latitude && currentParsedData.longitude && (
-                              <span className="text-[10px] font-mono text-emerald-700 ml-2 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                                📍 Lat: {Number(currentParsedData.latitude).toFixed(4)}, Lng: {Number(currentParsedData.longitude).toFixed(4)}
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-700 ml-2 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                <MapPin className="w-3 h-3 text-emerald-600" /> Lat: {Number(currentParsedData.latitude).toFixed(4)}, Lng: {Number(currentParsedData.longitude).toFixed(4)}
                               </span>
                             )}
                           </div>
@@ -985,28 +1093,110 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                       <div className="flex items-center gap-1.5">
                         <Users className="w-4 h-4 text-purple-700" />
                         <h4 className="text-xs font-bold text-purple-950 uppercase tracking-wider">
-                          Pessoas / Acompanhantes no Documento ({detectedPeople.length})
+                          Pessoas / Participantes no Documento ({detectedPeople.length})
                         </h4>
                       </div>
                       <button
                         type="button"
-                        onClick={addManualPerson}
-                        className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 bg-white hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                        onClick={() => setShowAddPersonDropdown((prev) => !prev)}
+                        className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 bg-white hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
                       >
-                        <Plus className="w-3 h-3" /> Adicionar Pessoa
+                        <Plus className="w-3.5 h-3.5" /> Adicionar Participante
                       </button>
                     </div>
 
                     <p className="text-[11px] text-purple-900/80 mb-3 leading-relaxed">
-                      A IA identificou os passageiros/hóspedes abaixo. Você pode associar cada um a um usuário da viagem, selecionar um acompanhante já existente ou cadastrar um novo acompanhante (mesmo com variações ou abreviações no nome do bilhete).
+                      A IA identificou os passageiros/hóspedes abaixo. Você pode associar cada um a um usuário da viagem, selecionar um acompanhante já cadastrado ou criar um novo acompanhante.
                     </p>
+
+                    {/* Popover / Participant Picker */}
+                    {showAddPersonDropdown && (
+                      <div className="mb-3 p-3 bg-white border border-purple-200 rounded-xl shadow-xs space-y-2.5 animate-in fade-in duration-150">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                            <UserPlus className="w-3.5 h-3.5 text-purple-600" />
+                            Vincular Participante da Viagem
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddPersonDropdown(false)}
+                            className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {tripTravelers.length > 0 && (
+                          <div>
+                            <span className="text-[11px] text-slate-500 block mb-1">Participantes cadastrados:</span>
+                            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                              {tripTravelers.map((t) => {
+                                const alreadyLinked = detectedPeople.some(
+                                  (p) =>
+                                    (p.targetTravelerId && p.targetTravelerId === t.id) ||
+                                    (p.targetUserId && t.user_id && p.targetUserId === t.user_id) ||
+                                    p.detectedName.toLowerCase() === t.display_name.toLowerCase()
+                                );
+
+                                return (
+                                  <button
+                                    key={t.id}
+                                    type="button"
+                                    disabled={alreadyLinked}
+                                    onClick={() => handleAddExistingTraveler(t)}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                                      alreadyLinked
+                                        ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                                        : 'bg-white hover:bg-purple-50 border-slate-200 hover:border-purple-300 text-slate-800'
+                                    }`}
+                                  >
+                                    <User className="w-3 h-3 text-slate-400" />
+                                    <span>{t.display_name}</span>
+                                    {alreadyLinked ? (
+                                      <Check className="w-3 h-3 text-emerald-600" />
+                                    ) : (
+                                      <Plus className="w-3 h-3 text-purple-600" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={newCompanionInputName}
+                            onChange={(e) => setNewCompanionInputName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddNewCompanion(newCompanionInputName);
+                              }
+                            }}
+                            placeholder="Ou digite o nome de um novo acompanhante..."
+                            className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            disabled={!newCompanionInputName.trim()}
+                            onClick={() => handleAddNewCompanion(newCompanionInputName)}
+                            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                          >
+                            Adicionar
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-3">
                       {detectedPeople.map((person, idx) => (
                         <div key={person.id} className="p-3 bg-white border border-purple-100 rounded-xl shadow-xs">
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-bold text-slate-800 font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                              <span className="text-xs font-bold text-slate-800 font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1">
+                                <User className="w-3 h-3 text-slate-500" />
                                 {person.detectedName}
                               </span>
                               {person.seat && (
@@ -1023,10 +1213,10 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                             <button
                               type="button"
                               onClick={() => removePerson(idx)}
-                              className="text-slate-400 hover:text-red-500 text-xs p-1"
+                              className="text-slate-400 hover:text-red-500 text-xs p-1 cursor-pointer"
                               title="Remover pessoa"
                             >
-                              ✕
+                              <X className="w-3.5 h-3.5" />
                             </button>
                           </div>
 
@@ -1051,7 +1241,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                                 <optgroup label="Usuário Atual (Você)">
                                   {currentUser && (
                                     <option value={`USER:${currentUser.id}`}>
-                                      👤 Eu ({currentUser.name})
+                                      Eu ({currentUser.name})
                                     </option>
                                   )}
                                 </optgroup>
@@ -1061,7 +1251,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                                       .filter((t) => t.is_registered_user && t.user_id !== currentUser?.id)
                                       .map((t) => (
                                         <option key={t.id} value={`USER:${t.user_id}`}>
-                                          👤 {t.display_name} {t.email ? `(${t.email})` : ''}
+                                          {t.display_name} {t.email ? `(${t.email})` : ''}
                                         </option>
                                       ))}
                                   </optgroup>
@@ -1072,14 +1262,14 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({ tripId, documents,
                                       .filter((t) => !t.is_registered_user)
                                       .map((t) => (
                                         <option key={t.id} value={`TRAVELER:${t.id}`}>
-                                          👥 {t.display_name} (Acompanhante)
+                                          {t.display_name} (Acompanhante)
                                         </option>
                                       ))}
                                   </optgroup>
                                 )}
                                 <optgroup label="Ações">
-                                  <option value="CREATE_COMPANION">➕ Criar Novo Acompanhante na Viagem</option>
-                                  <option value="IGNORE">🚫 Não vincular a viajante</option>
+                                  <option value="CREATE_COMPANION">Cadastrar Novo Acompanhante na Viagem</option>
+                                  <option value="IGNORE">Não vincular a viajante</option>
                                 </optgroup>
                               </select>
                             </div>

@@ -32,6 +32,7 @@ import {
   HotelReservation,
   DocumentItem,
   TripMember,
+  TripTraveler,
   ExpensesResponse,
 } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -68,6 +69,7 @@ export const TripDetailPage: React.FC = () => {
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [members, setMembers] = useState<TripMember[]>([]);
+  const [travelers, setTravelers] = useState<TripTraveler[]>([]);
   const [days, setDays] = useState<TripDay[]>([]);
   const [transports, setTransports] = useState<TransportReservation[]>([]);
   const [hotels, setHotels] = useState<HotelReservation[]>([]);
@@ -98,6 +100,25 @@ export const TripDetailPage: React.FC = () => {
   const handleTabChange = (newTab: TabType) => {
     setActiveTab(newTab);
     navigate(`/trips/${tripId}/${newTab}`, { replace: false });
+    // Fresh background sync on tab switch to avoid desync
+    if (tripId) {
+      Promise.all([
+        api.trips.get(tripId).catch(() => null),
+        api.reservations.listHotels(tripId).catch(() => null),
+        api.reservations.listTransports(tripId).catch(() => null),
+        api.documents.list(tripId).catch(() => null),
+        api.trips.listTravelers(tripId).catch(() => null),
+      ]).then(([tRes, hRes, trRes, dRes, tvRes]) => {
+        if (tRes?.trip) {
+          setTrip(tRes.trip);
+          setMembers(tRes.trip.members || []);
+        }
+        if (hRes?.hotels) setHotels(hRes.hotels);
+        if (trRes?.transports) setTransports(trRes.transports);
+        if (dRes?.documents) setDocuments(dRes.documents);
+        if (tvRes?.travelers) setTravelers(tvRes.travelers);
+      });
+    }
   };
 
   const handleCopyTabLink = () => {
@@ -111,17 +132,19 @@ export const TripDetailPage: React.FC = () => {
     if (!tripId) return;
     try {
       setLoading(true);
-      const [tripRes, daysRes, transRes, hotelsRes, docsRes, expRes] = await Promise.all([
+      const [tripRes, daysRes, transRes, hotelsRes, docsRes, expRes, travelersRes] = await Promise.all([
         api.trips.get(tripId),
         api.days.list(tripId),
         api.reservations.listTransports(tripId),
         api.reservations.listHotels(tripId),
         api.documents.list(tripId),
         api.expenses.list(tripId).catch(() => null),
+        api.trips.listTravelers(tripId).catch(() => ({ travelers: [] })),
       ]);
 
       setTrip(tripRes.trip);
       setMembers(tripRes.trip.members || []);
+      setTravelers(travelersRes.travelers || []);
       setDays(daysRes.days || []);
       setTransports(transRes.transports || []);
       setHotels(hotelsRes.hotels || []);
@@ -668,11 +691,23 @@ export const TripDetailPage: React.FC = () => {
         )}
 
         {activeTab === 'hotels' && (
-          <HotelsView tripId={trip.id} hotels={hotels} onRefresh={loadAllTripData} canEdit={canEdit} />
+          <HotelsView
+            tripId={trip.id}
+            hotels={hotels}
+            travelers={travelers}
+            onRefresh={loadAllTripData}
+            canEdit={canEdit}
+          />
         )}
 
         {activeTab === 'documents' && (
-          <DocumentsView tripId={trip.id} documents={documents} onRefresh={loadAllTripData} canEdit={canEdit} />
+          <DocumentsView
+            tripId={trip.id}
+            documents={documents}
+            travelers={travelers}
+            onRefresh={loadAllTripData}
+            canEdit={canEdit}
+          />
         )}
 
         {activeTab === 'expenses' && (

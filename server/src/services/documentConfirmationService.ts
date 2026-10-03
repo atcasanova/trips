@@ -357,6 +357,22 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
       });
     }
 
+    // Also update document extraction normalized_data so UI reflects passengers immediately
+    if (resolvedTravelers.length > 0) {
+      data.passengers = resolvedTravelers.map((t) => ({
+        name: t.name,
+        seat: t.seat || null,
+        ticketNumber: t.ticketNumber || null,
+      }));
+      data.passengersCount = resolvedTravelers.length;
+      await query(
+        `UPDATE document_ai_extractions
+         SET normalized_data = $1, updated_at = NOW()
+         WHERE document_id = $2 AND trip_id = $3`,
+        [JSON.stringify(data), documentId, tripId]
+      );
+    }
+
     await query(`UPDATE documents SET category = 'FLIGHT' WHERE id = $1`, [documentId]);
   } else if (confirmedType === 'hotel_reservation' || confirmedType === 'HOTEL') {
     const checkIn = data.checkInDate || new Date().toISOString().split('T')[0];
@@ -412,6 +428,17 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
         [matchingHotel.id, documentId]
       );
 
+      // Also update document extraction normalized_data so UI reflects updated guests immediately
+      data.guestNames = mergedGuests;
+      data.guests = guestsList.map((g) => ({ name: g }));
+      data.guestsCount = guestsList.length;
+      await query(
+        `UPDATE document_ai_extractions
+         SET normalized_data = $1, updated_at = NOW()
+         WHERE document_id = $2 AND trip_id = $3`,
+        [JSON.stringify(data), documentId, tripId]
+      );
+
       logger.info(`Hotel agregado à reserva existente: ${matchingHotel.hotel_name} (Hóspedes: ${mergedGuests})`);
     } else {
       // Create hotel reservation
@@ -453,6 +480,19 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
           [newHotelRows[0].id, documentId]
         );
       }
+
+      // Also update document extraction normalized_data so UI reflects created guests immediately
+      data.guestNames = newGuestNames;
+      if (resolvedTravelers.length > 0) {
+        data.guests = resolvedTravelers.map((t) => ({ name: t.name }));
+        data.guestsCount = resolvedTravelers.length;
+      }
+      await query(
+        `UPDATE document_ai_extractions
+         SET normalized_data = $1, updated_at = NOW()
+         WHERE document_id = $2 AND trip_id = $3`,
+        [JSON.stringify(data), documentId, tripId]
+      );
     }
 
     // Lança/atualiza despesa de hospedagem se houver valor

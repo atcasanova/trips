@@ -245,6 +245,105 @@ export const reservationController = {
     }
   },
 
+  async updateHotel(req: Request, res: Response) {
+    const { tripId, hotelId } = req.params;
+    const {
+      hotel_name,
+      address,
+      city,
+      country,
+      latitude,
+      longitude,
+      check_in_date,
+      check_in_time,
+      check_out_date,
+      check_out_time,
+      reservation_number,
+      guest_names,
+      room_type,
+      total_amount,
+      currency,
+      payment_status,
+      phone,
+      email,
+      website,
+      notes,
+    } = req.body;
+
+    try {
+      const { rows: existing } = await query(
+        'SELECT * FROM hotel_reservations WHERE id = $1 AND trip_id = $2',
+        [hotelId, tripId]
+      );
+      if (existing.length === 0) {
+        return res.status(404).json({ error: 'Hospedagem não encontrada' });
+      }
+
+      const h = existing[0];
+      const updatedHotelName = hotel_name !== undefined ? (hotel_name ? String(hotel_name).trim() : h.hotel_name) : h.hotel_name;
+      const updatedAddress = address !== undefined ? address : h.address;
+      const updatedCity = city !== undefined ? city : h.city;
+      const updatedCountry = country !== undefined ? country : h.country;
+      const updatedLatitude = latitude !== undefined ? latitude : h.latitude;
+      const updatedLongitude = longitude !== undefined ? longitude : h.longitude;
+      const updatedCheckIn = check_in_date !== undefined ? check_in_date : h.check_in_date;
+      const updatedCheckInTime = check_in_time !== undefined ? check_in_time : h.check_in_time;
+      const updatedCheckOut = check_out_date !== undefined ? check_out_date : h.check_out_date;
+      const updatedCheckOutTime = check_out_time !== undefined ? check_out_time : h.check_out_time;
+      const updatedResNum = reservation_number !== undefined ? reservation_number : h.reservation_number;
+      const updatedGuestNames = guest_names !== undefined ? (guest_names ? String(guest_names).trim() : null) : h.guest_names;
+      const updatedRoomType = room_type !== undefined ? room_type : h.room_type;
+      const updatedTotalAmount = total_amount !== undefined ? total_amount : h.total_amount;
+      const updatedCurrency = currency !== undefined ? currency : h.currency;
+      const updatedPaymentStatus = payment_status !== undefined ? payment_status : h.payment_status;
+      const updatedPhone = phone !== undefined ? phone : h.phone;
+      const updatedEmail = email !== undefined ? email : h.email;
+      const updatedWebsite = website !== undefined ? website : h.website;
+      const updatedNotes = notes !== undefined ? notes : h.notes;
+
+      const { rows } = await query(
+        `UPDATE hotel_reservations SET
+          hotel_name = $1, address = $2, city = $3, country = $4, latitude = $5, longitude = $6,
+          check_in_date = $7, check_in_time = $8, check_out_date = $9, check_out_time = $10,
+          reservation_number = $11, guest_names = $12, room_type = $13, total_amount = $14,
+          currency = $15, payment_status = $16, phone = $17, email = $18, website = $19,
+          notes = $20, updated_at = NOW()
+        WHERE id = $21 AND trip_id = $22
+        RETURNING *`,
+        [
+          updatedHotelName,
+          updatedAddress,
+          updatedCity,
+          updatedCountry,
+          updatedLatitude,
+          updatedLongitude,
+          updatedCheckIn,
+          updatedCheckInTime,
+          updatedCheckOut,
+          updatedCheckOutTime,
+          updatedResNum,
+          updatedGuestNames,
+          updatedRoomType,
+          updatedTotalAmount,
+          updatedCurrency,
+          updatedPaymentStatus,
+          updatedPhone,
+          updatedEmail,
+          updatedWebsite,
+          updatedNotes,
+          hotelId,
+          tripId,
+        ]
+      );
+
+      tripBookPdfService.queuePreGeneration(tripId);
+      return res.json({ hotel: rows[0] });
+    } catch (err: any) {
+      logger.error('Erro ao atualizar hotel:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao atualizar hospedagem' });
+    }
+  },
+
   async deleteHotel(req: Request, res: Response) {
     const { tripId, hotelId } = req.params;
     try {

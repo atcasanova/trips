@@ -259,6 +259,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    updateHotel: (tripId: string, hotelId: string, data: Partial<HotelReservation>) =>
+      request<{ hotel: HotelReservation }>(`/trips/${tripId}/hotels/${hotelId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
     deleteHotel: (tripId: string, hotelId: string) =>
       request<{ message: string }>(`/trips/${tripId}/hotels/${hotelId}`, {
         method: 'DELETE',
