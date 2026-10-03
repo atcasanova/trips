@@ -2467,7 +2467,7 @@ export const reportService = {
               zoomControl: false,
               attributionControl: false
             });
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
               maxZoom: 19
             }).addTo(map);
 
