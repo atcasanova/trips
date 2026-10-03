@@ -86,7 +86,7 @@ export const LoginPage: React.FC = () => {
           'error-callback': () => {
             if (isMounted) {
               setTurnstileToken(null);
-              setError('Falha ao carregar o widget Turnstile. Verifique se o domínio trips.bru.to está cadastrado na Cloudflare.');
+              setError('Falha ao carregar o widget Turnstile. Verifique se o domínio da aplicação está cadastrado na Cloudflare.');
             }
           },
           theme: 'light',
