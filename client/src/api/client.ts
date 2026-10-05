@@ -194,10 +194,12 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    deleteItem: (tripId: string, dayId: string, itemId: string) =>
-      request<{ message: string }>(`/trips/${tripId}/days/${dayId}/items/${itemId}`, {
+    deleteItem: (tripId: string, dayId: string, itemId: string, options?: { deleteDocument?: boolean }) => {
+      const q = options?.deleteDocument ? '?deleteDocument=true' : '';
+      return request<{ message: string; deletedDocument?: boolean }>(`/trips/${tripId}/days/${dayId}/items/${itemId}${q}`, {
         method: 'DELETE',
-      }),
+      });
+    },
     refreshLocations: (tripId: string, dayId?: string) =>
       request<{
         locationRefresh: {
@@ -248,10 +250,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    deleteTransport: (tripId: string, transportId: string) =>
-      request<{ message: string }>(`/trips/${tripId}/transports/${transportId}`, {
+    deleteTransport: (tripId: string, transportId: string, options?: { deleteDocument?: boolean }) => {
+      const q = options?.deleteDocument ? '?deleteDocument=true' : '';
+      return request<{ message: string; deletedDocument?: boolean }>(`/trips/${tripId}/transports/${transportId}${q}`, {
         method: 'DELETE',
-      }),
+      });
+    },
 
     listHotels: (tripId: string) => request<{ hotels: HotelReservation[] }>(`/trips/${tripId}/hotels`),
     createHotel: (tripId: string, data: Partial<HotelReservation>) =>
@@ -264,10 +268,12 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    deleteHotel: (tripId: string, hotelId: string) =>
-      request<{ message: string }>(`/trips/${tripId}/hotels/${hotelId}`, {
+    deleteHotel: (tripId: string, hotelId: string, options?: { deleteDocument?: boolean }) => {
+      const q = options?.deleteDocument ? '?deleteDocument=true' : '';
+      return request<{ message: string; deletedDocument?: boolean }>(`/trips/${tripId}/hotels/${hotelId}${q}`, {
         method: 'DELETE',
-      }),
+      });
+    },
   },
 
   // === DOCUMENTS & AI EXTRACTION ===
@@ -294,10 +300,12 @@ export const api = {
       request<{ document: DocumentItem; aiResult: any }>(`/trips/${tripId}/documents/${documentId}/reprocess`, {
         method: 'POST',
       }),
-    delete: (tripId: string, documentId: string) =>
-      request<{ message: string }>(`/trips/${tripId}/documents/${documentId}`, {
+    delete: (tripId: string, documentId: string, options?: { deleteLinkedReservations?: boolean }) => {
+      const q = options?.deleteLinkedReservations ? '?deleteLinkedReservations=true' : '';
+      return request<{ message: string; deletedLinked?: boolean }>(`/trips/${tripId}/documents/${documentId}${q}`, {
         method: 'DELETE',
-      }),
+      });
+    },
     viewUrl: (documentId: string) => `/api/documents/${documentId}/file`,
   },
 

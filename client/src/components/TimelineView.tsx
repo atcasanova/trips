@@ -772,19 +772,47 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     }
   };
 
-  // Delete Item
-  const handleDeleteItem = async (dayId: string, itemId: string) => {
-    if (!window.confirm('Deseja remover esta atividade?')) return;
+  // Delete Item Modal State
+  const [deleteItemModalData, setDeleteItemModalData] = useState<{
+    dayId: string;
+    itemId: string;
+    title: string;
+    docId?: string | null;
+    docName?: string | null;
+  } | null>(null);
+  const [deleteItemDocChecked, setDeleteItemDocChecked] = useState<boolean>(true);
+  const [isDeletingItem, setIsDeletingItem] = useState<boolean>(false);
+
+  const openDeleteItemModal = (dayId: string, item: ItineraryItem) => {
+    setDeleteItemModalData({
+      dayId,
+      itemId: item.id,
+      title: item.title,
+      docId: item.document_id,
+      docName: item.document_name,
+    });
+    setDeleteItemDocChecked(Boolean(item.document_id));
+  };
+
+  const handleConfirmDeleteItem = async () => {
+    if (!deleteItemModalData) return;
+    setIsDeletingItem(true);
+    const { dayId, itemId } = deleteItemModalData;
     const prevDays = localDays;
     setLocalDays((current) =>
       current.map((d) => (d.id === dayId ? { ...d, items: (d.items || []).filter((i) => i.id !== itemId) } : d))
     );
     try {
-      await api.days.deleteItem(trip.id, dayId, itemId);
+      await api.days.deleteItem(trip.id, dayId, itemId, {
+        deleteDocument: deleteItemDocChecked,
+      });
+      setDeleteItemModalData(null);
       onRefresh();
     } catch (err: any) {
       setLocalDays(prevDays);
       alert(err.message || 'Erro ao remover item');
+    } finally {
+      setIsDeletingItem(false);
     }
   };
 
@@ -1676,8 +1704,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                   </div>
                                 )}
                                 {item.tips && (
-                                  <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200/60 rounded px-2 py-0.5 mt-1 inline-block break-words max-w-full">
-                                    💡 {item.tips}
+                                  <div className="inline-flex items-start gap-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-200/60 rounded px-2 py-0.5 mt-1 break-words max-w-full">
+                                    <Lightbulb className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                    <span>{item.tips}</span>
                                   </div>
                                 )}
                               </div>
@@ -1704,7 +1733,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteItem(day.id, item.id)}
+                                  onClick={() => openDeleteItemModal(day.id, item)}
                                   className="p-1 sm:p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer"
                                   title="Remover atividade"
                                 >
@@ -2549,6 +2578,73 @@ Ou instruções livres de adição/sugestão como:
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Itinerary Item Confirmation Modal */}
+      {deleteItemModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 text-left animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 mb-4">
+              <div className="p-2 bg-red-50 rounded-lg">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="font-semibold text-slate-900 text-lg">Remover Atividade</h3>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-4">
+              Tem certeza que deseja remover a atividade <strong className="text-slate-800">"{deleteItemModalData.title}"</strong> do roteiro?
+            </p>
+
+            {deleteItemModalData.docId && (
+              <div className="mb-5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2">
+                <div className="font-medium text-slate-700 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Documento associado identificado:</span>
+                </div>
+                <div className="text-slate-600 truncate pl-5 font-mono text-[11px]">
+                  {deleteItemModalData.docName || 'Documento em Documentos & IA'}
+                </div>
+                <label className="flex items-start gap-2 pt-1 text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteItemDocChecked}
+                    onChange={(e) => setDeleteItemDocChecked(e.target.checked)}
+                    className="mt-0.5 rounded text-red-600 focus:ring-red-500 cursor-pointer"
+                  />
+                  <span>
+                    Excluir também o documento original na aba <strong>Documentos & IA</strong>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteItemModalData(null)}
+                disabled={isDeletingItem}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteItem}
+                disabled={isDeletingItem}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-lg transition-colors shadow-xs cursor-pointer"
+              >
+                {isDeletingItem ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Removendo...</span>
+                  </>
+                ) : (
+                  <span>Confirmar Remoção</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

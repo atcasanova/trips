@@ -803,17 +803,33 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     }
   };
 
-  const handleDelete = async (docId: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir este documento?')) return;
+  const [deleteModalDoc, setDeleteModalDoc] = useState<DocumentItem | null>(null);
+  const [deleteLinkedReservationsChecked, setDeleteLinkedReservationsChecked] = useState<boolean>(true);
+  const [isDeletingDoc, setIsDeletingDoc] = useState<boolean>(false);
+
+  const openDeleteModal = (doc: DocumentItem) => {
+    setDeleteModalDoc(doc);
+    setDeleteLinkedReservationsChecked(true);
+  };
+
+  const handleConfirmDeleteDoc = async () => {
+    if (!deleteModalDoc) return;
+    setIsDeletingDoc(true);
+    const docId = deleteModalDoc.id;
     const prev = localDocuments;
     setLocalDocuments((current) => current.filter((d) => d.id !== docId));
     try {
-      await api.documents.delete(tripId, docId);
+      await api.documents.delete(tripId, docId, {
+        deleteLinkedReservations: deleteLinkedReservationsChecked,
+      });
       if (selectedDoc?.id === docId) setSelectedDoc(null);
+      setDeleteModalDoc(null);
       onRefresh();
     } catch (err: any) {
       setLocalDocuments(prev);
       alert(err.message || 'Erro ao excluir documento');
+    } finally {
+      setIsDeletingDoc(false);
     }
   };
 
@@ -1582,7 +1598,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                                   {canEdit && (
                                     <button
                                       type="button"
-                                      onClick={() => handleDelete(doc.id)}
+                                      onClick={() => openDeleteModal(doc)}
                                       className="px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
@@ -1715,8 +1731,8 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
                       {canEdit && (
                         <button
-                          onClick={() => handleDelete(doc.id)}
-                          className="p-1 text-slate-400 hover:text-red-600 rounded-lg"
+                          onClick={() => openDeleteModal(doc)}
+                          className="p-1 text-slate-400 hover:text-red-600 rounded-lg cursor-pointer"
                           title="Excluir documento"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2183,6 +2199,88 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Document Deletion with Linked Reservations Option */}
+      {deleteModalDoc && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2.5 bg-red-50 text-red-600 rounded-xl shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Excluir Documento</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Esta ação removerá o arquivo <strong>{deleteModalDoc.original_name}</strong> da viagem.
+                </p>
+              </div>
+            </div>
+
+            {/* Document Details Box */}
+            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2 text-xs mb-4">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Enviado por:</span>
+                <strong className="text-slate-900">
+                  {deleteModalDoc.uploader_name || deleteModalDoc.uploader_email || 'Manual'}
+                </strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Categoria / Tipo:</span>
+                <span className="capitalize text-slate-700">{deleteModalDoc.category}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Tamanho:</span>
+                <span className="text-slate-700">{formatFileSize(deleteModalDoc.file_size)}</span>
+              </div>
+              {getExtractedSummary(deleteModalDoc) && (
+                <div className="pt-2 border-t border-slate-200/60 text-[11px] text-slate-600 flex items-start gap-1.5">
+                  {getExtractedSummary(deleteModalDoc)?.icon}
+                  <span className="line-clamp-2">{getExtractedSummary(deleteModalDoc)?.text}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Cascading Linked Reservations Option */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 mb-5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={deleteLinkedReservationsChecked}
+                onChange={(e) => setDeleteLinkedReservationsChecked(e.target.checked)}
+                className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
+              />
+              <div className="text-xs">
+                <span className="font-semibold text-amber-950 block">
+                  Excluir também as reservas e itens vinculados no sistema
+                </span>
+                <span className="text-amber-800 text-[11px] block mt-0.5">
+                  Remove automaticamente os registros correspondentes em Hospedagens, Voos ou Atividades do Roteiro.
+                </span>
+              </div>
+            </label>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isDeletingDoc}
+                onClick={() => setDeleteModalDoc(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingDoc}
+                onClick={handleConfirmDeleteDoc}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                {isDeletingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>{isDeletingDoc ? 'Excluindo...' : 'Confirmar Exclusão'}</span>
+              </button>
             </div>
           </div>
         </div>

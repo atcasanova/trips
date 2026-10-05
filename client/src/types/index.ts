@@ -183,6 +183,9 @@ export interface TransportReservation {
   currency?: string | null;
   status: string;
   document_id?: string | null;
+  document_name?: string | null;
+  uploader_name?: string | null;
+  uploader_email?: string | null;
   notes?: string | null;
   segments?: TransportSegment[];
 }
@@ -227,6 +230,24 @@ export interface TransportSegment {
   notes?: string | null;
 }
 
+export interface HotelSubReservation {
+  id: string;
+  hotel_name: string;
+  reservation_number?: string | null;
+  guest_names?: string | null;
+  room_type?: string | null;
+  total_amount?: number | null;
+  currency?: string | null;
+  payment_status?: string | null;
+  notes?: string | null;
+  document_id?: string | null;
+  document_name?: string | null;
+  uploader_id?: string | null;
+  uploader_name?: string | null;
+  uploader_email?: string | null;
+  created_at?: string;
+}
+
 export interface HotelReservation {
   id: string;
   trip_id: string;
@@ -250,7 +271,12 @@ export interface HotelReservation {
   email?: string | null;
   website?: string | null;
   document_id?: string | null;
+  document_name?: string | null;
+  uploader_id?: string | null;
+  uploader_name?: string | null;
+  uploader_email?: string | null;
   notes?: string | null;
+  sub_reservations?: HotelSubReservation[];
 }
 
 export interface DocumentItem {

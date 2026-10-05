@@ -15,6 +15,7 @@ import {
   normalizeText,
 } from '../utils/aggregation.js';
 import { applyConfirmedExtraction } from '../services/documentConfirmationService.js';
+import { tripBookPdfService } from '../services/tripBookPdfService.js';
 
 export const documentController = {
   // 1. List documents for a trip
@@ -315,11 +316,46 @@ export const documentController = {
   // 5. Delete Document
   async deleteDocument(req: Request, res: Response) {
     const { tripId, documentId } = req.params;
+    const deleteLinked = req.query.deleteLinkedReservations === 'true' || req.body?.deleteLinkedReservations === true;
 
     try {
       await query(`UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2`, [documentId, tripId]);
-      return res.json({ message: 'Documento excluído com sucesso' });
+
+      if (deleteLinked) {
+        // Delete linked hotel reservations
+        await query(
+          `DELETE FROM hotel_reservations 
+           WHERE trip_id = $1 AND (document_id = $2 OR id IN (SELECT hotel_id FROM hotel_reservation_documents WHERE document_id = $2))`,
+          [tripId, documentId]
+        );
+        await query(`DELETE FROM hotel_reservation_documents WHERE document_id = $1`, [documentId]);
+
+        // Delete linked transport reservations
+        await query(
+          `DELETE FROM transport_reservations 
+           WHERE trip_id = $1 AND (document_id = $2 OR id IN (SELECT reservation_id FROM transport_reservation_documents WHERE document_id = $2))`,
+          [tripId, documentId]
+        );
+        await query(`DELETE FROM transport_reservation_documents WHERE document_id = $1`, [documentId]);
+
+        // Delete linked itinerary items
+        await query(
+          `DELETE FROM itinerary_items 
+           WHERE trip_id = $1 AND (document_id = $2 OR id IN (SELECT itinerary_item_id FROM itinerary_item_documents WHERE document_id = $2))`,
+          [tripId, documentId]
+        );
+        await query(`DELETE FROM itinerary_item_documents WHERE document_id = $1`, [documentId]);
+      } else {
+        // Just unlink from junction tables
+        await query(`DELETE FROM hotel_reservation_documents WHERE document_id = $1`, [documentId]);
+        await query(`DELETE FROM transport_reservation_documents WHERE document_id = $1`, [documentId]);
+        await query(`DELETE FROM itinerary_item_documents WHERE document_id = $1`, [documentId]);
+      }
+
+      tripBookPdfService.queuePreGeneration(tripId);
+      return res.json({ message: 'Documento excluído com sucesso', deletedLinked: deleteLinked });
     } catch (err: any) {
+      logger.error('Erro ao excluir documento:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao excluir documento' });
     }
   },

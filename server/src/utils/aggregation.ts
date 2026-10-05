@@ -278,6 +278,25 @@ export function aggregateHotels(hotels: any[], options?: { anonymize?: boolean }
         : 'Viajante'
       : allGuests.join(', ') || base.guest_names || 'Viajantes';
 
+    // Sub-reservas individuais mantendo metadados de quem enviou e em nome de quem está
+    const sub_reservations = group.map((h) => ({
+      id: h.id,
+      hotel_name: h.hotel_name,
+      reservation_number: h.reservation_number,
+      guest_names: h.guest_names,
+      room_type: h.room_type,
+      total_amount: h.total_amount,
+      currency: h.currency,
+      payment_status: h.payment_status,
+      notes: h.notes,
+      document_id: h.document_id,
+      document_name: h.document_name,
+      uploader_id: h.uploader_id,
+      uploader_name: h.uploader_name,
+      uploader_email: h.uploader_email,
+      created_at: h.created_at,
+    }));
+
     // Agrega números de reserva
     const resNumbers = group
       .map((h) => h.reservation_number)
@@ -292,6 +311,7 @@ export function aggregateHotels(hotels: any[], options?: { anonymize?: boolean }
       guestList: allGuests,
       reservation_number: resNumbers.join(', ') || base.reservation_number || null,
       aggregatedCount: group.length,
+      sub_reservations,
     };
   });
 }

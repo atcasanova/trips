@@ -379,121 +379,58 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
     const checkOut = data.checkOutDate || checkIn;
     const newGuestNames = resolvedTravelers.length > 0 ? resolvedTravelers.map((t) => t.name).join(', ') : (data.guestNames || null);
 
-    // Check if an existing hotel reservation matches this stay
-    const { rows: existingHotels } = await query(
-      `SELECT * FROM hotel_reservations WHERE trip_id = $1`,
-      [tripId]
+    // Create independent hotel reservation for this document (aggregation is handled dynamically on view)
+    const { rows: newHotelRows } = await query(
+      `INSERT INTO hotel_reservations (
+        trip_id, hotel_name, address, city, country,
+        check_in_date, check_in_time, check_out_date, check_out_time,
+        reservation_number, guest_names, room_type, total_amount, currency,
+        payment_status, phone, email, website, document_id, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      RETURNING id`,
+      [
+        tripId,
+        data.hotelName || 'Hotel',
+        data.address || null,
+        data.city || null,
+        data.country || null,
+        checkIn,
+        data.checkInTime || '15:00',
+        checkOut,
+        data.checkOutTime || '11:00',
+        data.reservationNumber || null,
+        newGuestNames,
+        data.roomType || 'Quarto Standard',
+        data.totalAmount ? Number(data.totalAmount) : null,
+        data.currency || 'USD',
+        data.paymentStatus || 'CONFIRMED',
+        data.phone || null,
+        data.email || null,
+        data.website || null,
+        documentId,
+        data.notes || null,
+      ]
     );
 
-    const hotelCandidate = {
-      hotel_name: data.hotelName || 'Hotel',
-      address: data.address || null,
-      check_in_date: checkIn,
-      check_out_date: checkOut,
-    };
+    const createdHotelId = newHotelRows[0].id;
+    await query(
+      `INSERT INTO hotel_reservation_documents (hotel_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [createdHotelId, documentId]
+    );
 
-    const matchingHotel = existingHotels.find((eh) => areHotelsMatching(eh, hotelCandidate));
-
-    if (matchingHotel) {
-      // Merge guest names
-      const guestsList: string[] = [];
-      const seenG = new Set<string>();
-      for (const gStr of [matchingHotel.guest_names, newGuestNames]) {
-        if (gStr) {
-          gStr.split(/[,;\n]/).map((s: string) => s.trim()).filter(Boolean).forEach((g: string) => {
-            const norm = normalizeText(g);
-            if (!seenG.has(norm)) {
-              seenG.add(norm);
-              guestsList.push(g);
-            }
-          });
-        }
-      }
-      const mergedGuests = guestsList.join(', ');
-
-      // Merge reservation numbers if both exist and differ
-      const resNumbers = [matchingHotel.reservation_number, data.reservationNumber]
-        .filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i);
-
-      await query(
-        `UPDATE hotel_reservations
-         SET guest_names = $1, reservation_number = $2, updated_at = NOW()
-         WHERE id = $3`,
-        [mergedGuests, resNumbers.join(', ') || null, matchingHotel.id]
-      );
-
-      await query(
-        `INSERT INTO hotel_reservation_documents (hotel_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [matchingHotel.id, documentId]
-      );
-
-      // Also update document extraction normalized_data so UI reflects updated guests immediately
-      data.guestNames = mergedGuests;
-      data.guests = guestsList.map((g) => ({ name: g }));
-      data.guestsCount = guestsList.length;
-      await query(
-        `UPDATE document_ai_extractions
-         SET normalized_data = $1, updated_at = NOW()
-         WHERE document_id = $2 AND trip_id = $3`,
-        [JSON.stringify(data), documentId, tripId]
-      );
-
-      logger.info(`Hotel agregado à reserva existente: ${matchingHotel.hotel_name} (Hóspedes: ${mergedGuests})`);
-    } else {
-      // Create hotel reservation
-      const { rows: newHotelRows } = await query(
-        `INSERT INTO hotel_reservations (
-          trip_id, hotel_name, address, city, country,
-          check_in_date, check_in_time, check_out_date, check_out_time,
-          reservation_number, guest_names, room_type, total_amount, currency,
-          payment_status, phone, email, website, document_id, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-        RETURNING id`,
-        [
-          tripId,
-          data.hotelName || 'Hotel',
-          data.address || null,
-          data.city || null,
-          data.country || null,
-          checkIn,
-          data.checkInTime || '15:00',
-          checkOut,
-          data.checkOutTime || '11:00',
-          data.reservationNumber || null,
-          newGuestNames,
-          data.roomType || null,
-          data.totalAmount || null,
-          data.currency || 'USD',
-          data.paymentStatus || 'CONFIRMED',
-          data.phone || null,
-          data.email || null,
-          data.website || null,
-          documentId,
-          data.notes || null,
-        ]
-      );
-
-      if (newHotelRows.length > 0) {
-        await query(
-          `INSERT INTO hotel_reservation_documents (hotel_id, document_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [newHotelRows[0].id, documentId]
-        );
-      }
-
-      // Also update document extraction normalized_data so UI reflects created guests immediately
-      data.guestNames = newGuestNames;
-      if (resolvedTravelers.length > 0) {
-        data.guests = resolvedTravelers.map((t) => ({ name: t.name }));
-        data.guestsCount = resolvedTravelers.length;
-      }
-      await query(
-        `UPDATE document_ai_extractions
-         SET normalized_data = $1, updated_at = NOW()
-         WHERE document_id = $2 AND trip_id = $3`,
-        [JSON.stringify(data), documentId, tripId]
-      );
+    logger.info(`Reserva de hotel criada para documento: ${data.hotelName || 'Hotel'} (ID: ${createdHotelId})`);
+    // Also update document extraction normalized_data so UI reflects created guests immediately
+    data.guestNames = newGuestNames;
+    if (resolvedTravelers.length > 0) {
+      data.guests = resolvedTravelers.map((t) => ({ name: t.name }));
+      data.guestsCount = resolvedTravelers.length;
     }
+    await query(
+      `UPDATE document_ai_extractions
+       SET normalized_data = $1, updated_at = NOW()
+       WHERE document_id = $2 AND trip_id = $3`,
+      [JSON.stringify(data), documentId, tripId]
+    );
 
     // Lança/atualiza despesa de hospedagem se houver valor
     if (data.totalAmount && parseFloat(data.totalAmount) > 0) {

@@ -11,7 +11,16 @@ export const reservationController = {
 
     try {
       const { rows: reservations } = await query(
-        `SELECT * FROM transport_reservations WHERE trip_id = $1 ORDER BY created_at ASC`,
+        `SELECT tr.*,
+                d.original_name as document_name,
+                d.user_id as uploader_id,
+                u.name as uploader_name,
+                u.email as uploader_email
+         FROM transport_reservations tr
+         LEFT JOIN documents d ON tr.document_id = d.id
+         LEFT JOIN users u ON d.user_id = u.id
+         WHERE tr.trip_id = $1 
+         ORDER BY tr.created_at ASC`,
         [tripId]
       );
 
@@ -146,10 +155,24 @@ export const reservationController = {
 
   async deleteTransport(req: Request, res: Response) {
     const { tripId, transportId } = req.params;
+    const deleteDocument = req.query.deleteDocument === 'true' || req.body?.deleteDocument === true;
     try {
+      const { rows } = await query('SELECT document_id FROM transport_reservations WHERE id = $1 AND trip_id = $2', [transportId, tripId]);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Transporte não encontrado' });
+      }
+      const docId = rows[0]?.document_id;
+
       await query('DELETE FROM transport_reservations WHERE id = $1 AND trip_id = $2', [transportId, tripId]);
+      await query('DELETE FROM transport_reservation_documents WHERE reservation_id = $1', [transportId]);
+
+      if (deleteDocument && docId) {
+        await query('UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2', [docId, tripId]);
+        await query('DELETE FROM transport_reservation_documents WHERE document_id = $1', [docId]);
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
-      return res.json({ message: 'Transporte excluído com sucesso' });
+      return res.json({ message: 'Transporte excluído com sucesso', deletedDocument: deleteDocument && Boolean(docId) });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover transporte' });
     }
@@ -160,7 +183,16 @@ export const reservationController = {
     const { tripId } = req.params;
     try {
       const { rows } = await query(
-        `SELECT * FROM hotel_reservations WHERE trip_id = $1 ORDER BY check_in_date ASC`,
+        `SELECT hr.*, 
+                d.original_name as document_name,
+                d.user_id as uploader_id,
+                u.name as uploader_name,
+                u.email as uploader_email
+         FROM hotel_reservations hr
+         LEFT JOIN documents d ON hr.document_id = d.id
+         LEFT JOIN users u ON d.user_id = u.id
+         WHERE hr.trip_id = $1 
+         ORDER BY hr.check_in_date ASC, hr.created_at ASC`,
         [tripId]
       );
       const aggregated = aggregateHotels(rows);
@@ -346,10 +378,24 @@ export const reservationController = {
 
   async deleteHotel(req: Request, res: Response) {
     const { tripId, hotelId } = req.params;
+    const deleteDocument = req.query.deleteDocument === 'true' || req.body?.deleteDocument === true;
     try {
+      const { rows } = await query('SELECT document_id FROM hotel_reservations WHERE id = $1 AND trip_id = $2', [hotelId, tripId]);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Hospedagem não encontrada' });
+      }
+      const docId = rows[0]?.document_id;
+
       await query('DELETE FROM hotel_reservations WHERE id = $1 AND trip_id = $2', [hotelId, tripId]);
+      await query('DELETE FROM hotel_reservation_documents WHERE hotel_id = $1', [hotelId]);
+
+      if (deleteDocument && docId) {
+        await query('UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2', [docId, tripId]);
+        await query('DELETE FROM hotel_reservation_documents WHERE document_id = $1', [docId]);
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
-      return res.json({ message: 'Hospedagem removida com sucesso' });
+      return res.json({ message: 'Hospedagem removida com sucesso', deletedDocument: deleteDocument && Boolean(docId) });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover hospedagem' });
     }

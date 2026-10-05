@@ -416,10 +416,24 @@ export const itineraryController = {
   // 7. Delete Itinerary Item
   async deleteItineraryItem(req: Request, res: Response) {
     const { tripId, itemId } = req.params;
+    const deleteDocument = req.query.deleteDocument === 'true' || req.body?.deleteDocument === true;
     try {
+      const { rows } = await query('SELECT document_id FROM itinerary_items WHERE id = $1 AND trip_id = $2', [itemId, tripId]);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Atividade não encontrada' });
+      }
+      const docId = rows[0]?.document_id;
+
       await query('DELETE FROM itinerary_items WHERE id = $1 AND trip_id = $2', [itemId, tripId]);
+      await query('DELETE FROM itinerary_item_documents WHERE itinerary_item_id = $1', [itemId]);
+
+      if (deleteDocument && docId) {
+        await query('UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2', [docId, tripId]);
+        await query('DELETE FROM itinerary_item_documents WHERE document_id = $1', [docId]);
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
-      return res.json({ message: 'Atividade removida com sucesso' });
+      return res.json({ message: 'Atividade removida com sucesso', deletedDocument: deleteDocument && Boolean(docId) });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover atividade' });
     }
