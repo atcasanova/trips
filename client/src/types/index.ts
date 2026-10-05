@@ -258,6 +258,7 @@ export interface DocumentItem {
   trip_id: string;
   user_id?: string | null;
   uploader_name?: string | null;
+  uploader_email?: string | null;
   original_name: string;
   internal_filename: string;
   mime_type: string;

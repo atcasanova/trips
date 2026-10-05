@@ -43,6 +43,27 @@ export interface InboundProcessResult {
   processedCount?: number;
 }
 
+function getHeaderString(parsed: ParsedMail, headerKey: string): string {
+  if (!parsed || !parsed.headers) return '';
+  const val = parsed.headers.get(headerKey.toLowerCase());
+  if (!val) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof (val as any).text === 'string') return (val as any).text.trim();
+  if (typeof (val as any).value === 'string') return (val as any).value.trim();
+  if (Array.isArray((val as any).value) && (val as any).value.length > 0) {
+    const first = (val as any).value[0];
+    if (typeof first === 'string') return first.trim();
+    if (typeof first?.address === 'string') return first.address.trim();
+  }
+  if (Array.isArray(val)) {
+    return val
+      .map((v: any) => (typeof v === 'string' ? v.trim() : (v?.text || v?.value || v?.address || '').trim()))
+      .filter(Boolean)
+      .join(', ');
+  }
+  return String(val || '').trim();
+}
+
 export const inboundEmailService = {
   // Main entry point for raw MIME buffer processing
   async processInboundEmail(rawEmailBuffer: Buffer): Promise<InboundProcessResult> {
@@ -301,8 +322,8 @@ export const inboundEmailService = {
     }
 
     // Check Resent-From or X-Forwarded-For headers
-    const resentFromHeader = parsed.headers?.get('resent-from');
-    if (typeof resentFromHeader === 'string' && resentFromHeader.includes('@')) {
+    const resentFromHeader = getHeaderString(parsed, 'resent-from');
+    if (resentFromHeader && resentFromHeader.includes('@')) {
       const match = resentFromHeader.match(/<([^>]+)>/) || [null, resentFromHeader.trim()];
       if (match[1]) {
         const { rows } = await query(
@@ -345,25 +366,24 @@ export const inboundEmailService = {
     const sub = (subject || '').toLowerCase().trim();
     const from = (fromAddress || '').toLowerCase().trim();
 
-    // 1. Sender check
+    // 1. Genuine bounce / delivery failure senders
     const bounceSenders = [
       'mailer-daemon',
       'postmaster',
       'mail-daemon',
-      'no-reply',
-      'noreply',
-      'bounce',
-      'bounces',
-      'notification',
-      'notifications',
+      'mailerdaemon',
+      'mail-delivery-subsystem',
+      'bounce@',
+      'bounces@',
     ];
     if (bounceSenders.some((bs) => from.includes(bs))) {
       return true;
     }
 
     // 2. Standard bounce / automated headers
-    const autoSubmitted = (parsed.headers?.get('auto-submitted') as string || '').toLowerCase();
-    if (autoSubmitted && autoSubmitted !== 'no') {
+    const autoSubmitted = getHeaderString(parsed, 'auto-submitted').toLowerCase();
+    // 'auto-replied' is out of office; vouchers often have 'auto-generated', so only flag 'auto-replied'
+    if (autoSubmitted === 'auto-replied') {
       return true;
     }
 
@@ -371,13 +391,14 @@ export const inboundEmailService = {
       return true;
     }
 
-    const returnPath = (parsed.headers?.get('return-path') as string || '').trim();
+    const returnPath = getHeaderString(parsed, 'return-path').toLowerCase();
     if (returnPath === '<>' || returnPath === '') {
       if (
         sub.includes('undelivered') ||
-        sub.includes('delivery') ||
-        sub.includes('failure') ||
-        sub.includes('returned')
+        sub.includes('delivery status') ||
+        sub.includes('delivery failure') ||
+        sub.includes('returned mail') ||
+        sub.includes('failure notice')
       ) {
         return true;
       }
@@ -475,10 +496,15 @@ export const inboundEmailService = {
       }
     }
 
-    // 2. If no valid standalone attachments found, render the email body (HTML or plain text) as a PDF
-    if (validFiles.length === 0 && (parsed.html || parsed.text)) {
+    // 2. Render email body if no PDF attachments were found and body exists
+    const hasPdfAttachment = validFiles.some((f) => f.mimeType === 'application/pdf');
+    if ((validFiles.length === 0 || !hasPdfAttachment) && (parsed.html || parsed.text)) {
       try {
-        logger.info('Nenhum anexo isolado de documento encontrado. Renderizando corpo do e-mail em PDF...');
+        logger.info(
+          validFiles.length === 0
+            ? 'Nenhum anexo isolado de documento encontrado. Renderizando corpo do e-mail em PDF...'
+            : 'Anexos não incluem PDF. Renderizando corpo do e-mail em PDF para garantir leitura da reserva...'
+        );
         const emailSubject = parsed.subject || 'Confirmação de Reserva';
         const emailSender = parsed.from?.text || 'Remetente';
         const emailDate = parsed.date ? parsed.date.toLocaleDateString('pt-BR') : '';
@@ -611,6 +637,12 @@ export const inboundEmailService = {
         allCities.push(norm.city);
       }
       if (norm.country) country = norm.country;
+
+      // Infer Japan country if address or name mentions Japanese cities
+      const fullHotelStr = `${norm.hotelName || ''} ${norm.address || ''} ${norm.city || ''} ${norm.country || ''}`.toLowerCase();
+      if (!country && (fullHotelStr.includes('japão') || fullHotelStr.includes('japan') || fullHotelStr.includes('tokyo') || fullHotelStr.includes('toquio') || fullHotelStr.includes('tóquio') || fullHotelStr.includes('kyoto') || fullHotelStr.includes('osaka') || fullHotelStr.includes('kanazawa') || fullHotelStr.includes('takayama') || fullHotelStr.includes('shirakawa') || fullHotelStr.includes('hiroshima') || fullHotelStr.includes('miyajima'))) {
+        country = 'Japão';
+      }
       summaryTitle = `Hospedagem: ${norm.hotelName || norm.city || 'Hotel'}`;
     } else if (detectedType === 'activity_ticket') {
       category = 'EVENT';
@@ -689,9 +721,9 @@ export const inboundEmailService = {
         const rEnd = info.endDate ? new Date(info.endDate).getTime() : rStart;
 
         const dayMs = 24 * 60 * 60 * 1000;
-        // 3-day buffer on boundaries
-        const bufferStart = tStart - 3 * dayMs;
-        const bufferEnd = tEnd + 3 * dayMs;
+        // 14-day buffer on boundaries
+        const bufferStart = tStart - 14 * dayMs;
+        const bufferEnd = tEnd + 14 * dayMs;
 
         const isExactMatch = tStart === rStart;
         const isContained = rStart >= bufferStart && rEnd <= bufferEnd;
@@ -704,12 +736,20 @@ export const inboundEmailService = {
         } else if (isOverlapping) {
           score += 70;
         } else {
-          // The reservation is outside this trip's timeframe -> skip!
-          continue;
+          const diffDays = Math.min(
+            Math.abs(rStart - tStart) / dayMs,
+            Math.abs(rEnd - tEnd) / dayMs
+          );
+          if (diffDays <= 45) {
+            score += 25;
+          } else {
+            // Far away in time -> skip!
+            continue;
+          }
         }
       }
 
-      // 2. City Match
+      // 2. City & Destination Match
       let cityMatched = false;
       const tripCities: string[] = Array.isArray(trip.cities)
         ? trip.cities
@@ -728,7 +768,7 @@ export const inboundEmailService = {
 
       if (!cityMatched && trip.title) {
         const normTitle = normalizeText(trip.title);
-        if (normCandidateCities.some((cc) => normTitle.includes(cc))) {
+        if (normCandidateCities.some((cc) => normTitle.includes(cc) || cc.includes(normTitle))) {
           cityMatched = true;
           score += 80;
         }
@@ -736,9 +776,21 @@ export const inboundEmailService = {
 
       if (!cityMatched && trip.destination_summary) {
         const normDest = normalizeText(trip.destination_summary);
-        if (normCandidateCities.some((cc) => normDest.includes(cc))) {
+        if (normCandidateCities.some((cc) => normDest.includes(cc) || cc.includes(normDest))) {
           cityMatched = true;
           score += 60;
+        }
+      }
+
+      // Country match
+      if (info.country) {
+        const normInfoCountry = normalizeText(info.country);
+        if (trip.primary_country && (normalizeText(trip.primary_country) === normInfoCountry || normalizeText(trip.primary_country).includes(normInfoCountry))) {
+          score += 85;
+          cityMatched = true;
+        } else if (trip.title && normalizeText(trip.title).includes(normInfoCountry)) {
+          score += 85;
+          cityMatched = true;
         }
       }
 

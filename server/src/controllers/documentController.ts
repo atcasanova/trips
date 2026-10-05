@@ -26,7 +26,8 @@ export const documentController = {
         `SELECT d.*, 
                 e.id as extraction_id, e.detected_type, e.raw_extraction, e.normalized_data, 
                 e.user_corrections, e.model_used, e.status as extraction_status,
-                u.name as uploader_name
+                u.name as uploader_name,
+                u.email as uploader_email
          FROM documents d
          LEFT JOIN document_ai_extractions e ON d.id = e.document_id
          LEFT JOIN users u ON d.user_id = u.id
@@ -40,6 +41,7 @@ export const documentController = {
         trip_id: d.trip_id,
         user_id: d.user_id,
         uploader_name: d.uploader_name,
+        uploader_email: d.uploader_email,
         original_name: d.original_name,
         internal_filename: d.internal_filename,
         mime_type: d.mime_type,

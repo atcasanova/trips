@@ -11,6 +11,7 @@ import {
   Loader2,
   ExternalLink,
   ChevronRight,
+  ChevronDown,
   Plane,
   Building,
   Ticket,
@@ -27,6 +28,15 @@ import {
   Trophy,
   Calendar,
   Ban,
+  Search,
+  Filter,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Table,
+  LayoutGrid,
+  RotateCcw,
+  Info,
 } from 'lucide-react';
 import { DocumentItem, TripTraveler } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -294,6 +304,135 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
+
+  // Filters, sorting, expansion and view mode
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [senderFilter, setSenderFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [sortField, setSortField] = useState<'date' | 'title' | 'sender' | 'category'>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [expandedDocIds, setExpandedDocIds] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+
+  const toggleRowExpand = (docId: string) => {
+    setExpandedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) {
+        next.delete(docId);
+      } else {
+        next.add(docId);
+      }
+      return next;
+    });
+  };
+
+  const handleSort = (field: 'date' | 'title' | 'sender' | 'category') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection(field === 'date' ? 'desc' : 'asc');
+    }
+  };
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setCategoryFilter('ALL');
+    setSenderFilter('ALL');
+    setStatusFilter('ALL');
+  };
+
+  const isFiltering =
+    searchQuery.trim() !== '' ||
+    categoryFilter !== 'ALL' ||
+    senderFilter !== 'ALL' ||
+    statusFilter !== 'ALL';
+
+  const uniqueSenders = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const doc of localDocuments) {
+      const sender = doc.uploader_name || doc.uploader_email || 'Upload manual';
+      set.add(sender);
+    }
+    return Array.from(set).sort();
+  }, [localDocuments]);
+
+  const filteredAndSortedDocuments = React.useMemo(() => {
+    return localDocuments
+      .filter((doc) => {
+        // 1. Search Query
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const nameMatch = (doc.original_name || '').toLowerCase().includes(q);
+          const uploaderMatch =
+            (doc.uploader_name || '').toLowerCase().includes(q) ||
+            (doc.uploader_email || '').toLowerCase().includes(q);
+          const summary = getExtractedSummary(doc);
+          const summaryMatch = (summary?.text || '').toLowerCase().includes(q);
+          const rawSummaryMatch = (doc.extraction?.raw_extraction?.summary || '').toLowerCase().includes(q);
+
+          const data = doc.extraction?.normalized_data || doc.extraction?.raw_extraction?.data || {};
+          const detailsMatch = [
+            data.hotelName,
+            data.airline,
+            data.reservationCode,
+            data.reservationNumber,
+            data.pnr,
+            data.city,
+            data.guestNames,
+          ].some((val) => val && String(val).toLowerCase().includes(q));
+
+          if (!nameMatch && !uploaderMatch && !summaryMatch && !rawSummaryMatch && !detailsMatch) {
+            return false;
+          }
+        }
+
+        // 2. Category Filter
+        if (categoryFilter !== 'ALL') {
+          if (categoryFilter === 'TICKET') {
+            if (doc.category !== 'TICKET' && doc.category !== 'EVENT') return false;
+          } else if (doc.category !== categoryFilter) {
+            return false;
+          }
+        }
+
+        // 3. Sender Filter
+        if (senderFilter !== 'ALL') {
+          const sender = doc.uploader_name || doc.uploader_email || 'Upload manual';
+          if (sender !== senderFilter) return false;
+        }
+
+        // 4. Status Filter
+        if (statusFilter !== 'ALL') {
+          const isConfirmed = doc.extraction?.status === 'CONFIRMED';
+          if (statusFilter === 'CONFIRMED' && !isConfirmed) return false;
+          if (statusFilter === 'PENDING_REVIEW' && (isConfirmed || doc.ai_status !== 'COMPLETED')) return false;
+          if (statusFilter === 'PROCESSING' && doc.ai_status !== 'PROCESSING') return false;
+          if (statusFilter === 'FAILED' && doc.ai_status !== 'FAILED' && doc.ai_status !== 'PENDING') return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        let cmp = 0;
+        if (sortField === 'date') {
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          cmp = dateA - dateB;
+        } else if (sortField === 'title') {
+          cmp = (a.original_name || '').localeCompare(b.original_name || '', 'pt-BR', { sensitivity: 'base' });
+        } else if (sortField === 'sender') {
+          const senderA = a.uploader_name || a.uploader_email || 'Upload manual';
+          const senderB = b.uploader_name || b.uploader_email || 'Upload manual';
+          cmp = senderA.localeCompare(senderB, 'pt-BR', { sensitivity: 'base' });
+        } else if (sortField === 'category') {
+          cmp = (a.category || '').localeCompare(b.category || '');
+        }
+
+        return sortDirection === 'asc' ? cmp : -cmp;
+      });
+  }, [localDocuments, searchQuery, categoryFilter, senderFilter, statusFilter, sortField, sortDirection]);
 
   // Success toast for feedback
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -718,6 +857,217 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     }
   };
 
+  const getCategoryLabel = (category: string) => {
+    switch (category) {
+      case 'FLIGHT':
+        return 'Voo';
+      case 'HOTEL':
+        return 'Hospedagem';
+      case 'TICKET':
+      case 'EVENT':
+        return 'Ingresso';
+      case 'RECEIPT':
+        return 'Recibo';
+      default:
+        return 'Outro';
+    }
+  };
+
+  const renderExtractedDetails = (doc: DocumentItem) => {
+    const ext = doc.extraction;
+    if (!ext) {
+      return (
+        <div className="text-xs text-slate-500 py-1">
+          Nenhuma informação extraída disponível para este documento.
+        </div>
+      );
+    }
+
+    const type = ext.detected_type || doc.category;
+    const data = ext.normalized_data || ext.raw_extraction?.data || ext.raw_extraction || {};
+
+    return (
+      <div className="space-y-3">
+        {/* 1. HOTEL RESERVATION DETAILS */}
+        {type === 'hotel_reservation' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white/95 p-3.5 rounded-xl border border-purple-100 shadow-2xs">
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Hospedagem</span>
+              <span className="text-xs font-bold text-slate-900 block truncate" title={data.hotelName || data.hotel_name}>
+                {data.hotelName || data.hotel_name || 'Hotel não especificado'}
+              </span>
+              {(data.city || data.country) && (
+                <span className="text-[11px] text-slate-500 block truncate">
+                  {[data.city, data.country].filter(Boolean).join(', ')}
+                </span>
+              )}
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Check-in / Check-out</span>
+              <span className="text-xs font-semibold text-slate-800 block">
+                {formatDateBr(data.checkInDate || data.check_in_date) || '—'} {data.checkInTime ? `(${data.checkInTime})` : ''}
+              </span>
+              <span className="text-[11px] text-slate-500 block">
+                até {formatDateBr(data.checkOutDate || data.check_out_date) || '—'} {data.checkOutTime ? `(${data.checkOutTime})` : ''}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Hóspedes</span>
+              <span className="text-xs font-semibold text-slate-800 block truncate" title={data.guestNames}>
+                {data.guestNames || (Array.isArray(data.guests) ? data.guests.map((g: any) => g.name).join(', ') : 'Não informado')}
+              </span>
+              {data.roomType && (
+                <span className="text-[11px] text-slate-500 block truncate" title={data.roomType}>
+                  {data.roomType}
+                </span>
+              )}
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Reserva & Valor</span>
+              <span className="text-xs font-bold text-purple-700 block">
+                {formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency) || 'Valor não extraído'}
+              </span>
+              {(data.reservationNumber || data.reservation_number || data.bookingReference) && (
+                <span className="text-[11px] font-mono text-slate-600 block">
+                  ID: {data.reservationNumber || data.reservation_number || data.bookingReference}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 2. FLIGHT RESERVATION DETAILS */}
+        {type === 'flight_reservation' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white/95 p-3.5 rounded-xl border border-sky-100 shadow-2xs">
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Companhia & PNR</span>
+              <span className="text-xs font-bold text-slate-900 block truncate">
+                {data.airline || data.airline_name || 'Voo'}
+              </span>
+              {(data.reservationCode || data.bookingReference || data.pnr) && (
+                <span className="text-[11px] font-mono font-semibold text-sky-700 block">
+                  PNR: {data.reservationCode || data.bookingReference || data.pnr}
+                </span>
+              )}
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Trechos</span>
+              {Array.isArray(data.segments) && data.segments.length > 0 ? (
+                <div className="space-y-0.5">
+                  {data.segments.slice(0, 2).map((seg: any, sIdx: number) => (
+                    <span key={sIdx} className="text-[11px] text-slate-700 block truncate">
+                      {seg.departureAirport || seg.departureCity} &rarr; {seg.arrivalAirport || seg.arrivalCity}
+                      {seg.flightNumber ? ` (${seg.flightNumber})` : ''}
+                    </span>
+                  ))}
+                  {data.segments.length > 2 && (
+                    <span className="text-[10px] text-slate-400 block">+ {data.segments.length - 2} outro(s) trecho(s)</span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-xs text-slate-600">Trechos não detalhados</span>
+              )}
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Passageiros</span>
+              <span className="text-xs font-semibold text-slate-800 block truncate">
+                {Array.isArray(data.passengers) && data.passengers.length > 0
+                  ? data.passengers.map((p: any) => p.name).join(', ')
+                  : 'Não informado'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Valor Total</span>
+              <span className="text-xs font-bold text-sky-700 block">
+                {formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency) || 'Valor não extraído'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 3. ACTIVITY TICKET DETAILS */}
+        {type === 'activity_ticket' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white/95 p-3.5 rounded-xl border border-emerald-100 shadow-2xs">
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Evento / Atividade</span>
+              <span className="text-xs font-bold text-slate-900 block truncate">
+                {data.title || data.activityName || 'Evento'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Data & Local</span>
+              <span className="text-xs font-semibold text-slate-800 block">
+                {formatDateBr(data.eventDate || data.date) || '—'} {data.startTime ? `às ${data.startTime}` : ''}
+              </span>
+              {(data.venueName || data.city) && (
+                <span className="text-[11px] text-slate-500 block truncate">
+                  {[data.venueName, data.city].filter(Boolean).join(', ')}
+                </span>
+              )}
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Ingressos / Setor</span>
+              <span className="text-xs font-semibold text-slate-800 block">
+                {data.ticketsCount ? `${data.ticketsCount} ingresso(s)` : '1 ingresso'}
+                {data.sector ? ` • ${data.sector}` : ''}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Valor</span>
+              <span className="text-xs font-bold text-emerald-700 block">
+                {formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency) || 'Valor não extraído'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 4. EXPENSE / RECEIPT DETAILS */}
+        {type === 'expense_receipt' && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white/95 p-3.5 rounded-xl border border-amber-100 shadow-2xs">
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Estabelecimento</span>
+              <span className="text-xs font-bold text-slate-900 block truncate">
+                {data.merchantName || data.merchant || 'Comprovante'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Data</span>
+              <span className="text-xs font-semibold text-slate-800 block">
+                {formatDateBr(data.date) || '—'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Valor</span>
+              <span className="text-xs font-bold text-amber-700 block">
+                {formatCurrencyValue(data.totalAmount ?? data.total_amount, data.currency) || 'Valor não extraído'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 5. OTHER OR FALLBACK */}
+        {!['hotel_reservation', 'flight_reservation', 'activity_ticket', 'expense_receipt'].includes(type) && (
+          <div className="bg-white/95 p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Resumo do Documento</span>
+            <p className="text-xs text-slate-700">
+              {ext.raw_extraction?.summary || 'Documento analisado pela IA sem campos estruturados adicionais.'}
+            </p>
+          </div>
+        )}
+
+        {/* Summary Note if different from specific fields */}
+        {ext.raw_extraction?.summary && type !== 'other' && (
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 flex items-start gap-2">
+            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-slate-600 leading-relaxed italic">
+              "{ext.raw_extraction.summary}"
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Success Notification */}
@@ -798,18 +1148,463 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
       {/* Documents List */}
       <div>
-        <h3 className="text-base font-bold text-slate-900 mb-3 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-brand-600" />
-          Documentos Armazenados ({localDocuments.length})
-        </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-brand-600" />
+            Documentos Armazenados ({filteredAndSortedDocuments.length}
+            {filteredAndSortedDocuments.length !== localDocuments.length && (
+              <span className="text-xs font-normal text-slate-400"> de {localDocuments.length}</span>
+            )})
+          </h3>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (expandedDocIds.size === filteredAndSortedDocuments.length && filteredAndSortedDocuments.length > 0) {
+                  setExpandedDocIds(new Set());
+                } else {
+                  setExpandedDocIds(new Set(filteredAndSortedDocuments.map((d) => d.id)));
+                }
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              title="Expandir ou recolher todos os itens"
+            >
+              {expandedDocIds.size === filteredAndSortedDocuments.length && filteredAndSortedDocuments.length > 0 ? (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Recolher todos</span>
+                </>
+              ) : (
+                <>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Expandir todos</span>
+                </>
+              )}
+            </button>
+
+            <div className="flex items-center border border-slate-200 rounded-xl p-0.5 bg-slate-100">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`p-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  viewMode === 'table'
+                    ? 'bg-white text-brand-600 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="Visualização em Tabela"
+              >
+                <Table className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={`p-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  viewMode === 'grid'
+                    ? 'bg-white text-brand-600 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="Visualização em Cards"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Toolbar: Filters & Search */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 mb-4 shadow-2xs space-y-3">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar por título, remetente, hotel, cia aérea, local..."
+                className="w-full pl-9 pr-8 py-2 text-xs bg-slate-50 hover:bg-slate-100/60 focus:bg-white border border-slate-200 focus:border-brand-500 rounded-xl outline-hidden transition-all text-slate-800 placeholder-slate-400"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filter Dropdowns row */}
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 text-xs">
+            {/* Categoria / Tipo */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-700">
+              <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <label htmlFor="cat-filter" className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Tipo:</label>
+              <select
+                id="cat-filter"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="bg-transparent font-medium text-xs text-slate-800 outline-hidden cursor-pointer"
+              >
+                <option value="ALL">Todos os Tipos</option>
+                <option value="HOTEL">Hospedagem</option>
+                <option value="FLIGHT">Voos</option>
+                <option value="TICKET">Ingressos</option>
+                <option value="RECEIPT">Recibos</option>
+                <option value="OTHER">Outros</option>
+              </select>
+            </div>
+
+            {/* Remetente */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-700">
+              <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <label htmlFor="sender-filter" className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Remetente:</label>
+              <select
+                id="sender-filter"
+                value={senderFilter}
+                onChange={(e) => setSenderFilter(e.target.value)}
+                className="bg-transparent font-medium text-xs text-slate-800 outline-hidden cursor-pointer max-w-[150px] truncate"
+              >
+                <option value="ALL">Todos os Remetentes</option>
+                {uniqueSenders.map((sender) => (
+                  <option key={sender} value={sender}>
+                    {sender}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status IA */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-700">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <label htmlFor="status-filter" className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Status IA:</label>
+              <select
+                id="status-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="bg-transparent font-medium text-xs text-slate-800 outline-hidden cursor-pointer"
+              >
+                <option value="ALL">Todos os Status</option>
+                <option value="CONFIRMED">Confirmado</option>
+                <option value="PENDING_REVIEW">Revisar IA</option>
+                <option value="PROCESSING">Processando</option>
+                <option value="FAILED">Leitura Pendente</option>
+              </select>
+            </div>
+
+            {/* Clear filters button */}
+            {isFiltering && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-xs font-semibold text-red-600 hover:text-red-700 flex items-center gap-1 px-2.5 py-1.5 rounded-xl hover:bg-red-50 transition-colors cursor-pointer ml-auto"
+              >
+                <RotateCcw className="w-3 h-3" /> Limpar filtros
+              </button>
+            )}
+          </div>
+        </div>
 
         {localDocuments.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 text-xs">
             Nenhum documento anexado a esta viagem até o momento.
           </div>
+        ) : filteredAndSortedDocuments.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500 text-xs space-y-2">
+            <p className="font-semibold text-slate-700">Nenhum documento encontrado com os filtros selecionados.</p>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-xs font-semibold text-brand-600 hover:underline cursor-pointer"
+            >
+              Limpar filtros de busca
+            </button>
+          </div>
+        ) : viewMode === 'table' ? (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
+                    <th className="py-3 px-3 w-10 text-center"></th>
+                    <th className="py-3 px-3 w-32">
+                      <button
+                        type="button"
+                        onClick={() => handleSort('category')}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-brand-600 transition-colors cursor-pointer select-none"
+                      >
+                        <span>Tipo</span>
+                        {sortField === 'category' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-brand-600" /> : <ArrowDown className="w-3.5 h-3.5 text-brand-600" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-3 px-3 min-w-[200px]">
+                      <button
+                        type="button"
+                        onClick={() => handleSort('title')}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-brand-600 transition-colors cursor-pointer select-none"
+                      >
+                        <span>Título / Arquivo</span>
+                        {sortField === 'title' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-brand-600" /> : <ArrowDown className="w-3.5 h-3.5 text-brand-600" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-3 px-3 min-w-[150px]">
+                      <button
+                        type="button"
+                        onClick={() => handleSort('sender')}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-brand-600 transition-colors cursor-pointer select-none"
+                      >
+                        <span>Remetente</span>
+                        {sortField === 'sender' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-brand-600" /> : <ArrowDown className="w-3.5 h-3.5 text-brand-600" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-3 px-3 min-w-[240px]">Resumo das Informações Extraídas</th>
+                    <th className="py-3 px-3 w-32">Status IA</th>
+                    <th className="py-3 px-3 w-28">
+                      <button
+                        type="button"
+                        onClick={() => handleSort('date')}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-brand-600 transition-colors cursor-pointer select-none"
+                      >
+                        <span>Data</span>
+                        {sortField === 'date' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-brand-600" /> : <ArrowDown className="w-3.5 h-3.5 text-brand-600" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-3 px-3 w-20 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredAndSortedDocuments.map((doc) => {
+                    const isExpanded = expandedDocIds.has(doc.id);
+                    const hasExtraction = Boolean(doc.extraction);
+                    const isConfirmed = doc.extraction?.status === 'CONFIRMED';
+                    const summary = getExtractedSummary(doc);
+
+                    return (
+                      <React.Fragment key={doc.id}>
+                        {/* Collapsed row */}
+                        <tr
+                          onClick={() => toggleRowExpand(doc.id)}
+                          className={`hover:bg-slate-50/90 transition-colors cursor-pointer ${
+                            isExpanded ? 'bg-slate-50/60 font-medium' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleRowExpand(doc.id);
+                              }}
+                              className="p-1 rounded-lg hover:bg-slate-200/60 text-slate-500 transition-colors cursor-pointer"
+                              title={isExpanded ? 'Recolher detalhes' : 'Expandir detalhes'}
+                            >
+                              <ChevronRight
+                                className={`w-4 h-4 transition-transform duration-200 ${
+                                  isExpanded ? 'rotate-90 text-brand-600' : 'text-slate-400'
+                                }`}
+                              />
+                            </button>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200/60">
+                              {getCategoryIcon(doc.category)}
+                              <span>{getCategoryLabel(doc.category)}</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="max-w-[240px]">
+                              <span
+                                className="font-semibold text-xs text-slate-900 truncate block hover:text-brand-600 transition-colors"
+                                title={doc.original_name}
+                              >
+                                {doc.original_name}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">{formatFileSize(doc.file_size)}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-1.5 max-w-[160px]">
+                              <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0">
+                                <User className="w-3 h-3" />
+                              </div>
+                              <span className="text-xs text-slate-700 truncate" title={doc.uploader_email || doc.uploader_name || 'Upload manual'}>
+                                {doc.uploader_name || doc.uploader_email || 'Upload manual'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span
+                              className="text-xs text-slate-600 truncate block max-w-[280px]"
+                              title={summary?.text || doc.extraction?.raw_extraction?.summary || ''}
+                            >
+                              {summary?.text || doc.extraction?.raw_extraction?.summary || (
+                                <span className="text-slate-400 italic">Sem resumo disponível</span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            {doc.ai_status === 'COMPLETED' ? (
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${
+                                  isConfirmed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                <Sparkles className="w-2.5 h-2.5" />
+                                {isConfirmed ? 'Confirmado' : 'Revisar IA'}
+                              </span>
+                            ) : doc.ai_status === 'PROCESSING' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 inline-flex items-center gap-1">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Processando
+                              </span>
+                            ) : doc.ai_status === 'FAILED' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700 inline-flex items-center gap-1">
+                                <AlertTriangle className="w-2.5 h-2.5" /> Leitura Pendente
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="py-3 px-3 text-xs text-slate-500 whitespace-nowrap">
+                            {formatDateBr(doc.created_at)}
+                          </td>
+                          <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                            <a
+                              href={api.documents.viewUrl(doc.id)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 text-slate-400 hover:text-brand-600 rounded-lg hover:bg-slate-100 inline-flex items-center gap-1 text-xs font-semibold transition-colors"
+                              title="Visualizar documento em nova aba"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </a>
+                          </td>
+                        </tr>
+
+                        {/* Expanded details row */}
+                        {isExpanded && (
+                          <tr className="bg-slate-50/80 border-b border-slate-200">
+                            <td colSpan={8} className="p-4 sm:p-5">
+                              <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs space-y-4">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                                  <div className="flex items-center gap-2">
+                                    <div className="p-2 rounded-xl bg-purple-50 text-purple-700 border border-purple-100">
+                                      {getCategoryIcon(doc.category)}
+                                    </div>
+                                    <div>
+                                      <h4 className="text-sm font-bold text-slate-900">{doc.original_name}</h4>
+                                      <p className="text-xs text-slate-500">
+                                        {getCategoryLabel(doc.category)} • {formatFileSize(doc.file_size)} • Enviado em {formatDateBr(doc.created_at)} por {doc.uploader_name || doc.uploader_email || 'Upload manual'}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {/* Badges */}
+                                  <div className="flex items-center gap-2">
+                                    {doc.extraction?.model_used && (
+                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-100 text-slate-600 border border-slate-200">
+                                        {doc.extraction.model_used}
+                                      </span>
+                                    )}
+                                    {doc.ai_status === 'COMPLETED' ? (
+                                      <span
+                                        className={`px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 ${
+                                          isConfirmed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                        }`}
+                                      >
+                                        <Sparkles className="w-3 h-3" />
+                                        {isConfirmed ? 'Confirmado' : 'Revisão Pendente'}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                {/* Extracted Details Content */}
+                                {renderExtractedDetails(doc)}
+
+                                {/* Action Buttons Panel on Expanded Row */}
+                                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2">
+                                    <a
+                                      href={api.documents.viewUrl(doc.id)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-slate-600" />
+                                      Visualizar Documento
+                                    </a>
+
+                                    {hasExtraction && canEdit && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openReviewModal(doc)}
+                                        className="px-3.5 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                      >
+                                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                        {isConfirmed ? 'Editar Dados' : 'Revisar Extração'}
+                                      </button>
+                                    )}
+
+                                    {!hasExtraction && canEdit && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleReprocess(doc.id)}
+                                        disabled={reprocessingId === doc.id}
+                                        className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
+                                      >
+                                        {reprocessingId === doc.id ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <Sparkles className="w-3.5 h-3.5" />
+                                        )}
+                                        {reprocessingId === doc.id ? 'Lendo com IA...' : 'Ler com IA'}
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {canEdit && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDelete(doc.id)}
+                                      className="px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      Excluir
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : (
+          /* Cards Grid View fallback */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {localDocuments.map((doc) => {
+            {filteredAndSortedDocuments.map((doc) => {
               const hasExtraction = Boolean(doc.extraction);
               const isConfirmed = doc.extraction?.status === 'CONFIRMED';
               const summary = getExtractedSummary(doc);
@@ -830,7 +1625,9 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                           <h4 className="font-semibold text-xs text-slate-900 truncate max-w-[180px]" title={doc.original_name}>
                             {doc.original_name}
                           </h4>
-                          <span className="text-[10px] text-slate-400 block">{formatFileSize(doc.file_size)}</span>
+                          <span className="text-[10px] text-slate-400 block">
+                            {formatFileSize(doc.file_size)} • {doc.uploader_name || doc.uploader_email || 'Upload manual'}
+                          </span>
                         </div>
                       </div>
 
