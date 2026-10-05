@@ -194,11 +194,20 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    deleteItem: (tripId: string, dayId: string, itemId: string, options?: { deleteDocument?: boolean }) => {
-      const q = options?.deleteDocument ? '?deleteDocument=true' : '';
-      return request<{ message: string; deletedDocument?: boolean }>(`/trips/${tripId}/days/${dayId}/items/${itemId}${q}`, {
-        method: 'DELETE',
-      });
+    deleteItem: (
+      tripId: string,
+      dayId: string,
+      itemId: string,
+      options?: { deleteDocument?: boolean; deleteExpense?: boolean }
+    ) => {
+      const params = new URLSearchParams();
+      if (options?.deleteDocument) params.set('deleteDocument', 'true');
+      if (options?.deleteExpense) params.set('deleteExpense', 'true');
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request<{ message: string; deletedDocument?: boolean; deletedExpense?: boolean }>(
+        `/trips/${tripId}/days/${dayId}/items/${itemId}${q}`,
+        { method: 'DELETE' }
+      );
     },
     refreshLocations: (tripId: string, dayId?: string) =>
       request<{
@@ -250,11 +259,19 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    deleteTransport: (tripId: string, transportId: string, options?: { deleteDocument?: boolean }) => {
-      const q = options?.deleteDocument ? '?deleteDocument=true' : '';
-      return request<{ message: string; deletedDocument?: boolean }>(`/trips/${tripId}/transports/${transportId}${q}`, {
-        method: 'DELETE',
-      });
+    deleteTransport: (
+      tripId: string,
+      transportId: string,
+      options?: { deleteDocument?: boolean; deleteExpense?: boolean }
+    ) => {
+      const params = new URLSearchParams();
+      if (options?.deleteDocument) params.set('deleteDocument', 'true');
+      if (options?.deleteExpense) params.set('deleteExpense', 'true');
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request<{ message: string; deletedDocument?: boolean; deletedExpense?: boolean }>(
+        `/trips/${tripId}/transports/${transportId}${q}`,
+        { method: 'DELETE' }
+      );
     },
 
     listHotels: (tripId: string) => request<{ hotels: HotelReservation[] }>(`/trips/${tripId}/hotels`),
@@ -268,11 +285,19 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    deleteHotel: (tripId: string, hotelId: string, options?: { deleteDocument?: boolean }) => {
-      const q = options?.deleteDocument ? '?deleteDocument=true' : '';
-      return request<{ message: string; deletedDocument?: boolean }>(`/trips/${tripId}/hotels/${hotelId}${q}`, {
-        method: 'DELETE',
-      });
+    deleteHotel: (
+      tripId: string,
+      hotelId: string,
+      options?: { deleteDocument?: boolean; deleteExpense?: boolean }
+    ) => {
+      const params = new URLSearchParams();
+      if (options?.deleteDocument) params.set('deleteDocument', 'true');
+      if (options?.deleteExpense) params.set('deleteExpense', 'true');
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request<{ message: string; deletedDocument?: boolean; deletedExpense?: boolean }>(
+        `/trips/${tripId}/hotels/${hotelId}${q}`,
+        { method: 'DELETE' }
+      );
     },
   },
 
@@ -300,11 +325,21 @@ export const api = {
       request<{ document: DocumentItem; aiResult: any }>(`/trips/${tripId}/documents/${documentId}/reprocess`, {
         method: 'POST',
       }),
-    delete: (tripId: string, documentId: string, options?: { deleteLinkedReservations?: boolean }) => {
-      const q = options?.deleteLinkedReservations ? '?deleteLinkedReservations=true' : '';
-      return request<{ message: string; deletedLinked?: boolean }>(`/trips/${tripId}/documents/${documentId}${q}`, {
-        method: 'DELETE',
-      });
+    delete: (
+      tripId: string,
+      documentId: string,
+      options?: { deleteLinkedReservations?: boolean; deleteLinkedExpense?: boolean }
+    ) => {
+      const params = new URLSearchParams();
+      if (options?.deleteLinkedReservations) params.set('deleteLinkedReservations', 'true');
+      if (options?.deleteLinkedExpense) params.set('deleteLinkedExpense', 'true');
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request<{ message: string; deletedLinked?: boolean; deletedExpense?: boolean }>(
+        `/trips/${tripId}/documents/${documentId}${q}`,
+        {
+          method: 'DELETE',
+        }
+      );
     },
     viewUrl: (documentId: string) => `/api/documents/${documentId}/file`,
   },
@@ -400,10 +435,22 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    delete: (tripId: string, expenseId: string) =>
-      request<{ message: string }>(`/trips/${tripId}/expenses/${expenseId}`, {
-        method: 'DELETE',
-      }),
+    delete: (
+      tripId: string,
+      expenseId: string,
+      options?: { deleteDocument?: boolean; deleteReservation?: boolean }
+    ) => {
+      const params = new URLSearchParams();
+      if (options?.deleteDocument) params.set('deleteDocument', 'true');
+      if (options?.deleteReservation) params.set('deleteReservation', 'true');
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request<{ message: string; deletedDocument?: boolean; deletedReservation?: boolean }>(
+        `/trips/${tripId}/expenses/${expenseId}${q}`,
+        {
+          method: 'DELETE',
+        }
+      );
+    },
     createTransfer: (
       tripId: string,
       data: {

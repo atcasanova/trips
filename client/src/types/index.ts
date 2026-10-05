@@ -158,6 +158,10 @@ export interface ItineraryItem {
   order_index: number;
   document_id?: string | null;
   document_name?: string | null;
+  expense_id?: string | null;
+  expense_description?: string | null;
+  expense_amount?: number | null;
+  expense_currency?: string | null;
   document_mime_type?: string | null;
   document_size?: number | null;
   documents?: Array<{
@@ -186,6 +190,10 @@ export interface TransportReservation {
   document_name?: string | null;
   uploader_name?: string | null;
   uploader_email?: string | null;
+  expense_id?: string | null;
+  expense_description?: string | null;
+  expense_amount?: number | null;
+  expense_currency?: string | null;
   notes?: string | null;
   segments?: TransportSegment[];
 }
@@ -245,6 +253,10 @@ export interface HotelSubReservation {
   uploader_id?: string | null;
   uploader_name?: string | null;
   uploader_email?: string | null;
+  expense_id?: string | null;
+  expense_description?: string | null;
+  expense_amount?: number | null;
+  expense_currency?: string | null;
   created_at?: string;
 }
 
@@ -275,6 +287,10 @@ export interface HotelReservation {
   uploader_id?: string | null;
   uploader_name?: string | null;
   uploader_email?: string | null;
+  expense_id?: string | null;
+  expense_description?: string | null;
+  expense_amount?: number | null;
+  expense_currency?: string | null;
   notes?: string | null;
   sub_reservations?: HotelSubReservation[];
 }
@@ -294,6 +310,10 @@ export interface DocumentItem {
   ai_status: string;
   notes?: string | null;
   created_at: string;
+  expense_id?: string | null;
+  expense_description?: string | null;
+  expense_amount?: number | null;
+  expense_currency?: string | null;
   extraction?: {
     id: string;
     detected_type: string;
@@ -384,6 +404,12 @@ export interface ExpenseItem {
   payment_method: string;
   date: string;
   document_id?: string | null;
+  document_name?: string | null;
+  linked_reservation?: {
+    type: 'HOTEL' | 'TRANSPORT' | 'ACTIVITY';
+    id: string;
+    name: string;
+  } | null;
   notes?: string | null;
   is_shared: boolean;
   split_type?: string;

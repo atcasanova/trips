@@ -14,6 +14,7 @@ import {
   UserPlus,
   FileText,
   AlertTriangle,
+  AlertCircle,
   ExternalLink,
 } from 'lucide-react';
 import { HotelReservation, HotelSubReservation, TripTraveler } from '../types/index.js';
@@ -77,9 +78,16 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
     docId?: string | null;
     docName?: string | null;
     isSingle: boolean;
+    expenseId?: string | null;
+    expenseDesc?: string | null;
+    expenseAmount?: number | null;
+    expenseCurrency?: string | null;
   } | null>(null);
   const [deleteDocumentChecked, setDeleteDocumentChecked] = useState<boolean>(true);
+  const [deleteExpenseChecked, setDeleteExpenseChecked] = useState<boolean>(true);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [addHotelError, setAddHotelError] = useState<string | null>(null);
 
   // Helper to parse comma/semicolon/newline-separated guests
   const parseGuests = (raw?: string | null): string[] => {
@@ -122,7 +130,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       onRefresh();
     } catch (err: any) {
       setLocalHotels(prevHotels);
-      alert(err.message || 'Erro ao atualizar hóspedes da reserva');
+      setStatusMessage({ hotelId, text: err.message || 'Erro ao atualizar hóspedes' });
     } finally {
       setUpdatingHotelId(null);
     }
@@ -146,6 +154,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAddHotelError(null);
     try {
       await api.reservations.createHotel(tripId, {
         hotel_name: hotelName,
@@ -174,7 +183,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       setModalGuests([]);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao cadastrar hotel');
+      setAddHotelError(err.message || 'Erro ao cadastrar hotel');
     }
   };
 
@@ -191,6 +200,10 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
     const formattedAmount = sub.total_amount
       ? `${sub.currency || 'USD'} ${Number(sub.total_amount).toLocaleString('pt-BR')}`
       : null;
+    const expenseId = sub.expense_id || h.expense_id;
+    const expenseDesc = sub.expense_description || h.expense_description;
+    const expenseAmount = sub.expense_amount || h.expense_amount;
+    const expenseCurrency = sub.expense_currency || h.expense_currency;
 
     setDeleteModalData({
       hotelId: h.id,
@@ -203,17 +216,25 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       docId,
       docName,
       isSingle,
+      expenseId,
+      expenseDesc,
+      expenseAmount,
+      expenseCurrency,
     });
     setDeleteDocumentChecked(Boolean(docId));
+    setDeleteExpenseChecked(Boolean(expenseId));
+    setDeleteError(null);
   };
 
   const handleConfirmDelete = async () => {
     if (!deleteModalData) return;
     setIsDeleting(true);
+    setDeleteError(null);
 
     try {
       await api.reservations.deleteHotel(tripId, deleteModalData.subId, {
         deleteDocument: deleteDocumentChecked,
+        deleteExpense: deleteExpenseChecked,
       });
 
       // Optimistic update
@@ -242,7 +263,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       setDeleteModalData(null);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao excluir hospedagem');
+      setDeleteError(err.message || 'Erro ao excluir hospedagem');
     } finally {
       setIsDeleting(false);
     }
@@ -689,24 +710,54 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
               )}
             </div>
 
-            {/* Linked Document Cascading Checkbox */}
-            {deleteModalData.docId && (
-              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 mb-5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={deleteDocumentChecked}
-                  onChange={(e) => setDeleteDocumentChecked(e.target.checked)}
-                  className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
-                />
-                <div className="text-xs">
-                  <span className="font-semibold text-amber-950 block">
-                    Excluir também o documento associado em Documentos & IA
-                  </span>
-                  <span className="text-amber-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
-                    {deleteModalData.docName || 'Comprovante vinculado'}
-                  </span>
-                </div>
-              </label>
+            {/* Cascading Options */}
+            <div className="space-y-3 mb-5">
+              {/* Linked Document Cascading Checkbox */}
+              {deleteModalData.docId && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteDocumentChecked}
+                    onChange={(e) => setDeleteDocumentChecked(e.target.checked)}
+                    className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-amber-950 block">
+                      Excluir também o documento associado em Documentos & IA
+                    </span>
+                    <span className="text-amber-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteModalData.docName || 'Comprovante vinculado'}
+                    </span>
+                  </div>
+                </label>
+              )}
+
+              {/* Linked Expense Cascading Checkbox */}
+              {deleteModalData.expenseId && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteExpenseChecked}
+                    onChange={(e) => setDeleteExpenseChecked(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-emerald-950 block">
+                      Excluir também o lançamento de gasto na aba de Despesas
+                    </span>
+                    <span className="text-emerald-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteModalData.expenseDesc || 'Despesa associada'} {deleteModalData.expenseAmount ? `(${deleteModalData.expenseCurrency || 'R$'} ${Number(deleteModalData.expenseAmount).toLocaleString('pt-BR')})` : ''}
+                    </span>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            {deleteError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{deleteError}</span>
+              </div>
             )}
 
             {/* Modal Actions */}
@@ -739,6 +790,12 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-900 mb-4">Cadastrar Hospedagem</h3>
             <form onSubmit={handleCreate} className="space-y-3">
+              {addHotelError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                  <span>{addHotelError}</span>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Nome do Hotel / Ryokan *</label>
                 <input

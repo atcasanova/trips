@@ -24,6 +24,8 @@ import {
   Trash2,
   Route,
   Info,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import {
   Trip,
@@ -87,6 +89,7 @@ export const TripDetailPage: React.FC = () => {
   const [showPexelsModal, setShowPexelsModal] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const tripId = id || '';
 
@@ -168,10 +171,11 @@ export const TripDetailPage: React.FC = () => {
 
   const handleUpdateTheme = async (newTheme: any) => {
     try {
+      setActionError(null);
       await api.trips.update(trip.id, { theme: newTheme });
       loadAllTripData();
     } catch (err: any) {
-      alert(err.message || 'Erro ao salvar tema');
+      setActionError(err.message || 'Erro ao salvar tema');
     }
   };
 
@@ -181,6 +185,7 @@ export const TripDetailPage: React.FC = () => {
     attribution?: any
   ) => {
     try {
+      setActionError(null);
       let coverUrl = '';
       let coverThumb = '';
       let coverAttr: any = attribution || null;
@@ -214,7 +219,7 @@ export const TripDetailPage: React.FC = () => {
       });
       loadAllTripData();
     } catch (err: any) {
-      alert(err.message || 'Erro ao atualizar capa');
+      setActionError(err.message || 'Erro ao atualizar capa');
     }
   };
 
@@ -744,6 +749,21 @@ export const TripDetailPage: React.FC = () => {
             navigate('/');
           }}
         />
+      )}
+
+      {/* Toast de Erro Flutuante */}
+      {actionError && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-red-600 text-white px-4 py-3 rounded-2xl shadow-xl text-xs font-medium animate-in fade-in slide-in-from-bottom-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-red-200 hover:text-white ml-2 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       )}
     </div>
   );

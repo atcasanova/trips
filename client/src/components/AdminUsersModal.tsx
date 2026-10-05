@@ -86,17 +86,26 @@ export const AdminUsersModal: React.FC<AdminUsersModalProps> = ({ onClose }) => 
     }
   };
 
-  const handleDeleteUser = async (user: User) => {
-    if (!window.confirm(`Tem certeza que deseja excluir o usuário ${user.name} (${user.email})?`)) {
-      return;
-    }
+  // Delete user confirmation state
+  const [confirmUserDelete, setConfirmUserDelete] = useState<User | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
+  const handleDeleteUser = (user: User) => {
+    setConfirmUserDelete(user);
+  };
+
+  const handleConfirmDeleteUser = async () => {
+    if (!confirmUserDelete) return;
+    setIsDeletingUser(true);
     try {
-      await api.users.delete(user.id);
-      setSuccess(`Usuário ${user.email} excluído.`);
+      await api.users.delete(confirmUserDelete.id);
+      setSuccess(`Usuário ${confirmUserDelete.email} excluído.`);
+      setConfirmUserDelete(null);
       await loadUsers();
     } catch (err: any) {
       setError(err.message || 'Erro ao excluir usuário');
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -620,6 +629,46 @@ export const AdminUsersModal: React.FC<AdminUsersModalProps> = ({ onClose }) => 
           )}
         </div>
       </div>
+
+      {/* Modal de Confirmação de Exclusão de Usuário */}
+      {confirmUserDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-red-600 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Excluir Usuário</h3>
+                <p className="text-xs text-slate-500">Esta ação não pode ser desfeita.</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-5">
+              Tem certeza que deseja excluir permanentemente o usuário <strong className="text-slate-900">{confirmUserDelete.name}</strong> ({confirmUserDelete.email})?
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmUserDelete(null)}
+                disabled={isDeletingUser}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteUser}
+                disabled={isDeletingUser}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md shadow-red-500/20 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeletingUser ? 'Excluindo...' : 'Sim, Excluir Usuário'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

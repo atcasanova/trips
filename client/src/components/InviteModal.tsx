@@ -13,6 +13,7 @@ import {
   Trash2,
   ExternalLink,
   ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 import { api } from '../api/client.js';
 import { Trip, UserInvitation } from '../types/index.js';
@@ -29,6 +30,14 @@ export const InviteModal: React.FC<InviteModalProps> = ({ onClose, defaultTripId
   const [role, setRole] = useState<'VIEWER' | 'EDITOR' | 'OWNER'>('VIEWER');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
+
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,16 +128,22 @@ export const InviteModal: React.FC<InviteModalProps> = ({ onClose, defaultTripId
     setTimeout(() => setCopied(false), 2500);
   };
 
-  const handleRevokeInvite = async (inviteId: string) => {
-    if (!window.confirm('Tem certeza que deseja cancelar este convite?')) return;
-    try {
-      await api.invites.revoke(inviteId);
-      if (selectedTripId) {
-        await loadPendingInvites(selectedTripId);
-      }
-    } catch (err: any) {
-      alert(err.message || 'Erro ao cancelar convite');
-    }
+  const handleRevokeInvite = (inviteId: string) => {
+    setConfirmDialog({
+      title: 'Cancelar Convite',
+      message: 'Tem certeza que deseja cancelar este convite de acesso?',
+      onConfirm: async () => {
+        try {
+          await api.invites.revoke(inviteId);
+          if (selectedTripId) {
+            await loadPendingInvites(selectedTripId);
+          }
+          setSuccessMsg('Convite cancelado com sucesso.');
+        } catch (err: any) {
+          setError(err.message || 'Erro ao cancelar convite');
+        }
+      },
+    });
   };
 
   return (
@@ -334,6 +349,48 @@ export const InviteModal: React.FC<InviteModalProps> = ({ onClose, defaultTripId
           )}
         </div>
       </div>
+
+      {/* System Confirmation Dialog */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[110] overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 mb-4">
+              <div className="p-2 bg-red-50 rounded-lg">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="font-semibold text-slate-900 text-base">{confirmDialog.title}</h3>
+            </div>
+            <p className="text-xs text-slate-600 mb-5">{confirmDialog.message}</p>
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isConfirming}
+                onClick={() => setConfirmDialog(null)}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isConfirming}
+                onClick={async () => {
+                  setIsConfirming(true);
+                  try {
+                    await confirmDialog.onConfirm();
+                    setConfirmDialog(null);
+                  } finally {
+                    setIsConfirming(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-xl transition-colors shadow-xs cursor-pointer"
+              >
+                {isConfirming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                <span>Confirmar Cancelamento</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

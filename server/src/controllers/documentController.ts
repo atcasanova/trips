@@ -28,10 +28,15 @@ export const documentController = {
                 e.id as extraction_id, e.detected_type, e.raw_extraction, e.normalized_data, 
                 e.user_corrections, e.model_used, e.status as extraction_status,
                 u.name as uploader_name,
-                u.email as uploader_email
+                u.email as uploader_email,
+                exp.id as expense_id,
+                exp.description as expense_description,
+                exp.amount as expense_amount,
+                exp.currency as expense_currency
          FROM documents d
          LEFT JOIN document_ai_extractions e ON d.id = e.document_id
          LEFT JOIN users u ON d.user_id = u.id
+         LEFT JOIN expenses exp ON exp.trip_id = d.trip_id AND exp.document_id = d.id
          WHERE d.trip_id = $1 AND d.deleted_at IS NULL
          ORDER BY d.created_at DESC`,
         [tripId]
@@ -52,6 +57,10 @@ export const documentController = {
         ai_status: d.ai_status,
         notes: d.notes,
         created_at: d.created_at,
+        expense_id: d.expense_id || null,
+        expense_description: d.expense_description || null,
+        expense_amount: d.expense_amount ? Number(d.expense_amount) : null,
+        expense_currency: d.expense_currency || null,
         extraction: d.extraction_id
           ? {
               id: d.extraction_id,
@@ -317,6 +326,7 @@ export const documentController = {
   async deleteDocument(req: Request, res: Response) {
     const { tripId, documentId } = req.params;
     const deleteLinked = req.query.deleteLinkedReservations === 'true' || req.body?.deleteLinkedReservations === true;
+    const deleteExpense = req.query.deleteLinkedExpense === 'true' || req.body?.deleteLinkedExpense === true;
 
     try {
       await query(`UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2`, [documentId, tripId]);
@@ -352,8 +362,16 @@ export const documentController = {
         await query(`DELETE FROM itinerary_item_documents WHERE document_id = $1`, [documentId]);
       }
 
+      if (deleteExpense) {
+        await query(`DELETE FROM expenses WHERE trip_id = $1 AND document_id = $2`, [tripId, documentId]);
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
-      return res.json({ message: 'Documento excluído com sucesso', deletedLinked: deleteLinked });
+      return res.json({
+        message: 'Documento excluído com sucesso',
+        deletedLinked: deleteLinked,
+        deletedExpense: deleteExpense,
+      });
     } catch (err: any) {
       logger.error('Erro ao excluir documento:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao excluir documento' });

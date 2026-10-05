@@ -28,10 +28,13 @@ import {
   LayoutList,
   CalendarDays,
   RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Ticket,
 } from 'lucide-react';
 import { Trip, TripDay, ItineraryItem, TransportReservation, TransportSegment, HotelReservation } from '../types/index.js';
 import { api } from '../api/client.js';
-import { parseSafeDate } from '../utils/date.js';
+import { parseSafeDate, formatDateBr } from '../utils/date.js';
 import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
 import { GoogleMapsIcon } from './GoogleMapsIcon.js';
 import { DayMiniMap } from './DayMiniMap.js';
@@ -110,6 +113,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   const [locationRefreshMessage, setLocationRefreshMessage] = useState<string | null>(null);
   const [locationRefreshError, setLocationRefreshError] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  const [timelineToast, setTimelineToast] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const showToast = useCallback((message: string, type: 'error' | 'success' = 'error') => {
+    setTimelineToast({ type, message });
+    setTimeout(() => {
+      setTimelineToast((curr) => (curr?.message === message ? null : curr));
+    }, 5000);
+  }, []);
 
   // Synchronize localDays when prop days changes
   useEffect(() => {
@@ -579,7 +591,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           ),
         }))
       );
-      alert(err.message || 'Não foi possível alterar a confirmação deste ponto.');
+      showToast(err.message || 'Não foi possível alterar a confirmação deste ponto.');
     }
   };
 
@@ -609,7 +621,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           ),
         }))
       );
-      alert(err.message || 'Não foi possível alterar a visibilidade deste item no mapa.');
+      showToast(err.message || 'Não foi possível alterar a visibilidade deste item no mapa.');
     }
   };
 
@@ -627,7 +639,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       await api.ai.generateDayNarrative(trip.id, dayId);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao gerar narrativa com IA');
+      showToast(err.message || 'Erro ao gerar narrativa com IA');
     } finally {
       setGeneratingDayId(null);
     }
@@ -650,7 +662,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       setShowAddDayModal(false);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao criar dia');
+      showToast(err.message || 'Erro ao criar dia');
     } finally {
       setIsSavingDay(false);
     }
@@ -679,23 +691,44 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       setEditingDay(null);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao atualizar dia');
+      showToast(err.message || 'Erro ao atualizar dia');
     } finally {
       setIsSavingDay(false);
     }
   };
 
-  // Delete Day
-  const handleDeleteDay = async (dayId: string) => {
-    if (!window.confirm('Tem certeza que deseja remover este dia do roteiro?')) return;
+  // Delete Day State & Handlers
+  const [deleteDayModalData, setDeleteDayModalData] = useState<{
+    dayId: string;
+    dayTitle: string;
+  } | null>(null);
+  const [isDeletingDay, setIsDeletingDay] = useState(false);
+  const [deleteDayError, setDeleteDayError] = useState<string | null>(null);
+
+  const handleOpenDeleteDay = (dayId: string, dayTitle?: string) => {
+    setDeleteDayModalData({
+      dayId,
+      dayTitle: dayTitle || 'este dia',
+    });
+    setDeleteDayError(null);
+  };
+
+  const handleConfirmDeleteDay = async () => {
+    if (!deleteDayModalData) return;
+    setIsDeletingDay(true);
+    setDeleteDayError(null);
+    const dayId = deleteDayModalData.dayId;
     const prevDays = localDays;
     setLocalDays((current) => current.filter((d) => d.id !== dayId));
     try {
       await api.days.delete(trip.id, dayId);
+      setDeleteDayModalData(null);
       onRefresh();
     } catch (err: any) {
       setLocalDays(prevDays);
-      alert(err.message || 'Erro ao remover dia');
+      setDeleteDayError(err.message || 'Erro ao remover dia');
+    } finally {
+      setIsDeletingDay(false);
     }
   };
 
@@ -741,7 +774,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       setItemMapMode('AUTO');
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao criar atividade');
+      showToast(err.message || 'Erro ao criar atividade');
     } finally {
       setIsSavingItem(false);
     }
@@ -766,7 +799,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       setEditingItem(null);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao atualizar atividade');
+      showToast(err.message || 'Erro ao atualizar atividade');
     } finally {
       setIsSavingItem(false);
     }
@@ -779,9 +812,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     title: string;
     docId?: string | null;
     docName?: string | null;
+    expenseId?: string | null;
+    expenseDesc?: string | null;
+    expenseAmount?: number | null;
+    expenseCurrency?: string | null;
   } | null>(null);
   const [deleteItemDocChecked, setDeleteItemDocChecked] = useState<boolean>(true);
+  const [deleteItemExpenseChecked, setDeleteItemExpenseChecked] = useState<boolean>(true);
   const [isDeletingItem, setIsDeletingItem] = useState<boolean>(false);
+  const [deleteItemError, setDeleteItemError] = useState<string | null>(null);
 
   const openDeleteItemModal = (dayId: string, item: ItineraryItem) => {
     setDeleteItemModalData({
@@ -790,13 +829,20 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       title: item.title,
       docId: item.document_id,
       docName: item.document_name,
+      expenseId: item.expense_id,
+      expenseDesc: item.expense_description,
+      expenseAmount: item.expense_amount,
+      expenseCurrency: item.expense_currency,
     });
     setDeleteItemDocChecked(Boolean(item.document_id));
+    setDeleteItemExpenseChecked(Boolean(item.expense_id || item.expense_description));
+    setDeleteItemError(null);
   };
 
   const handleConfirmDeleteItem = async () => {
     if (!deleteItemModalData) return;
     setIsDeletingItem(true);
+    setDeleteItemError(null);
     const { dayId, itemId } = deleteItemModalData;
     const prevDays = localDays;
     setLocalDays((current) =>
@@ -805,12 +851,13 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     try {
       await api.days.deleteItem(trip.id, dayId, itemId, {
         deleteDocument: deleteItemDocChecked,
+        deleteExpense: deleteItemExpenseChecked,
       });
       setDeleteItemModalData(null);
       onRefresh();
     } catch (err: any) {
       setLocalDays(prevDays);
-      alert(err.message || 'Erro ao remover item');
+      setDeleteItemError(err.message || 'Erro ao remover item');
     } finally {
       setIsDeletingItem(false);
     }
@@ -887,8 +934,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   // --- AI ITINERARY ASSISTANT LOGIC ---
 
   const handleAiAnalyze = async () => {
+    setAiError(null);
     if (!aiText.trim()) {
-      alert('Por favor, informe o texto do roteiro.');
+      setAiError('Por favor, informe o texto do roteiro.');
       return;
     }
 
@@ -901,7 +949,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       });
       setAiPreviewDays(res.days);
     } catch (err: any) {
-      alert(err.message || 'Erro ao analisar roteiro com IA');
+      setAiError(err.message || 'Erro ao analisar roteiro com IA');
     } finally {
       setIsAiAnalyzing(false);
     }
@@ -909,6 +957,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   const handleAiApply = async () => {
     setIsAiApplying(true);
+    setAiError(null);
     try {
       await api.ai.parseItinerary(trip.id, {
         days: aiPreviewDays || undefined,
@@ -921,7 +970,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       setAiText('');
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao aplicar roteiro no banco de dados');
+      setAiError(err.message || 'Erro ao aplicar roteiro no banco de dados');
     } finally {
       setIsAiApplying(false);
     }
@@ -929,6 +978,33 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* System Toast Notification */}
+      {timelineToast && (
+        <div
+          className={`p-3.5 rounded-xl text-xs font-semibold flex items-center justify-between shadow-xs animate-in fade-in duration-200 ${
+            timelineToast.type === 'error'
+              ? 'bg-rose-50 border border-rose-200 text-rose-800'
+              : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {timelineToast.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            )}
+            <span>{timelineToast.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setTimelineToast(null)}
+            className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
         <div className="flex items-center gap-4 flex-wrap">
@@ -1072,10 +1148,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 ) : null}
                               </div>
 
-                              {/* Base Location */}
+                               {/* Base Location */}
                               {cell.baseLocation && (
                                 <div className="text-[10px] font-semibold text-slate-700 truncate mb-1 flex items-center gap-1">
-                                  <span>{cell.locationIcon || '📍'}</span>
+                                  <MapPin className="w-3 h-3 text-brand-600 shrink-0 inline" />
                                   <span className="truncate">{cell.baseLocation}</span>
                                 </div>
                               )}
@@ -1089,10 +1165,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                   return (
                                     <div
                                       key={fIdx}
-                                      className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                      className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium flex items-center gap-1"
                                       title={`Pouso / Desembarque no dia seguinte: Voo ${fl.carrier_name || ''} ${fl.identification_number} (${fl.arrival_time ? `às ${fl.arrival_time.slice(0, 5)}` : 'horário previsto'} em ${fl.arrival_location}): ${fl.passengersFormatted || fl.passengerCount + ' passageiro(s)'}`}
                                     >
-                                      🛬 <span className="font-semibold text-slate-800">Pouso: {fl.identification_number || fl.carrier_name || 'Voo'}</span>
+                                      <Plane className="w-3 h-3 text-slate-500 shrink-0 rotate-45" />
+                                      <span className="font-semibold text-slate-800 truncate">Pouso: {fl.identification_number || fl.carrier_name || 'Voo'}</span>
                                       {fl.arrival_time && (
                                         <span className="text-slate-500 font-normal ml-1">
                                           ({fl.arrival_time.slice(0, 5)})
@@ -1105,10 +1182,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 return (
                                   <div
                                     key={fIdx}
-                                    className="text-[10px] bg-sky-50 text-sky-900 border border-sky-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                    className="text-[10px] bg-sky-50 text-sky-900 border border-sky-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium flex items-center gap-1"
                                     title={`Embarque / Voo ${fl.carrier_name || ''} ${fl.identification_number}: ${fl.passengersFormatted || fl.passengerCount + ' passageiro(s)'}`}
                                   >
-                                    🛫 <strong className="font-semibold">{fl.identification_number || fl.carrier_name || 'Voo'}</strong>
+                                    <Plane className="w-3 h-3 text-sky-600 shrink-0 -rotate-45" />
+                                    <strong className="font-semibold truncate">{fl.identification_number || fl.carrier_name || 'Voo'}</strong>
                                     {isOvernight && (
                                       <span className="text-sky-700 font-bold ml-1 text-[9px] bg-sky-100 px-1 py-0.2 rounded">
                                         +1d
@@ -1124,13 +1202,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                               {/* Hotel badge (aggregated: exactly 1 badge per matching hotel) */}
                               {cell.hotel && (
                                 <div
-                                  className="text-[10px] bg-emerald-50 text-emerald-900 border border-emerald-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium"
+                                  className="text-[10px] bg-emerald-50 text-emerald-900 border border-emerald-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium flex items-center gap-1"
                                   title={`Hotel: ${cell.hotel.hotel_name} • Hóspedes: ${cell.hotel.guest_names}`}
                                 >
-                                  🏨 <strong className="font-semibold">{cell.hotel.hotel_name}</strong>
+                                  <Building2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                  <strong className="font-semibold truncate">{cell.hotel.hotel_name}</strong>
                                   {cell.hotel.guestCount > 1 && (
                                     <span className="text-emerald-700 font-normal ml-1">
-                                      ({cell.hotel.guestCount} hóspedes)
+                                      ({cell.hotel.guestCount}p)
                                     </span>
                                   )}
                                 </div>
@@ -1140,12 +1219,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                               {dayItems.slice(0, 2).map((it) => (
                                 <div
                                   key={it.id}
-                                  className="text-[10px] bg-purple-50/80 text-purple-900 border border-purple-200/70 rounded px-1.5 py-0.5 mb-1 truncate font-medium"
+                                  className="text-[10px] bg-purple-50/80 text-purple-900 border border-purple-200/70 rounded px-1.5 py-0.5 mb-1 truncate font-medium flex items-center gap-1"
                                   title={`${it.title}${it.attendees && it.attendees.length > 0 ? ` (${it.attendees.join(', ')})` : ''}`}
                                 >
-                                  <span className="truncate">
-                                    {it.category === 'EVENT' ? '🎟️ ' : '• '}{it.title}
-                                  </span>
+                                  {it.category === 'EVENT' ? (
+                                    <Ticket className="w-3 h-3 text-purple-600 shrink-0" />
+                                  ) : (
+                                    <span className="text-purple-400">•</span>
+                                  )}
+                                  <span className="truncate">{it.title}</span>
                                   {it.attendees && it.attendees.length > 1 && (
                                     <span className="text-purple-700 font-normal ml-1">
                                       ({it.attendees.length}p)
@@ -1332,8 +1414,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                       </button>
 
                       <button
-                        onClick={() => handleDeleteDay(day.id)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                        onClick={() => handleOpenDeleteDay(day.id, day.title ? `${day.title} (${day.date ? formatDateBr(day.date) : ''})` : `Dia ${day.day_number}`)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 cursor-pointer"
                         title="Excluir dia"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1828,6 +1910,12 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
             {/* Modal Content */}
             <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {aiError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{aiError}</span>
+                </div>
+              )}
               {!aiPreviewDays ? (
                 <>
                   <div className="flex items-center justify-between">
@@ -2598,7 +2686,7 @@ Ou instruções livres de adição/sugestão como:
             </p>
 
             {deleteItemModalData.docId && (
-              <div className="mb-5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2">
+              <div className="mb-4 p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2">
                 <div className="font-medium text-slate-700 flex items-center gap-1.5">
                   <FileText className="w-3.5 h-3.5 text-slate-500" />
                   <span>Documento associado identificado:</span>
@@ -2620,6 +2708,36 @@ Ou instruções livres de adição/sugestão como:
               </div>
             )}
 
+            {(deleteItemModalData.expenseId || deleteItemModalData.expenseDesc) && (
+              <div className="mb-4 p-3.5 bg-emerald-50/70 border border-emerald-200/80 rounded-lg text-xs space-y-2">
+                <div className="font-medium text-emerald-900 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Despesa associada identificada:</span>
+                </div>
+                <div className="text-emerald-800 truncate pl-5 font-mono text-[11px]">
+                  {deleteItemModalData.expenseDesc || 'Despesa vinculada'} {deleteItemModalData.expenseAmount ? `(${deleteItemModalData.expenseCurrency || 'R$'} ${Number(deleteItemModalData.expenseAmount).toLocaleString('pt-BR')})` : ''}
+                </div>
+                <label className="flex items-start gap-2 pt-1 text-emerald-950 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteItemExpenseChecked}
+                    onChange={(e) => setDeleteItemExpenseChecked(e.target.checked)}
+                    className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span>
+                    Excluir também o lançamento de gasto na aba de <strong>Despesas</strong>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {deleteItemError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{deleteItemError}</span>
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
@@ -2636,6 +2754,57 @@ Ou instruções livres de adição/sugestão como:
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-lg transition-colors shadow-xs cursor-pointer"
               >
                 {isDeletingItem ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Removendo...</span>
+                  </>
+                ) : (
+                  <span>Confirmar Remoção</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Day Confirmation Modal */}
+      {deleteDayModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 text-left animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 mb-4">
+              <div className="p-2 bg-red-50 rounded-lg">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="font-semibold text-slate-900 text-lg">Remover Dia do Roteiro</h3>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-4">
+              Tem certeza que deseja remover <strong>"{deleteDayModalData.dayTitle}"</strong> e todas as atividades programadas para este dia?
+            </p>
+
+            {deleteDayError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{deleteDayError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteDayModalData(null)}
+                disabled={isDeletingDay}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteDay}
+                disabled={isDeletingDay}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-lg transition-colors shadow-xs cursor-pointer"
+              >
+                {isDeletingDay ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     <span>Removendo...</span>

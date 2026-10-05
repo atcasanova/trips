@@ -15,10 +15,18 @@ export const reservationController = {
                 d.original_name as document_name,
                 d.user_id as uploader_id,
                 u.name as uploader_name,
-                u.email as uploader_email
+                u.email as uploader_email,
+                e.id as expense_id,
+                e.amount as expense_amount,
+                e.currency as expense_currency,
+                e.description as expense_description
          FROM transport_reservations tr
          LEFT JOIN documents d ON tr.document_id = d.id
          LEFT JOIN users u ON d.user_id = u.id
+         LEFT JOIN expenses e ON e.trip_id = tr.trip_id AND (
+           (tr.document_id IS NOT NULL AND e.document_id = tr.document_id)
+           OR (tr.booking_code IS NOT NULL AND tr.booking_code <> '' AND e.description ILIKE '%' || tr.booking_code || '%')
+         )
          WHERE tr.trip_id = $1 
          ORDER BY tr.created_at ASC`,
         [tripId]
@@ -156,12 +164,17 @@ export const reservationController = {
   async deleteTransport(req: Request, res: Response) {
     const { tripId, transportId } = req.params;
     const deleteDocument = req.query.deleteDocument === 'true' || req.body?.deleteDocument === true;
+    const deleteExpense = req.query.deleteExpense === 'true' || req.body?.deleteExpense === true;
     try {
-      const { rows } = await query('SELECT document_id FROM transport_reservations WHERE id = $1 AND trip_id = $2', [transportId, tripId]);
+      const { rows } = await query(
+        'SELECT document_id, booking_code, provider_name FROM transport_reservations WHERE id = $1 AND trip_id = $2',
+        [transportId, tripId]
+      );
       if (rows.length === 0) {
         return res.status(404).json({ error: 'Transporte não encontrado' });
       }
       const docId = rows[0]?.document_id;
+      const bookingCode = rows[0]?.booking_code;
 
       await query('DELETE FROM transport_reservations WHERE id = $1 AND trip_id = $2', [transportId, tripId]);
       await query('DELETE FROM transport_reservation_documents WHERE reservation_id = $1', [transportId]);
@@ -171,8 +184,24 @@ export const reservationController = {
         await query('DELETE FROM transport_reservation_documents WHERE document_id = $1', [docId]);
       }
 
+      if (deleteExpense) {
+        if (docId) {
+          await query('DELETE FROM expenses WHERE trip_id = $1 AND document_id = $2', [tripId, docId]);
+        }
+        if (bookingCode) {
+          await query(
+            "DELETE FROM expenses WHERE trip_id = $1 AND (description ILIKE '%' || $2 || '%' OR notes ILIKE '%' || $2 || '%')",
+            [tripId, bookingCode]
+          );
+        }
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
-      return res.json({ message: 'Transporte excluído com sucesso', deletedDocument: deleteDocument && Boolean(docId) });
+      return res.json({
+        message: 'Transporte excluído com sucesso',
+        deletedDocument: deleteDocument && Boolean(docId),
+        deletedExpense: deleteExpense,
+      });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover transporte' });
     }
@@ -187,10 +216,18 @@ export const reservationController = {
                 d.original_name as document_name,
                 d.user_id as uploader_id,
                 u.name as uploader_name,
-                u.email as uploader_email
+                u.email as uploader_email,
+                e.id as expense_id,
+                e.amount as expense_amount,
+                e.currency as expense_currency,
+                e.description as expense_description
          FROM hotel_reservations hr
          LEFT JOIN documents d ON hr.document_id = d.id
          LEFT JOIN users u ON d.user_id = u.id
+         LEFT JOIN expenses e ON e.trip_id = hr.trip_id AND (
+           (hr.document_id IS NOT NULL AND e.document_id = hr.document_id)
+           OR (hr.reservation_number IS NOT NULL AND hr.reservation_number <> '' AND e.description ILIKE '%' || hr.reservation_number || '%')
+         )
          WHERE hr.trip_id = $1 
          ORDER BY hr.check_in_date ASC, hr.created_at ASC`,
         [tripId]
@@ -379,12 +416,17 @@ export const reservationController = {
   async deleteHotel(req: Request, res: Response) {
     const { tripId, hotelId } = req.params;
     const deleteDocument = req.query.deleteDocument === 'true' || req.body?.deleteDocument === true;
+    const deleteExpense = req.query.deleteExpense === 'true' || req.body?.deleteExpense === true;
     try {
-      const { rows } = await query('SELECT document_id FROM hotel_reservations WHERE id = $1 AND trip_id = $2', [hotelId, tripId]);
+      const { rows } = await query(
+        'SELECT document_id, reservation_number, hotel_name FROM hotel_reservations WHERE id = $1 AND trip_id = $2',
+        [hotelId, tripId]
+      );
       if (rows.length === 0) {
         return res.status(404).json({ error: 'Hospedagem não encontrada' });
       }
       const docId = rows[0]?.document_id;
+      const resNum = rows[0]?.reservation_number;
 
       await query('DELETE FROM hotel_reservations WHERE id = $1 AND trip_id = $2', [hotelId, tripId]);
       await query('DELETE FROM hotel_reservation_documents WHERE hotel_id = $1', [hotelId]);
@@ -394,8 +436,24 @@ export const reservationController = {
         await query('DELETE FROM hotel_reservation_documents WHERE document_id = $1', [docId]);
       }
 
+      if (deleteExpense) {
+        if (docId) {
+          await query('DELETE FROM expenses WHERE trip_id = $1 AND document_id = $2', [tripId, docId]);
+        }
+        if (resNum) {
+          await query(
+            "DELETE FROM expenses WHERE trip_id = $1 AND (description ILIKE '%' || $2 || '%' OR notes ILIKE '%' || $2 || '%')",
+            [tripId, resNum]
+          );
+        }
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
-      return res.json({ message: 'Hospedagem removida com sucesso', deletedDocument: deleteDocument && Boolean(docId) });
+      return res.json({
+        message: 'Hospedagem removida com sucesso',
+        deletedDocument: deleteDocument && Boolean(docId),
+        deletedExpense: deleteExpense,
+      });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao remover hospedagem' });
     }

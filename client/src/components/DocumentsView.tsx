@@ -436,6 +436,8 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
   // Success toast for feedback
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   // Review & Confirmation Modal state
   const [reviewModalDoc, setReviewModalDoc] = useState<DocumentItem | null>(null);
@@ -514,7 +516,8 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
         });
       }
     } catch (err: any) {
-      alert(err.message || 'Erro ao enviar documento');
+      setErrorToast(err.message || 'Erro ao enviar documento');
+      setTimeout(() => setErrorToast(null), 5000);
     } finally {
       setUploading(false);
     }
@@ -522,6 +525,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
   const openReviewModal = async (doc: DocumentItem) => {
     setReviewModalDoc(doc);
+    setReviewError(null);
     const type = doc.extraction?.detected_type || 'flight_reservation';
     setConfirmedType(type);
 
@@ -759,7 +763,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       try {
         parsedData = JSON.parse(editDataJson);
       } catch (e) {
-        alert('JSON inválido nos dados editados');
+        setReviewError('JSON inválido nos dados editados');
         setSavingConfirmation(false);
         return;
       }
@@ -797,7 +801,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       setTimeout(() => setSuccessToast(null), 4000);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao confirmar extração');
+      setReviewError(err.message || 'Erro ao confirmar extração');
     } finally {
       setSavingConfirmation(false);
     }
@@ -805,29 +809,35 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
   const [deleteModalDoc, setDeleteModalDoc] = useState<DocumentItem | null>(null);
   const [deleteLinkedReservationsChecked, setDeleteLinkedReservationsChecked] = useState<boolean>(true);
+  const [deleteLinkedExpenseChecked, setDeleteLinkedExpenseChecked] = useState<boolean>(true);
   const [isDeletingDoc, setIsDeletingDoc] = useState<boolean>(false);
+  const [deleteDocError, setDeleteDocError] = useState<string | null>(null);
 
   const openDeleteModal = (doc: DocumentItem) => {
     setDeleteModalDoc(doc);
     setDeleteLinkedReservationsChecked(true);
+    setDeleteLinkedExpenseChecked(Boolean(doc.expense_id || doc.expense_description));
+    setDeleteDocError(null);
   };
 
   const handleConfirmDeleteDoc = async () => {
     if (!deleteModalDoc) return;
     setIsDeletingDoc(true);
+    setDeleteDocError(null);
     const docId = deleteModalDoc.id;
     const prev = localDocuments;
     setLocalDocuments((current) => current.filter((d) => d.id !== docId));
     try {
       await api.documents.delete(tripId, docId, {
         deleteLinkedReservations: deleteLinkedReservationsChecked,
+        deleteLinkedExpense: deleteLinkedExpenseChecked,
       });
       if (selectedDoc?.id === docId) setSelectedDoc(null);
       setDeleteModalDoc(null);
       onRefresh();
     } catch (err: any) {
       setLocalDocuments(prev);
-      alert(err.message || 'Erro ao excluir documento');
+      setDeleteDocError(err.message || 'Erro ao excluir documento');
     } finally {
       setIsDeletingDoc(false);
     }
@@ -843,10 +853,12 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       if (res.document?.extraction) {
         openReviewModal(res.document);
       } else {
-        alert('Documento reprocessado com sucesso!');
+        setSuccessToast('Documento reprocessado com sucesso!');
+        setTimeout(() => setSuccessToast(null), 4000);
       }
     } catch (err: any) {
-      alert(err.message || 'Erro ao reprocessar documento');
+      setErrorToast(err.message || 'Erro ao reprocessar documento');
+      setTimeout(() => setErrorToast(null), 5000);
     } finally {
       setReprocessingId(null);
     }
@@ -1097,6 +1109,23 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
             type="button"
             onClick={() => setSuccessToast(null)}
             className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Error Notification */}
+      {errorToast && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-semibold flex items-center justify-between shadow-2xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{errorToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorToast(null)}
+            className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1772,6 +1801,12 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
               {/* LADO ESQUERDO: Dados Estruturados da Passagem / Hotel / Atividade */}
               <div className="p-6 overflow-y-auto flex flex-col justify-between bg-white">
                 <div>
+                  {reviewError && (
+                    <div className="p-3 mb-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-semibold flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>{reviewError}</span>
+                    </div>
+                  )}
                   <div className="mb-4">
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                       Tipo de Reserva Identificado
@@ -2244,23 +2279,53 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
               )}
             </div>
 
-            {/* Cascading Linked Reservations Option */}
-            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 mb-5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={deleteLinkedReservationsChecked}
-                onChange={(e) => setDeleteLinkedReservationsChecked(e.target.checked)}
-                className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
-              />
-              <div className="text-xs">
-                <span className="font-semibold text-amber-950 block">
-                  Excluir também as reservas e itens vinculados no sistema
-                </span>
-                <span className="text-amber-800 text-[11px] block mt-0.5">
-                  Remove automaticamente os registros correspondentes em Hospedagens, Voos ou Atividades do Roteiro.
-                </span>
+            {/* Cascading Options */}
+            <div className="space-y-3 mb-5">
+              {/* Cascading Linked Reservations Option */}
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={deleteLinkedReservationsChecked}
+                  onChange={(e) => setDeleteLinkedReservationsChecked(e.target.checked)}
+                  className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
+                />
+                <div className="text-xs">
+                  <span className="font-semibold text-amber-950 block">
+                    Excluir também as reservas e itens vinculados no sistema
+                  </span>
+                  <span className="text-amber-800 text-[11px] block mt-0.5">
+                    Remove automaticamente os registros correspondentes em Hospedagens, Voos ou Atividades do Roteiro.
+                  </span>
+                </div>
+              </label>
+
+              {/* Cascading Linked Expense Option */}
+              {(deleteModalDoc.expense_id || deleteModalDoc.expense_description) && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteLinkedExpenseChecked}
+                    onChange={(e) => setDeleteLinkedExpenseChecked(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-emerald-950 block">
+                      Excluir também o lançamento de gasto na aba de Despesas
+                    </span>
+                    <span className="text-emerald-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteModalDoc.expense_description || 'Despesa vinculada'} {deleteModalDoc.expense_amount ? `(${deleteModalDoc.expense_currency || 'R$'} ${Number(deleteModalDoc.expense_amount).toLocaleString('pt-BR')})` : ''}
+                    </span>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            {deleteDocError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{deleteDocError}</span>
               </div>
-            </label>
+            )}
 
             {/* Modal Actions */}
             <div className="flex items-center justify-end gap-2.5">

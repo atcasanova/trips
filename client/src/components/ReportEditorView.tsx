@@ -16,6 +16,8 @@ import {
   Zap,
   CheckCircle2,
   Clock,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import { Trip, PdfStatusResponse } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -39,6 +41,8 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
   const [loadingShare, setLoadingShare] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [showSharePanel, setShowSharePanel] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
 
   const [sections, setSections] = useState({
     cover: true,
@@ -84,28 +88,28 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
     if (!shareData) return;
     try {
       setLoadingShare(true);
+      setErrorMessage(null);
       const res = await api.reports.updateShare(trip.id, {
         enabled: !shareData.share_enabled,
       });
       setShareData(res);
       loadPdfStatus();
     } catch (err: any) {
-      alert(err.message || 'Erro ao alterar compartilhamento');
+      setErrorMessage(err.message || 'Erro ao alterar compartilhamento');
     } finally {
       setLoadingShare(false);
     }
   };
 
-  const handleRegenerateToken = async () => {
-    if (
-      !window.confirm(
-        'Deseja gerar um novo link de compartilhamento? O link anterior deixará de funcionar imediatamente.'
-      )
-    ) {
-      return;
-    }
+  const handleRegenerateToken = () => {
+    setShowRegenerateConfirm(true);
+  };
+
+  const handleConfirmRegenerateToken = async () => {
+    setShowRegenerateConfirm(false);
     try {
       setLoadingShare(true);
+      setErrorMessage(null);
       const res = await api.reports.updateShare(trip.id, {
         regenerate: true,
         enabled: true,
@@ -114,7 +118,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
       setCopySuccess(false);
       loadPdfStatus();
     } catch (err: any) {
-      alert(err.message || 'Erro ao gerar novo link');
+      setErrorMessage(err.message || 'Erro ao gerar novo link');
     } finally {
       setLoadingShare(false);
     }
@@ -123,10 +127,11 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
   const handleRegeneratePdf = async () => {
     try {
       setRegeneratingPdf(true);
+      setErrorMessage(null);
       const res = await api.reports.regeneratePdf(trip.id);
       setPdfStatus(res.status);
     } catch (err: any) {
-      alert(err.message || 'Erro ao regenerar PDFs do Trip Book');
+      setErrorMessage(err.message || 'Erro ao regenerar PDFs do Trip Book');
     } finally {
       setRegeneratingPdf(false);
     }
@@ -139,7 +144,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2500);
     } catch {
-      alert('Não foi possível copiar automaticamente. Selecione e copie o link no campo.');
+      setErrorMessage('Não foi possível copiar automaticamente. Selecione e copie o link no campo.');
     }
   };
 
@@ -150,6 +155,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
   const handleDownloadPdf = async () => {
     setDownloading(true);
     setDownloadSuccess(false);
+    setErrorMessage(null);
     try {
       const filename = `TripBook_${trip.title.replace(/[^a-zA-Z0-9]/g, '_')}_completo.pdf`;
       await api.reports.downloadPdf(trip.id, filename);
@@ -157,7 +163,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
       setTimeout(() => setDownloadSuccess(false), 3500);
       loadPdfStatus();
     } catch (err: any) {
-      alert(err.message || 'Erro ao gerar/baixar PDF');
+      setErrorMessage(err.message || 'Erro ao gerar/baixar PDF');
     } finally {
       setDownloading(false);
     }
@@ -167,6 +173,23 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
 
   return (
     <div className="space-y-6">
+      {/* Banner de Erro Inline */}
+      {errorMessage && (
+        <div className="flex items-center justify-between p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-800 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="text-red-400 hover:text-red-700 ml-3 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -452,6 +475,46 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
           />
         </div>
       </div>
+
+      {/* Modal de Confirmação de Regeneração de Link */}
+      {showRegenerateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-amber-600 mb-4">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <RefreshCw className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Novo Link de Compartilhamento</h3>
+                <p className="text-xs text-slate-500">Invalidação de link ativo</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-5">
+              Deseja gerar um novo link de compartilhamento? O link anterior deixará de funcionar imediatamente para qualquer pessoa que o tenha recebido.
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRegenerateConfirm(false)}
+                disabled={loadingShare}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRegenerateToken}
+                disabled={loadingShare}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md shadow-amber-500/20 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {loadingShare ? 'Gerando...' : 'Sim, Gerar Novo Link'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

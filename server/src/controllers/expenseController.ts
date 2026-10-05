@@ -85,10 +85,12 @@ export const expenseController = {
       // 2. Get all expenses
       const { rows: expenses } = await query(
         `SELECT e.*,
+                d.original_name as document_name,
                 COALESCE(tt.display_name, tt_user.display_name, u.name, 'Viajante') as paid_by_name,
                 COALESCE(e.paid_by_traveler_id, tt_user.id) as paid_by_traveler_id,
                 COALESCE(e.paid_by_traveler_id, tt_user.id) as traveler_id
          FROM expenses e
+         LEFT JOIN documents d ON e.document_id = d.id
          LEFT JOIN trip_travelers tt ON e.paid_by_traveler_id = tt.id
          LEFT JOIN trip_travelers tt_user ON (e.paid_by_user_id IS NOT NULL AND tt_user.trip_id = e.trip_id AND tt_user.user_id = e.paid_by_user_id)
          LEFT JOIN users u ON e.paid_by_user_id = u.id
@@ -96,6 +98,17 @@ export const expenseController = {
          ORDER BY e.date DESC, e.created_at DESC`,
         [tripId]
       );
+
+      // Query reservations to link to expenses
+      const [hotelsRes, transportsRes, itemsRes] = await Promise.all([
+        query('SELECT id, hotel_name, reservation_number, document_id FROM hotel_reservations WHERE trip_id = $1', [tripId]),
+        query('SELECT id, type, provider_name, booking_code, document_id FROM transport_reservations WHERE trip_id = $1', [tripId]),
+        query('SELECT id, title, document_id FROM itinerary_items WHERE trip_id = $1', [tripId]),
+      ]);
+
+      const hotelsList = hotelsRes.rows;
+      const transportsList = transportsRes.rows;
+      const itemsList = itemsRes.rows;
 
       // 3. Get all splits
       const { rows: allSplits } = await query(
@@ -113,9 +126,39 @@ export const expenseController = {
         splitsByExpense[sp.expense_id].push(sp);
       }
 
-      // Attach splits to expenses
+      // Attach splits and linked reservations to expenses
       for (const exp of expenses) {
         exp.splits = splitsByExpense[exp.id] || [];
+
+        let linked: { type: 'HOTEL' | 'TRANSPORT' | 'ACTIVITY'; id: string; name: string } | null = null;
+        if (exp.document_id) {
+          const h = hotelsList.find((x: any) => x.document_id === exp.document_id);
+          if (h) {
+            linked = { type: 'HOTEL', id: h.id, name: h.hotel_name };
+          } else {
+            const tr = transportsList.find((x: any) => x.document_id === exp.document_id);
+            if (tr) {
+              linked = { type: 'TRANSPORT', id: tr.id, name: tr.provider_name || tr.type };
+            } else {
+              const it = itemsList.find((x: any) => x.document_id === exp.document_id);
+              if (it) {
+                linked = { type: 'ACTIVITY', id: it.id, name: it.title };
+              }
+            }
+          }
+        }
+        if (!linked && exp.description) {
+          const h = hotelsList.find((x: any) => x.reservation_number && exp.description.includes(x.reservation_number));
+          if (h) {
+            linked = { type: 'HOTEL', id: h.id, name: h.hotel_name };
+          } else {
+            const tr = transportsList.find((x: any) => x.booking_code && exp.description.includes(x.booking_code));
+            if (tr) {
+              linked = { type: 'TRANSPORT', id: tr.id, name: tr.provider_name || tr.type };
+            }
+          }
+        }
+        exp.linked_reservation = linked;
       }
 
       // 3.5. Get all transfers between travelers
@@ -561,10 +604,69 @@ export const expenseController = {
   // 4. Delete expense
   async deleteExpense(req: Request, res: Response) {
     const { tripId, expenseId } = req.params;
+    const deleteDocument = req.query.deleteDocument === 'true' || req.body?.deleteDocument === true;
+    const deleteReservation = req.query.deleteReservation === 'true' || req.body?.deleteReservation === true;
+
     try {
+      const { rows: expRows } = await query(
+        'SELECT id, document_id, description FROM expenses WHERE id = $1 AND trip_id = $2',
+        [expenseId, tripId]
+      );
+      if (expRows.length === 0) {
+        return res.status(404).json({ error: 'Despesa não encontrada' });
+      }
+      const exp = expRows[0];
+      const docId = exp.document_id;
+
       await query('DELETE FROM expenses WHERE id = $1 AND trip_id = $2', [expenseId, tripId]);
-      return res.json({ message: 'Despesa removida com sucesso' });
+
+      let deletedDoc = false;
+      let deletedRes = false;
+
+      if (deleteDocument && docId) {
+        await query('UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND trip_id = $2', [docId, tripId]);
+        deletedDoc = true;
+      }
+
+      if (deleteReservation) {
+        if (docId) {
+          await query(
+            `DELETE FROM hotel_reservations 
+             WHERE trip_id = $1 AND (document_id = $2 OR id IN (SELECT hotel_id FROM hotel_reservation_documents WHERE document_id = $2))`,
+            [tripId, docId]
+          );
+          await query(
+            `DELETE FROM transport_reservations 
+             WHERE trip_id = $1 AND (document_id = $2 OR id IN (SELECT reservation_id FROM transport_reservation_documents WHERE document_id = $2))`,
+            [tripId, docId]
+          );
+          await query(
+            `DELETE FROM itinerary_items 
+             WHERE trip_id = $1 AND (document_id = $2 OR id IN (SELECT itinerary_item_id FROM itinerary_item_documents WHERE document_id = $2))`,
+            [tripId, docId]
+          );
+          deletedRes = true;
+        }
+        if (exp.description) {
+          const matchBooking = exp.description.match(/\(([^)]+)\)/);
+          if (matchBooking && matchBooking[1]) {
+            const ref = matchBooking[1].trim();
+            if (ref) {
+              await query('DELETE FROM hotel_reservations WHERE trip_id = $1 AND reservation_number = $2', [tripId, ref]);
+              await query('DELETE FROM transport_reservations WHERE trip_id = $1 AND booking_code = $2', [tripId, ref]);
+              deletedRes = true;
+            }
+          }
+        }
+      }
+
+      return res.json({
+        message: 'Despesa removida com sucesso',
+        deletedDocument: deletedDoc,
+        deletedReservation: deletedRes,
+      });
     } catch (err: any) {
+      logger.error('Erro ao remover despesa:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao remover despesa' });
     }
   },

@@ -14,6 +14,7 @@ import {
   User,
   FileText,
   Loader2,
+  AlertCircle,
   ExternalLink,
 } from 'lucide-react';
 import { TransportReservation, TransportSegment } from '../types/index.js';
@@ -52,9 +53,16 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
     amount?: string | null;
     docId?: string | null;
     docName?: string | null;
+    expenseId?: string | null;
+    expenseDesc?: string | null;
+    expenseAmount?: number | null;
+    expenseCurrency?: string | null;
   } | null>(null);
   const [deleteDocumentChecked, setDeleteDocumentChecked] = useState<boolean>(true);
+  const [deleteExpenseChecked, setDeleteExpenseChecked] = useState<boolean>(true);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [addTransportError, setAddTransportError] = useState<string | null>(null);
 
   // Segment
   const [flightNumber, setFlightNumber] = useState('');
@@ -69,6 +77,7 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAddTransportError(null);
     try {
       await api.reservations.createTransport(tripId, {
         type,
@@ -95,7 +104,7 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
       setShowAddModal(false);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'Erro ao cadastrar transporte');
+      setAddTransportError(err.message || 'Erro ao cadastrar transporte');
     }
   };
 
@@ -126,25 +135,33 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
       amount: tr.total_amount ? `${tr.currency || 'USD'} ${Number(tr.total_amount).toLocaleString('pt-BR')}` : null,
       docId: tr.document_id,
       docName: tr.document_name,
+      expenseId: tr.expense_id,
+      expenseDesc: tr.expense_description,
+      expenseAmount: tr.expense_amount,
+      expenseCurrency: tr.expense_currency,
     });
     setDeleteDocumentChecked(Boolean(tr.document_id));
+    setDeleteExpenseChecked(Boolean(tr.expense_id));
+    setDeleteError(null);
   };
 
   const handleConfirmDelete = async () => {
     if (!deleteModalData) return;
     setIsDeleting(true);
+    setDeleteError(null);
     const id = deleteModalData.id;
     const prev = localTransports;
     setLocalTransports((current) => current.filter((t) => t.id !== id));
     try {
       await api.reservations.deleteTransport(tripId, id, {
         deleteDocument: deleteDocumentChecked,
+        deleteExpense: deleteExpenseChecked,
       });
       setDeleteModalData(null);
       onRefresh();
     } catch (err: any) {
       setLocalTransports(prev);
-      alert(err.message || 'Erro ao excluir transporte');
+      setDeleteError(err.message || 'Erro ao excluir transporte');
     } finally {
       setIsDeleting(false);
     }
@@ -362,6 +379,12 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-900 mb-4">Adicionar Reserva de Transporte</h3>
             <form onSubmit={handleCreate} className="space-y-3">
+              {addTransportError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                  <span>{addTransportError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo</label>
@@ -562,24 +585,54 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
               )}
             </div>
 
-            {/* Linked Document Cascading Checkbox */}
-            {deleteModalData.docId && (
-              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 mb-5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={deleteDocumentChecked}
-                  onChange={(e) => setDeleteDocumentChecked(e.target.checked)}
-                  className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
-                />
-                <div className="text-xs">
-                  <span className="font-semibold text-amber-950 block">
-                    Excluir também o documento associado em Documentos & IA
-                  </span>
-                  <span className="text-amber-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
-                    {deleteModalData.docName || 'Comprovante vinculado'}
-                  </span>
-                </div>
-              </label>
+            {/* Cascading Options */}
+            <div className="space-y-3 mb-5">
+              {/* Linked Document Cascading Checkbox */}
+              {deleteModalData.docId && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteDocumentChecked}
+                    onChange={(e) => setDeleteDocumentChecked(e.target.checked)}
+                    className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-amber-950 block">
+                      Excluir também o documento associado em Documentos & IA
+                    </span>
+                    <span className="text-amber-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteModalData.docName || 'Comprovante vinculado'}
+                    </span>
+                  </div>
+                </label>
+              )}
+
+              {/* Linked Expense Cascading Checkbox */}
+              {deleteModalData.expenseId && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteExpenseChecked}
+                    onChange={(e) => setDeleteExpenseChecked(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-emerald-950 block">
+                      Excluir também o lançamento de gasto na aba de Despesas
+                    </span>
+                    <span className="text-emerald-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteModalData.expenseDesc || 'Despesa associada'} {deleteModalData.expenseAmount ? `(${deleteModalData.expenseCurrency || 'R$'} ${Number(deleteModalData.expenseAmount).toLocaleString('pt-BR')})` : ''}
+                    </span>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            {deleteError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{deleteError}</span>
+              </div>
             )}
 
             {/* Modal Actions */}

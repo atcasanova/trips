@@ -294,6 +294,10 @@ export function aggregateHotels(hotels: any[], options?: { anonymize?: boolean }
       uploader_id: h.uploader_id,
       uploader_name: h.uploader_name,
       uploader_email: h.uploader_email,
+      expense_id: h.expense_id || null,
+      expense_description: h.expense_description || null,
+      expense_amount: h.expense_amount ? Number(h.expense_amount) : null,
+      expense_currency: h.expense_currency || null,
       created_at: h.created_at,
     }));
 

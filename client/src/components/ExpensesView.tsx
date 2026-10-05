@@ -37,6 +37,8 @@ import {
   ChevronDown,
   UserCheck,
   Info,
+  FileText,
+  Loader2,
 } from 'lucide-react';
 import { ExpenseItem, ExpenseTransfer, TripTraveler, TravelerBalance, Settlement, ExpensesResponse } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -103,6 +105,22 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
   const [transferPaymentMethod, setTransferPaymentMethod] = useState<string>('PIX');
   const [transferNotes, setTransferNotes] = useState<string>('');
   const [savingTransfer, setSavingTransfer] = useState(false);
+
+  // Delete Expense Modal state
+  const [deleteExpenseModalData, setDeleteExpenseModalData] = useState<ExpenseItem | null>(null);
+  const [deleteExpenseDocChecked, setDeleteExpenseDocChecked] = useState(false);
+  const [deleteExpenseResChecked, setDeleteExpenseResChecked] = useState(false);
+  const [isDeletingExpense, setIsDeletingExpense] = useState(false);
+  const [deleteExpenseError, setDeleteExpenseError] = useState<string | null>(null);
+
+  // Delete Transfer Modal state
+  const [deleteTransferModalData, setDeleteTransferModalData] = useState<ExpenseTransfer | null>(null);
+  const [isDeletingTransfer, setIsDeletingTransfer] = useState(false);
+  const [deleteTransferError, setDeleteTransferError] = useState<string | null>(null);
+
+  // Form error states (replacing native alerts)
+  const [expenseFormError, setExpenseFormError] = useState<string | null>(null);
+  const [transferFormError, setTransferFormError] = useState<string | null>(null);
 
   const loadExpenses = async () => {
     try {
@@ -262,6 +280,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     setTransferDate(new Date().toISOString().split('T')[0]);
     setTransferPaymentMethod('PIX');
     setTransferNotes('');
+    setTransferFormError(null);
     setShowTransferModal(true);
   };
 
@@ -274,22 +293,24 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     setTransferDate(tr.date ? tr.date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setTransferPaymentMethod(tr.payment_method || 'PIX');
     setTransferNotes(tr.notes || '');
+    setTransferFormError(null);
     setShowTransferModal(true);
   };
 
   const handleSaveTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
+    setTransferFormError(null);
     if (!transferFromId || !transferToId) {
-      alert('Selecione quem transferiu e quem recebeu o pagamento.');
+      setTransferFormError('Selecione quem transferiu e quem recebeu o pagamento.');
       return;
     }
     if (transferFromId === transferToId) {
-      alert('A transferência deve ser feita entre participantes diferentes.');
+      setTransferFormError('A transferência deve ser feita entre participantes diferentes.');
       return;
     }
     const val = parseFloat(transferAmount);
     if (isNaN(val) || val <= 0) {
-      alert('Informe um valor de transferência válido e maior que zero.');
+      setTransferFormError('Informe um valor de transferência válido e maior que zero.');
       return;
     }
 
@@ -321,23 +342,30 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
       await loadExpenses();
     } catch (err: any) {
       console.error('Erro ao salvar transferência:', err);
-      alert(err.message || 'Erro ao salvar transferência.');
+      setTransferFormError(err.message || 'Erro ao salvar transferência.');
     } finally {
       setSavingTransfer(false);
     }
   };
 
-  const handleDeleteTransfer = async (transferId: string) => {
-    if (!window.confirm('Deseja realmente remover esta transferência? O saldo dos participantes será recalculado.')) {
-      return;
-    }
+  const handleOpenDeleteTransfer = (tr: ExpenseTransfer) => {
+    setDeleteTransferModalData(tr);
+    setDeleteTransferError(null);
+  };
 
+  const handleConfirmDeleteTransfer = async () => {
+    if (!deleteTransferModalData) return;
     try {
-      await api.expenses.deleteTransfer(tripId, transferId);
+      setIsDeletingTransfer(true);
+      setDeleteTransferError(null);
+      await api.expenses.deleteTransfer(tripId, deleteTransferModalData.id);
+      setDeleteTransferModalData(null);
       await loadExpenses();
     } catch (err: any) {
       console.error('Erro ao remover transferência:', err);
-      alert(err.message || 'Erro ao remover transferência.');
+      setDeleteTransferError(err.message || 'Erro ao remover transferência.');
+    } finally {
+      setIsDeletingTransfer(false);
     }
   };
 
@@ -601,6 +629,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     setDate(new Date().toISOString().split('T')[0]);
     setIsShared(true);
     setNotes('');
+    setExpenseFormError(null);
 
     const allTravelerIds = (data?.travelers || []).map((t) => t.id);
     setSelectedTravelers(allTravelerIds);
@@ -625,6 +654,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     setIsShared(Boolean(exp.is_shared));
     setPaidByTravelerId(exp.paid_by_traveler_id || exp.traveler_id || '');
     setNotes(exp.notes || '');
+    setExpenseFormError(null);
 
     const allTravelerIds = (data?.travelers || []).map((t) => t.id);
 
@@ -659,19 +689,20 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
   // Save Expense (Create or Update)
   const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
+    setExpenseFormError(null);
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
-      alert('Informe um valor válido');
+      setExpenseFormError('Informe um valor válido e maior que zero');
       return;
     }
 
     if (!desc.trim()) {
-      alert('Informe uma descrição para a despesa');
+      setExpenseFormError('Informe uma descrição para a despesa');
       return;
     }
 
     if (isShared && selectedTravelers.length === 0) {
-      alert('Selecione pelo menos um viajante para dividir a despesa');
+      setExpenseFormError('Selecione pelo menos um viajante para dividir a despesa');
       return;
     }
 
@@ -721,17 +752,32 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
       setShowModal(false);
       loadExpenses();
     } catch (err: any) {
-      alert(err.message || 'Erro ao salvar despesa');
+      setExpenseFormError(err.message || 'Erro ao salvar despesa');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir esta despesa?')) return;
+  const handleOpenDeleteExpense = (exp: ExpenseItem) => {
+    setDeleteExpenseModalData(exp);
+    setDeleteExpenseDocChecked(Boolean(exp.document_id));
+    setDeleteExpenseResChecked(Boolean(exp.linked_reservation));
+    setDeleteExpenseError(null);
+  };
+
+  const handleConfirmDeleteExpense = async () => {
+    if (!deleteExpenseModalData) return;
     try {
-      await api.expenses.delete(tripId, id);
-      loadExpenses();
+      setIsDeletingExpense(true);
+      setDeleteExpenseError(null);
+      await api.expenses.delete(tripId, deleteExpenseModalData.id, {
+        deleteDocument: deleteExpenseDocChecked,
+        deleteReservation: deleteExpenseResChecked,
+      });
+      setDeleteExpenseModalData(null);
+      await loadExpenses();
     } catch (err: any) {
-      alert(err.message || 'Erro ao excluir despesa');
+      setDeleteExpenseError(err.message || 'Erro ao excluir despesa');
+    } finally {
+      setIsDeletingExpense(false);
     }
   };
 
@@ -1316,8 +1362,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleDeleteTransfer(tr.id)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                                onClick={() => handleOpenDeleteTransfer(tr)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
                                 title="Remover transferência"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1539,8 +1585,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                               <span>Editar</span>
                             </button>
                             <button
-                              onClick={() => handleDelete(exp.id)}
-                              className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
+                              onClick={() => handleOpenDeleteExpense(exp)}
+                              className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer"
                               title="Remover despesa"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1575,6 +1621,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
             </div>
 
             <form onSubmit={handleSaveExpense} className="space-y-4 flex-1">
+              {expenseFormError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                  <span>{expenseFormError}</span>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Descrição *</label>
                 <input
@@ -2020,6 +2072,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
 
             {/* Modal Form */}
             <form onSubmit={handleSaveTransfer} className="p-6 space-y-4">
+              {transferFormError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                  <span>{transferFormError}</span>
+                </div>
+              )}
               {/* Who paid -> Who received */}
               <div className="grid grid-cols-2 gap-3 items-center">
                 <div>
@@ -2162,6 +2220,189 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Expense Confirmation Modal */}
+      {deleteExpenseModalData && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2.5 bg-red-50 text-red-600 rounded-xl shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Excluir Despesa</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Esta ação removerá o lançamento financeiro da viagem.
+                </p>
+              </div>
+            </div>
+
+            {/* Expense Details Box */}
+            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2 text-xs mb-4">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Descrição:</span>
+                <strong className="text-slate-900 truncate max-w-[240px]">{deleteExpenseModalData.description}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Valor:</span>
+                <strong className="text-brand-700 font-mono text-sm">
+                  {deleteExpenseModalData.currency || 'BRL'} {Number(deleteExpenseModalData.amount).toFixed(2)}
+                </strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Data:</span>
+                <span className="text-slate-700">
+                  {deleteExpenseModalData.date ? new Date(deleteExpenseModalData.date).toLocaleDateString('pt-BR') : 'Não informada'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Pago por:</span>
+                <span className="text-slate-700">
+                  {deleteExpenseModalData.paid_by_name || 'Participante'}
+                </span>
+              </div>
+            </div>
+
+            {/* Cascading Options */}
+            <div className="space-y-3 mb-5">
+              {/* Linked Document Option */}
+              {deleteExpenseModalData.document_id && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteExpenseDocChecked}
+                    onChange={(e) => setDeleteExpenseDocChecked(e.target.checked)}
+                    className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-amber-950 block">
+                      Excluir também o documento associado em Documentos & IA
+                    </span>
+                    <span className="text-amber-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteExpenseModalData.document_name || 'Comprovante / Recibo vinculado'}
+                    </span>
+                  </div>
+                </label>
+              )}
+
+              {/* Linked Reservation Option */}
+              {deleteExpenseModalData.linked_reservation && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-purple-50/70 border border-purple-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteExpenseResChecked}
+                    onChange={(e) => setDeleteExpenseResChecked(e.target.checked)}
+                    className="w-4 h-4 text-purple-600 rounded border-slate-300 focus:ring-purple-500 mt-0.5 cursor-pointer"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-purple-950 block">
+                      Excluir também a reserva vinculada ({deleteExpenseModalData.linked_reservation.type === 'HOTEL' ? 'Hospedagem' : deleteExpenseModalData.linked_reservation.type === 'TRANSPORT' ? 'Transporte/Voo' : 'Atividade do Roteiro'})
+                    </span>
+                    <span className="text-purple-800 text-[11px] block mt-0.5 truncate max-w-[280px]">
+                      {deleteExpenseModalData.linked_reservation.name}
+                    </span>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            {deleteExpenseError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{deleteExpenseError}</span>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isDeletingExpense}
+                onClick={() => setDeleteExpenseModalData(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingExpense}
+                onClick={handleConfirmDeleteExpense}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                {isDeletingExpense ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>{isDeletingExpense ? 'Excluindo...' : 'Confirmar Exclusão'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Transfer Confirmation Modal */}
+      {deleteTransferModalData && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Remover Transferência</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Deseja remover este registro de acerto entre viajantes?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2 text-xs mb-4">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Quem enviou:</span>
+                <strong className="text-slate-900">{deleteTransferModalData.from_name || 'Participante'}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Quem recebeu:</span>
+                <strong className="text-slate-900">{deleteTransferModalData.to_name || 'Participante'}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Valor:</span>
+                <strong className="text-indigo-700 font-mono text-sm">
+                  {deleteTransferModalData.currency} {Number(deleteTransferModalData.amount).toFixed(2)}
+                </strong>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              O saldo dos participantes e as sugestões de acerto serão recalculados automaticamente.
+            </p>
+
+            {deleteTransferError && (
+              <div className="p-3 mb-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{deleteTransferError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isDeletingTransfer}
+                onClick={() => setDeleteTransferModalData(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingTransfer}
+                onClick={handleConfirmDeleteTransfer}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                {isDeletingTransfer ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>{isDeletingTransfer ? 'Removendo...' : 'Remover Transferência'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
