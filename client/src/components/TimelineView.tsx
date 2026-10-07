@@ -38,7 +38,9 @@ import { parseSafeDate, formatDateBr } from '../utils/date.js';
 import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
 import { GoogleMapsIcon } from './GoogleMapsIcon.js';
 import { DayMiniMap } from './DayMiniMap.js';
-import { aggregateFlightSegments, aggregateHotels } from '../utils/aggregation.js';
+import { aggregateFlightSegments, aggregateHotels, parseGuestNames } from '../utils/aggregation.js';
+
+
 
 interface TimelineViewProps {
   trip: Trip;
@@ -214,9 +216,20 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   const getHotelForDate = useCallback((dateStr: string) => {
     return aggregatedHotels.find(h => {
-      const inD = h.check_in_date;
-      const outD = h.check_out_date || inD;
+      const inD = (h.check_in_date || '').slice(0, 10);
+      const outD = (h.check_out_date || inD).slice(0, 10);
       return inD && outD && dateStr >= inD && dateStr <= outD;
+    });
+  }, [aggregatedHotels]);
+
+  const getHotelsForDate = useCallback((dateStr: string) => {
+    return aggregatedHotels.filter(h => {
+      const inD = (h.check_in_date || '').slice(0, 10);
+      const outD = (h.check_out_date || inD).slice(0, 10);
+      if (outD > inD) {
+        return dateStr >= inD && dateStr < outD;
+      }
+      return dateStr === inD;
     });
   }, [aggregatedHotels]);
 
@@ -279,6 +292,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       tripDay?: TripDay;
       flights: ReturnType<typeof aggregateFlightSegments>;
       hotel?: ReturnType<typeof getHotelForDate>;
+      dayHotels?: ReturnType<typeof getHotelsForDate>;
+      isCompetingHotelDay?: boolean;
+      isSplitGroupHotelDay?: boolean;
+      competingGuestsForDay?: string[];
       baseLocation: string;
       locationIcon: string;
       isReturnDay: boolean;
@@ -303,8 +320,34 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         const isReturnDay = Boolean(returnDateStr && cur === returnDateStr);
         const isPostReturnDay = Boolean(returnDateStr && cur > returnDateStr);
         const dayFlights = flightsByDate[cur] || [];
-        const dayHotel = getHotelForDate(cur);
+        const dayHotels = getHotelsForDate(cur);
+        const dayHotel = dayHotels[0] || getHotelForDate(cur);
         const tripDay = daysByDateStr[cur];
+
+        let isCompetingHotelDay = false;
+        let isSplitGroupHotelDay = false;
+        const competingGuestsForDay: string[] = [];
+
+        if (dayHotels.length > 1) {
+          const gMap = new Map<string, { name: string; count: number }>();
+          for (const h of dayHotels) {
+            const gList = parseGuestNames(h.guest_names);
+            for (const g of gList) {
+              const norm = g.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              if (!norm) continue;
+              if (!gMap.has(norm)) gMap.set(norm, { name: g, count: 0 });
+              gMap.get(norm)!.count += 1;
+            }
+          }
+          for (const [, val] of gMap.entries()) {
+            if (val.count > 1) competingGuestsForDay.push(val.name);
+          }
+          if (competingGuestsForDay.length > 0) {
+            isCompetingHotelDay = true;
+          } else {
+            isSplitGroupHotelDay = true;
+          }
+        }
 
         let baseLocation = tripDay?.base_location || '';
         let locationIcon = tripDay?.icon || '📍';
@@ -343,6 +386,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           tripDay,
           flights: dayFlights,
           hotel: dayHotel,
+          dayHotels,
+          isCompetingHotelDay,
+          isSplitGroupHotelDay,
+          competingGuestsForDay,
           baseLocation,
           locationIcon,
           isReturnDay,
@@ -1199,8 +1246,28 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 );
                               })}
 
-                              {/* Hotel badge (aggregated: exactly 1 badge per matching hotel) */}
-                              {cell.hotel && (
+                               {/* Hotel badge / options */}
+                              {cell.isCompetingHotelDay && cell.dayHotels && cell.dayHotels.length > 1 ? (
+                                <div
+                                  className="text-[10px] bg-amber-50 text-amber-900 border border-amber-300 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium flex items-center gap-1"
+                                  title={`⚡ ${cell.dayHotels.length} opções concorrentes de hotel: ${cell.dayHotels.map((h, i) => `Opção ${i + 1}: ${h.hotel_name}`).join(' vs ')}`}
+                                >
+                                  <span className="text-amber-600 font-bold shrink-0">⚡</span>
+                                  <strong className="font-semibold text-amber-900 truncate">
+                                    {cell.dayHotels.length} Opções: {cell.dayHotels.map(h => h.hotel_name).join(' / ')}
+                                  </strong>
+                                </div>
+                              ) : cell.isSplitGroupHotelDay && cell.dayHotels && cell.dayHotels.length > 1 ? (
+                                <div
+                                  className="text-[10px] bg-indigo-50 text-indigo-900 border border-indigo-200 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium flex items-center gap-1"
+                                  title={`👥 Grupo dividido em ${cell.dayHotels.length} hotéis: ${cell.dayHotels.map(h => `${h.hotel_name} (${h.guest_names || '?'})`).join(' + ')}`}
+                                >
+                                  <Users className="w-3 h-3 text-indigo-600 shrink-0" />
+                                  <strong className="font-semibold text-indigo-900 truncate">
+                                    {cell.dayHotels.length} Hotéis: {cell.dayHotels.map(h => h.hotel_name).join(' + ')}
+                                  </strong>
+                                </div>
+                              ) : cell.hotel ? (
                                 <div
                                   className="text-[10px] bg-emerald-50 text-emerald-900 border border-emerald-200/90 rounded px-1.5 py-0.5 mb-1 truncate shadow-2xs font-medium flex items-center gap-1"
                                   title={`Hotel: ${cell.hotel.hotel_name} • Hóspedes: ${cell.hotel.guest_names}`}
@@ -1213,7 +1280,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     </span>
                                   )}
                                 </div>
-                              )}
+                              ) : null}
 
                               {/* Events & Key Attractions (aggregated: exactly 1 badge with attendees) */}
                               {dayItems.slice(0, 2).map((it) => (
@@ -1514,36 +1581,146 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
                 {/* Aggregated Hotel for this Day */}
                 {(() => {
-                  const activeHotel = getHotelForDate(day.date);
-                  if (!activeHotel) return null;
-                  return (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-950 shadow-2xs my-2.5">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
-                          <Building2 className="w-4 h-4" />
+                  const dayHotels = getHotelsForDate(day.date);
+                  if (!dayHotels || dayHotels.length === 0) return null;
+
+                  if (dayHotels.length === 1) {
+                    const activeHotel = dayHotels[0];
+                    return (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-950 shadow-2xs my-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                            <Building2 className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap font-bold">
+                              <span className="text-slate-900">{activeHotel.hotel_name}</span>
+                              {activeHotel.city && <span className="text-slate-500 text-[11px] font-normal">({activeHotel.city})</span>}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 mt-0.5">
+                              <span className="inline-flex items-center gap-1 font-semibold text-emerald-800">
+                                <Users className="w-3 h-3" />
+                                {activeHotel.guestCount > 1 ? `${activeHotel.guestCount} hóspedes: ` : 'Hóspede: '}
+                                {activeHotel.guest_names || 'Viajantes'}
+                              </span>
+                              {activeHotel.room_type && (
+                                <span className="text-slate-500">• {activeHotel.room_type}</span>
+                              )}
+                              {activeHotel.reservation_number && (
+                                <span className="text-slate-500 font-mono text-[10px]">Reserva: {activeHotel.reservation_number}</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap font-bold">
-                            <span className="text-slate-900">{activeHotel.hotel_name}</span>
-                            {activeHotel.city && <span className="text-slate-500 text-[11px] font-normal">({activeHotel.city})</span>}
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 mt-0.5">
-                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-800">
-                              <Users className="w-3 h-3" />
-                              {activeHotel.guestCount > 1 ? `${activeHotel.guestCount} hóspedes: ` : 'Hóspede: '}
-                              {activeHotel.guest_names || 'Viajantes'}
-                            </span>
-                            {activeHotel.room_type && (
-                              <span className="text-slate-500">• {activeHotel.room_type}</span>
-                            )}
-                            {activeHotel.reservation_number && (
-                              <span className="text-slate-500 font-mono text-[10px]">Reserva: {activeHotel.reservation_number}</span>
-                            )}
-                          </div>
+                        <div className="text-[11px] text-slate-500 shrink-0 font-medium">
+                          {activeHotel.check_in_date === day.date ? '🛎️ Check-in hoje' : activeHotel.check_out_date === day.date ? '🧳 Check-out hoje' : '🏨 Hospedagem ativa'}
                         </div>
                       </div>
-                      <div className="text-[11px] text-slate-500 shrink-0 font-medium">
-                        {activeHotel.check_in_date === day.date ? '🛎️ Check-in hoje' : activeHotel.check_out_date === day.date ? '🧳 Check-out hoje' : '🏨 Hospedagem ativa'}
+                    );
+                  }
+
+                  // Day with multiple hotels
+                  const gMap = new Map<string, { name: string; count: number }>();
+                  for (const h of dayHotels) {
+                    const gList = parseGuestNames(h.guest_names);
+                    for (const g of gList) {
+                      const norm = g.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                      if (!norm) continue;
+                      if (!gMap.has(norm)) gMap.set(norm, { name: g, count: 0 });
+                      gMap.get(norm)!.count += 1;
+                    }
+                  }
+                  const competingGuests: string[] = [];
+                  for (const [, val] of gMap.entries()) {
+                    if (val.count > 1) competingGuests.push(val.name);
+                  }
+                  const isCompeting = competingGuests.length > 0;
+
+                  if (isCompeting) {
+                    return (
+                      <div className="p-3 bg-amber-50/80 border border-amber-300 rounded-xl text-xs text-amber-950 shadow-2xs my-2.5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2 pb-2 border-b border-amber-200/80">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                            <span className="text-amber-600 font-extrabold text-sm">⚡</span>
+                            <span>Opções Concorrentes de Hospedagem ({dayHotels.length} opções em análise)</span>
+                          </div>
+                          <span className="text-[11px] text-amber-800 bg-amber-100 font-medium px-2 py-0.5 rounded-full w-fit">
+                            Hóspede em comum: {competingGuests.join(', ')}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                          {dayHotels.map((h, hIdx) => (
+                            <div key={h.id || hIdx} className="bg-white/95 border border-amber-200/90 rounded-lg p-2.5 shadow-2xs flex flex-col justify-between">
+                              <div>
+                                <div className="flex items-center justify-between gap-1 mb-1.5">
+                                  <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">
+                                    Opção {hIdx + 1}
+                                  </span>
+                                  {h.total_amount && (
+                                    <span className="text-[11px] font-bold text-slate-900">
+                                      {h.currency || 'R$'} {Number(h.total_amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="font-bold text-slate-900">{h.hotel_name}</div>
+                                {h.city && <div className="text-[11px] text-slate-500">{h.city}</div>}
+                                <div className="text-[11px] text-slate-600 mt-1 flex items-center gap-1">
+                                  <Users className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span className="truncate">{h.guest_names || 'Hóspedes'}</span>
+                                </div>
+                                {h.room_type && (
+                                  <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                                    Quarto: {h.room_type}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                                <span>{h.check_in_date === day.date ? '🛎️ Check-in' : h.check_out_date === day.date ? '🧳 Check-out' : '🏨 Noite ativa'}</span>
+                                {h.reservation_number && <span className="font-mono">#{h.reservation_number}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Split Group
+                  return (
+                    <div className="p-3 bg-indigo-50/80 border border-indigo-200 rounded-xl text-xs text-indigo-950 shadow-2xs my-2.5">
+                      <div className="flex items-center justify-between mb-2 pb-2 border-b border-indigo-200/80">
+                        <div className="flex items-center gap-1.5 font-bold text-indigo-900">
+                          <Users className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>Grupo Dividido em Hotéis Diferentes ({dayHotels.length} hotéis)</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                        {dayHotels.map((h, hIdx) => (
+                          <div key={h.id || hIdx} className="bg-white/95 border border-indigo-200/90 rounded-lg p-2.5 shadow-2xs flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between gap-1 mb-1.5">
+                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800">
+                                  Hotel {hIdx + 1}
+                                </span>
+                                {h.total_amount && (
+                                  <span className="text-[11px] font-bold text-slate-900">
+                                    {h.currency || 'R$'} {Number(h.total_amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="font-bold text-slate-900">{h.hotel_name}</div>
+                              {h.city && <div className="text-[11px] text-slate-500">{h.city}</div>}
+                              <div className="text-[11px] text-slate-700 mt-1 flex items-center gap-1 font-medium">
+                                <Users className="w-3 h-3 text-indigo-500 shrink-0" />
+                                <span className="truncate">{h.guest_names || 'Viajantes'}</span>
+                              </div>
+                            </div>
+                            <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                              <span>{h.check_in_date === day.date ? '🛎️ Check-in' : h.check_out_date === day.date ? '🧳 Check-out' : '🏨 Noite ativa'}</span>
+                              {h.reservation_number && <span className="font-mono">#{h.reservation_number}</span>}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );

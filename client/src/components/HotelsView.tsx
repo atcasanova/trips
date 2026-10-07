@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Building,
   Plus,
@@ -16,10 +16,13 @@ import {
   AlertTriangle,
   AlertCircle,
   ExternalLink,
+  Sparkles,
 } from 'lucide-react';
-import { HotelReservation, HotelSubReservation, TripTraveler } from '../types/index.js';
+import { HotelReservation, HotelSubReservation, TripTraveler, HotelCluster } from '../types/index.js';
 import { api } from '../api/client.js';
 import { formatDateBr } from '../utils/date.js';
+import { detectHotelClusters } from '../utils/aggregation.js';
+
 
 interface HotelsViewProps {
   tripId: string;
@@ -269,6 +272,461 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
     }
   };
 
+  const clusters = useMemo(() => detectHotelClusters(localHotels), [localHotels]);
+  const [chosenOptions, setChosenOptions] = useState<Record<string, string>>({});
+
+  const clusterGroups = useMemo(() => {
+    const groups: Array<{ type: 'SINGLES' | 'CLUSTER'; items: any[] }> = [];
+    let currentSingles: any[] = [];
+
+    for (const c of clusters) {
+      if (c.type === 'SINGLE') {
+        currentSingles.push(c.hotels[0]);
+      } else {
+        if (currentSingles.length > 0) {
+          groups.push({ type: 'SINGLES', items: currentSingles });
+          currentSingles = [];
+        }
+        groups.push({ type: 'CLUSTER', items: [c] });
+      }
+    }
+    if (currentSingles.length > 0) {
+      groups.push({ type: 'SINGLES', items: currentSingles });
+    }
+    return groups;
+  }, [clusters]);
+
+  const renderHotelCard = (
+    h: HotelReservation,
+    cardOptions?: {
+      optionBadge?: string;
+      isCompeting?: boolean;
+      isChosen?: boolean;
+      onChooseOption?: () => void;
+    }
+  ) => {
+    const hasMultipleSubs = Boolean(h.sub_reservations && h.sub_reservations.length > 1);
+    const activeSubId = activeSubTabs[h.id] || (h.sub_reservations && h.sub_reservations[0]?.id) || h.id;
+    const currentSub: HotelSubReservation | HotelReservation =
+      hasMultipleSubs && h.sub_reservations
+        ? h.sub_reservations.find((s) => s.id === activeSubId) || h.sub_reservations[0]
+        : h;
+
+    const guestList = parseGuests(currentSub.guest_names);
+    const isAddingGuest = activeAddGuestHotelId === currentSub.id;
+    const isUpdating = updatingHotelId === currentSub.id;
+
+    return (
+      <div
+        key={h.id}
+        className={`bg-white rounded-2xl border p-5 shadow-sm flex flex-col justify-between transition-all ${
+          cardOptions?.isChosen
+            ? 'border-emerald-400 ring-2 ring-emerald-500/20 shadow-md'
+            : cardOptions?.isCompeting
+            ? 'border-amber-200/90 shadow-2xs hover:border-amber-300'
+            : 'border-slate-200'
+        }`}
+      >
+        <div>
+          {/* Hotel Header */}
+          <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2.5">
+              <div
+                className={`p-2 rounded-xl ${
+                  cardOptions?.isChosen
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : cardOptions?.isCompeting
+                    ? 'bg-amber-100/80 text-amber-800'
+                    : 'bg-emerald-50 text-emerald-700'
+                }`}
+              >
+                <Building className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-sm text-slate-900">{h.hotel_name}</h3>
+                  {cardOptions?.optionBadge && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                      {cardOptions.optionBadge}
+                    </span>
+                  )}
+                  {cardOptions?.isChosen && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1 shadow-2xs">
+                      <Check className="w-3 h-3" /> Opção Escolhida
+                    </span>
+                  )}
+                  {hasMultipleSubs && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-brand-50 text-brand-700 border border-brand-200">
+                      {h.sub_reservations!.length} reservas
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-slate-400" />
+                  {h.city || 'Destino'} {h.country ? `• ${h.country}` : ''}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              {cardOptions?.isCompeting && canEdit && (
+                <button
+                  type="button"
+                  onClick={cardOptions.onChooseOption}
+                  className={`text-[11px] font-semibold px-2 py-1 rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                    cardOptions.isChosen
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                  }`}
+                  title={cardOptions.isChosen ? 'Desmarcar como opção escolhida' : 'Fixar como opção escolhida'}
+                >
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${cardOptions.isChosen ? 'text-white' : 'text-slate-400'}`} />
+                  <span className="hidden sm:inline">{cardOptions.isChosen ? 'Escolhida' : 'Escolher'}</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  onClick={() => openDeleteModal(h, currentSub, !hasMultipleSubs)}
+                  className="p-1 text-slate-400 hover:text-red-600 transition-colors cursor-pointer rounded hover:bg-slate-50"
+                  title={
+                    cardOptions?.isCompeting
+                      ? 'Descartar esta opção concorrente (com despesas e documento)'
+                      : hasMultipleSubs
+                      ? 'Excluir esta reserva selecionada'
+                      : 'Excluir hospedagem'
+                  }
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* SUB-RESERVAS TABS (When multiple reservations exist for this hotel) */}
+          {hasMultipleSubs && h.sub_reservations && (
+            <div className="mb-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5 text-brand-600" />
+                  Vouchers / Reservas Agrupadas ({h.sub_reservations.length})
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Selecione para gerenciar individualmente
+                </span>
+              </div>
+
+              <div className="flex items-stretch gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
+                {h.sub_reservations.map((sub, idx) => {
+                  const isSelected = sub.id === currentSub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => setActiveSubTabs((prev) => ({ ...prev, [h.id]: sub.id }))}
+                      className={`flex-1 min-w-[220px] text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-brand-50/90 border-brand-500 ring-2 ring-brand-500/20 shadow-xs'
+                          : 'bg-slate-50/80 hover:bg-slate-100/90 border-slate-200 text-slate-600'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="font-bold text-slate-900 truncate">
+                          Reserva #{sub.reservation_number || idx + 1}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                          {sub.total_amount && (
+                            <span className="font-bold text-brand-700 text-[11px]">
+                              {sub.currency} {Number(sub.total_amount).toLocaleString('pt-BR')}
+                            </span>
+                          )}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDeleteModal(h, sub, false);
+                              }}
+                              className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                              title={`Excluir reserva #${sub.reservation_number || idx + 1}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-[11px] space-y-0.5">
+                        <div className="flex items-center gap-1 text-slate-700 truncate">
+                          <span className="text-slate-400 font-normal shrink-0">Em nome de:</span>
+                          <strong className="font-medium text-slate-900 truncate">
+                            {sub.guest_names || 'Não informado'}
+                          </strong>
+                        </div>
+                        <div className="flex items-center gap-1 text-slate-500 truncate">
+                          <span className="text-slate-400 font-normal shrink-0">Enviado por:</span>
+                          <span className="truncate">{sub.uploader_name || sub.uploader_email || 'Manual'}</span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Details of Current Reservation */}
+          <div className="space-y-2.5 text-xs">
+            <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-slate-400" />
+                <span>
+                  Check-in: <strong>{formatDateBr(h.check_in_date)}</strong>
+                </span>
+              </div>
+              <span>
+                Check-out: <strong>{formatDateBr(h.check_out_date)}</strong>
+              </span>
+            </div>
+
+            {/* Single Stay Meta (Sender & Title holder) */}
+            {!hasMultipleSubs && (
+              <div className="flex items-center justify-between p-2 bg-slate-50/70 border border-slate-100 rounded-xl text-[11px]">
+                <div className="flex items-center gap-1 text-slate-600 truncate">
+                  <span className="text-slate-400">Enviado por:</span>
+                  <strong className="font-medium text-slate-800 truncate">
+                    {h.uploader_name || h.uploader_email || 'Manual'}
+                  </strong>
+                </div>
+                {currentSub.reservation_number && (
+                  <div className="flex items-center gap-1 font-mono text-[11px]">
+                    <span className="text-slate-400">Reserva:</span>
+                    <span className="text-slate-900 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                      #{currentSub.reservation_number}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentSub.room_type && (
+              <div className="text-slate-700">
+                Acomodação: <strong>{currentSub.room_type}</strong>
+              </div>
+            )}
+
+            {/* HÓSPEDES & ADIÇÃO RÁPIDA DE PARTICIPANTES */}
+            <div className="p-2.5 bg-slate-50/80 border border-slate-200/70 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-slate-700 font-semibold text-xs">
+                  <Users className="w-3.5 h-3.5 text-brand-600" />
+                  <span>Hóspede(s) desta reserva:</span>
+                  {isUpdating && <Loader2 className="w-3 h-3 text-brand-600 animate-spin ml-1" />}
+                </div>
+
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveAddGuestHotelId(activeAddGuestHotelId === currentSub.id ? null : currentSub.id);
+                      setCustomGuestInput('');
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] text-brand-600 hover:text-brand-700 font-semibold cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3 h-3 text-brand-600" />
+                    <span>Adicionar</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Guest Badges List */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {guestList.length === 0 ? (
+                  <span className="text-[11px] text-slate-400 italic">Nenhum hóspede vinculado</span>
+                ) : (
+                  guestList.map((guestName) => (
+                    <span
+                      key={guestName}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 text-[11px] font-medium shadow-2xs"
+                    >
+                      <User className="w-3 h-3 text-slate-400" />
+                      <span>{guestName}</span>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveGuest(h.id, currentSub.id, guestList, guestName)}
+                          disabled={isUpdating}
+                          className="text-slate-400 hover:text-red-500 rounded p-0.5 hover:bg-slate-100 transition-colors cursor-pointer"
+                          title={`Remover ${guestName} desta reserva`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </span>
+                  ))
+                )}
+              </div>
+
+              {/* Status feedback message */}
+              {statusMessage && statusMessage.hotelId === h.id && (
+                <p className="text-[11px] font-medium text-emerald-700 flex items-center gap-1">
+                  <Check className="w-3 h-3" /> {statusMessage.text}
+                </p>
+              )}
+
+              {/* Popover / Suggestions Panel */}
+              {isAddingGuest && (
+                <div className="mt-2 pt-2 border-t border-slate-200/80 space-y-2 bg-white p-3 rounded-lg border shadow-xs animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                      <UserPlus className="w-3.5 h-3.5 text-brand-600" />
+                      Sugerir Participantes da Viagem
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveAddGuestHotelId(null)}
+                      className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Suggested travelers list */}
+                  {travelers.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                      {travelers.map((traveler) => {
+                        const alreadyAdded = guestList.some(
+                          (g) => g.toLowerCase() === traveler.display_name.toLowerCase()
+                        );
+
+                        return (
+                          <button
+                            key={traveler.id}
+                            type="button"
+                            disabled={alreadyAdded || isUpdating}
+                            onClick={() => handleAddGuest(h.id, currentSub.id, guestList, traveler.display_name)}
+                            className={`flex items-center justify-between p-1.5 rounded-lg border text-left text-xs transition-colors cursor-pointer ${
+                              alreadyAdded
+                                ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-white hover:bg-brand-50 border-slate-200 hover:border-brand-300 text-slate-800'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5 truncate">
+                              <User className={`w-3 h-3 ${alreadyAdded ? 'text-slate-400' : 'text-brand-600'} shrink-0`} />
+                              <span className="font-medium truncate">{traveler.display_name}</span>
+                              {traveler.role === 'COMPANION' && (
+                                <span className="text-[9px] px-1 py-0.2 bg-slate-100 text-slate-500 rounded font-normal shrink-0">
+                                  Acomp.
+                                </span>
+                              )}
+                            </span>
+
+                            {alreadyAdded ? (
+                              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 shrink-0">
+                                <Check className="w-3 h-3" /> Adicionado
+                              </span>
+                            ) : (
+                              <Plus className="w-3.5 h-3.5 text-brand-600 shrink-0 ml-1" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-400 italic">Nenhum participante registrado nesta viagem.</p>
+                  )}
+
+                  {/* Custom Name Input */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={customGuestInput}
+                      onChange={(e) => setCustomGuestInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddGuest(h.id, currentSub.id, guestList, customGuestInput);
+                        }
+                      }}
+                      placeholder="Ou digite outro nome..."
+                      className="flex-1 px-2.5 py-1 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      disabled={!customGuestInput.trim() || isUpdating}
+                      onClick={() => handleAddGuest(h.id, currentSub.id, guestList, customGuestInput)}
+                      className="px-2.5 py-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      Adicionar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {h.address && (
+              <div className="text-slate-500 text-[11px] flex items-start gap-1">
+                <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                <span>{h.address}</span>
+              </div>
+            )}
+
+            {/* Linked Document Info */}
+            {currentSub.document_id && (
+              <div className="flex items-center justify-between p-2 bg-purple-50/70 border border-purple-100 rounded-xl text-[11px]">
+                <div className="flex items-center gap-1.5 text-purple-900 truncate">
+                  <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                  <span className="truncate">{currentSub.document_name || 'Comprovante anexado'}</span>
+                </div>
+                <a
+                  href={api.documents.viewUrl(currentSub.document_id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-0.5 shrink-0 ml-2"
+                >
+                  Ver PDF <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            )}
+
+            {currentSub.notes && (
+              <div className="p-2 bg-amber-50/60 border border-amber-200/50 rounded-lg text-amber-900 text-[11px]">
+                {currentSub.notes}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer with Sub-reserva Delete & Amount */}
+        <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-semibold text-[10px] flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" />
+              {currentSub.payment_status || h.payment_status || 'Confirmado'}
+            </span>
+
+            {hasMultipleSubs && canEdit && (
+              <button
+                type="button"
+                onClick={() => openDeleteModal(h, currentSub, false)}
+                className="text-[11px] text-red-600 hover:text-red-700 font-semibold inline-flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-red-50 transition-colors cursor-pointer"
+                title="Excluir apenas esta reserva individual"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Excluir esta reserva</span>
+              </button>
+            )}
+          </div>
+
+          {currentSub.total_amount ? (
+            <span className="font-bold text-slate-900 text-sm">
+              {currentSub.currency || h.currency} {Number(currentSub.total_amount).toLocaleString('pt-BR')}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -291,377 +749,107 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
           Nenhuma hospedagem cadastrada nesta viagem. Você pode enviar a confirmação de reserva na aba Documentos para preenchimento automático por IA!
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {localHotels.map((h) => {
-            const hasMultipleSubs = Boolean(h.sub_reservations && h.sub_reservations.length > 1);
-            const activeSubId = activeSubTabs[h.id] || (h.sub_reservations && h.sub_reservations[0]?.id) || h.id;
-            const currentSub: HotelSubReservation | HotelReservation =
-              hasMultipleSubs && h.sub_reservations
-                ? h.sub_reservations.find((s) => s.id === activeSubId) || h.sub_reservations[0]
-                : h;
+        <div className="space-y-6">
+          {clusterGroups.map((grp, gIdx) => {
+            if (grp.type === 'SINGLES') {
+              return (
+                <div key={`singles-${gIdx}`} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {grp.items.map((h) => renderHotelCard(h))}
+                </div>
+              );
+            }
 
-            const guestList = parseGuests(currentSub.guest_names);
-            const isAddingGuest = activeAddGuestHotelId === currentSub.id;
-            const isUpdating = updatingHotelId === currentSub.id;
+            const cluster: HotelCluster = grp.items[0];
 
-            return (
-              <div key={h.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col justify-between transition-all">
-                <div>
-                  {/* Hotel Header */}
-                  <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl">
-                        <Building className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-sm text-slate-900">{h.hotel_name}</h3>
-                          {hasMultipleSubs && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-brand-50 text-brand-700 border border-brand-200">
-                              {h.sub_reservations!.length} reservas
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-slate-500 flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-slate-400" />
-                          {h.city || 'Destino'} {h.country ? `• ${h.country}` : ''}
+            if (cluster.type === 'CONCURRENT_OPTIONS') {
+              return (
+                <div
+                  key={cluster.id}
+                  className="bg-amber-50/60 border-2 border-amber-300/90 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 animate-in fade-in duration-200"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-amber-200/90">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-200 text-amber-950 border border-amber-400/80 inline-flex items-center gap-1.5 shadow-2xs">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-800" />
+                          {cluster.hotels.length} Opções Concorrentes
                         </span>
+                        <span className="text-xs font-bold text-slate-800">
+                          {formatDateBr(cluster.startDate)} a {formatDateBr(cluster.endDate)}
+                        </span>
+                        {cluster.city && (
+                          <span className="text-xs text-slate-500 flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-slate-400" />
+                            {cluster.city} {cluster.country ? `• ${cluster.country}` : ''}
+                          </span>
+                        )}
                       </div>
+                      <p className="text-xs text-amber-950 font-medium">
+                        Reserva em avaliação para:{' '}
+                        <strong className="text-slate-900">{cluster.competingGuests.join(', ')}</strong>
+                      </p>
                     </div>
-
-                    {canEdit && (
-                      <button
-                        onClick={() => openDeleteModal(h, currentSub, !hasMultipleSubs)}
-                        className="p-1 text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
-                        title={hasMultipleSubs ? 'Excluir esta reserva selecionada' : 'Excluir hospedagem'}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <div className="text-[11px] text-amber-900/80 max-w-sm sm:text-right">
+                      Durante o planejamento, mantenha as opções para comparar e descarte a reserva alternativa quando decidir.
+                    </div>
                   </div>
 
-                  {/* SUB-RESERVAS TABS (When multiple reservations exist for this hotel) */}
-                  {hasMultipleSubs && h.sub_reservations && (
-                    <div className="mb-3.5 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                          <Building className="w-3.5 h-3.5 text-brand-600" />
-                          Vouchers / Reservas Agrupadas ({h.sub_reservations.length})
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          Selecione para gerenciar individualmente
-                        </span>
-                      </div>
-
-                      <div className="flex items-stretch gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
-                        {h.sub_reservations.map((sub, idx) => {
-                          const isSelected = sub.id === currentSub.id;
-                          return (
-                            <button
-                              key={sub.id}
-                              type="button"
-                              onClick={() => setActiveSubTabs((prev) => ({ ...prev, [h.id]: sub.id }))}
-                              className={`flex-1 min-w-[220px] text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-                                isSelected
-                                  ? 'bg-brand-50/90 border-brand-500 ring-2 ring-brand-500/20 shadow-xs'
-                                  : 'bg-slate-50/80 hover:bg-slate-100/90 border-slate-200 text-slate-600'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between text-xs mb-1">
-                                <span className="font-bold text-slate-900 truncate">
-                                  Reserva #{sub.reservation_number || idx + 1}
-                                </span>
-                                <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                                  {sub.total_amount && (
-                                    <span className="font-bold text-brand-700 text-[11px]">
-                                      {sub.currency} {Number(sub.total_amount).toLocaleString('pt-BR')}
-                                    </span>
-                                  )}
-                                  {canEdit && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openDeleteModal(h, sub, false);
-                                      }}
-                                      className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer"
-                                      title={`Excluir reserva #${sub.reservation_number || idx + 1}`}
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="text-[11px] space-y-0.5">
-                                <div className="flex items-center gap-1 text-slate-700 truncate">
-                                  <span className="text-slate-400 font-normal shrink-0">Em nome de:</span>
-                                  <strong className="font-medium text-slate-900 truncate">
-                                    {sub.guest_names || 'Não informado'}
-                                  </strong>
-                                </div>
-                                <div className="flex items-center gap-1 text-slate-500 truncate">
-                                  <span className="text-slate-400 font-normal shrink-0">Enviado por:</span>
-                                  <span className="truncate">{sub.uploader_name || sub.uploader_email || 'Manual'}</span>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Details of Current Reservation */}
-                  <div className="space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-slate-400" />
-                        <span>
-                          Check-in: <strong>{formatDateBr(h.check_in_date)}</strong>
-                        </span>
-                      </div>
-                      <span>
-                        Check-out: <strong>{formatDateBr(h.check_out_date)}</strong>
-                      </span>
-                    </div>
-
-                    {/* Single Stay Meta (Sender & Title holder) */}
-                    {!hasMultipleSubs && (
-                      <div className="flex items-center justify-between p-2 bg-slate-50/70 border border-slate-100 rounded-xl text-[11px]">
-                        <div className="flex items-center gap-1 text-slate-600 truncate">
-                          <span className="text-slate-400">Enviado por:</span>
-                          <strong className="font-medium text-slate-800 truncate">
-                            {h.uploader_name || h.uploader_email || 'Manual'}
-                          </strong>
-                        </div>
-                        {currentSub.reservation_number && (
-                          <div className="flex items-center gap-1 font-mono text-[11px]">
-                            <span className="text-slate-400">Reserva:</span>
-                            <span className="text-slate-900 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">
-                              #{currentSub.reservation_number}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {currentSub.room_type && (
-                      <div className="text-slate-700">
-                        Acomodação: <strong>{currentSub.room_type}</strong>
-                      </div>
-                    )}
-
-                    {/* HÓSPEDES & ADIÇÃO RÁPIDA DE PARTICIPANTES */}
-                    <div className="p-2.5 bg-slate-50/80 border border-slate-200/70 rounded-xl space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-slate-700 font-semibold text-xs">
-                          <Users className="w-3.5 h-3.5 text-brand-600" />
-                          <span>Hóspede(s) desta reserva:</span>
-                          {isUpdating && <Loader2 className="w-3 h-3 text-brand-600 animate-spin ml-1" />}
-                        </div>
-
-                        {canEdit && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveAddGuestHotelId(activeAddGuestHotelId === currentSub.id ? null : currentSub.id);
-                              setCustomGuestInput('');
-                            }}
-                            className="inline-flex items-center gap-1 text-[11px] text-brand-600 hover:text-brand-700 font-semibold cursor-pointer transition-colors"
-                          >
-                            <Plus className="w-3 h-3 text-brand-600" />
-                            <span>Adicionar</span>
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Guest Badges List */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {guestList.length === 0 ? (
-                          <span className="text-[11px] text-slate-400 italic">Nenhum hóspede vinculado</span>
-                        ) : (
-                          guestList.map((guestName) => (
-                            <span
-                              key={guestName}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 text-[11px] font-medium shadow-2xs"
-                            >
-                              <User className="w-3 h-3 text-slate-400" />
-                              <span>{guestName}</span>
-                              {canEdit && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveGuest(h.id, currentSub.id, guestList, guestName)}
-                                  disabled={isUpdating}
-                                  className="text-slate-400 hover:text-red-500 rounded p-0.5 hover:bg-slate-100 transition-colors cursor-pointer"
-                                  title={`Remover ${guestName} desta reserva`}
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              )}
-                            </span>
-                          ))
-                        )}
-                      </div>
-
-                      {/* Status feedback message */}
-                      {statusMessage && statusMessage.hotelId === h.id && (
-                        <p className="text-[11px] font-medium text-emerald-700 flex items-center gap-1">
-                          <Check className="w-3 h-3" /> {statusMessage.text}
-                        </p>
-                      )}
-
-                      {/* Popover / Suggestions Panel */}
-                      {isAddingGuest && (
-                        <div className="mt-2 pt-2 border-t border-slate-200/80 space-y-2 bg-white p-3 rounded-lg border shadow-xs animate-in fade-in duration-150">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
-                              <UserPlus className="w-3.5 h-3.5 text-brand-600" />
-                              Sugerir Participantes da Viagem
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setActiveAddGuestHotelId(null)}
-                              className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-
-                          {/* Suggested travelers list */}
-                          {travelers.length > 0 ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
-                              {travelers.map((traveler) => {
-                                const alreadyAdded = guestList.some(
-                                  (g) => g.toLowerCase() === traveler.display_name.toLowerCase()
-                                );
-
-                                return (
-                                  <button
-                                    key={traveler.id}
-                                    type="button"
-                                    disabled={alreadyAdded || isUpdating}
-                                    onClick={() => handleAddGuest(h.id, currentSub.id, guestList, traveler.display_name)}
-                                    className={`flex items-center justify-between p-1.5 rounded-lg border text-left text-xs transition-colors cursor-pointer ${
-                                      alreadyAdded
-                                        ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
-                                        : 'bg-white hover:bg-brand-50 border-slate-200 hover:border-brand-300 text-slate-800'
-                                    }`}
-                                  >
-                                    <span className="flex items-center gap-1.5 truncate">
-                                      <User className={`w-3 h-3 ${alreadyAdded ? 'text-slate-400' : 'text-brand-600'} shrink-0`} />
-                                      <span className="font-medium truncate">{traveler.display_name}</span>
-                                      {traveler.role === 'COMPANION' && (
-                                        <span className="text-[9px] px-1 py-0.2 bg-slate-100 text-slate-500 rounded font-normal shrink-0">
-                                          Acomp.
-                                        </span>
-                                      )}
-                                    </span>
-
-                                    {alreadyAdded ? (
-                                      <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 shrink-0">
-                                        <Check className="w-3 h-3" /> Adicionado
-                                      </span>
-                                    ) : (
-                                      <Plus className="w-3.5 h-3.5 text-brand-600 shrink-0 ml-1" />
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-slate-400 italic">Nenhum participante registrado nesta viagem.</p>
-                          )}
-
-                          {/* Custom Name Input */}
-                          <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5">
-                            <input
-                              type="text"
-                              value={customGuestInput}
-                              onChange={(e) => setCustomGuestInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleAddGuest(h.id, currentSub.id, guestList, customGuestInput);
-                                }
-                              }}
-                              placeholder="Ou digite outro nome..."
-                              className="flex-1 px-2.5 py-1 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              disabled={!customGuestInput.trim() || isUpdating}
-                              onClick={() => handleAddGuest(h.id, currentSub.id, guestList, customGuestInput)}
-                              className="px-2.5 py-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
-                            >
-                              Adicionar
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {h.address && (
-                      <div className="text-slate-500 text-[11px] flex items-start gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                        <span>{h.address}</span>
-                      </div>
-                    )}
-
-                    {/* Linked Document Info */}
-                    {currentSub.document_id && (
-                      <div className="flex items-center justify-between p-2 bg-purple-50/70 border border-purple-100 rounded-xl text-[11px]">
-                        <div className="flex items-center gap-1.5 text-purple-900 truncate">
-                          <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                          <span className="truncate">{currentSub.document_name || 'Comprovante anexado'}</span>
-                        </div>
-                        <a
-                          href={api.documents.viewUrl(currentSub.document_id)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[10px] font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-0.5 shrink-0 ml-2"
-                        >
-                          Ver PDF <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
-                    )}
-
-                    {currentSub.notes && (
-                      <div className="p-2 bg-amber-50/60 border border-amber-200/50 rounded-lg text-amber-900 text-[11px]">
-                        {currentSub.notes}
-                      </div>
-                    )}
+                  <div className={`grid grid-cols-1 md:grid-cols-${Math.min(cluster.hotels.length, 2)} gap-4`}>
+                    {cluster.hotels.map((h, idx) => {
+                      const isChosen = chosenOptions[cluster.id] === h.id;
+                      return renderHotelCard(h, {
+                        optionBadge: `Opção ${idx + 1}`,
+                        isCompeting: true,
+                        isChosen,
+                        onChooseOption: () =>
+                          setChosenOptions((prev) => ({
+                            ...prev,
+                            [cluster.id]: prev[cluster.id] === h.id ? '' : h.id,
+                          })),
+                      });
+                    })}
                   </div>
                 </div>
+              );
+            }
 
-                {/* Footer with Sub-reserva Delete & Amount */}
-                <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-semibold text-[10px] flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" />
-                      {currentSub.payment_status || h.payment_status || 'Confirmado'}
-                    </span>
-
-                    {hasMultipleSubs && canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => openDeleteModal(h, currentSub, false)}
-                        className="text-[11px] text-red-600 hover:text-red-700 font-semibold inline-flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-red-50 transition-colors cursor-pointer"
-                        title="Excluir apenas esta reserva individual"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Excluir esta reserva</span>
-                      </button>
-                    )}
+            if (cluster.type === 'SPLIT_GROUP') {
+              return (
+                <div
+                  key={cluster.id}
+                  className="bg-blue-50/50 border-2 border-blue-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 animate-in fade-in duration-200"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-blue-200/80">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-900 border border-blue-300 inline-flex items-center gap-1.5 shadow-2xs">
+                          <Users className="w-3.5 h-3.5 text-blue-700" />
+                          Grupo Dividido ({cluster.hotels.length} Hospedagens)
+                        </span>
+                        <span className="text-xs font-bold text-slate-800">
+                          {formatDateBr(cluster.startDate)} a {formatDateBr(cluster.endDate)}
+                        </span>
+                        {cluster.city && (
+                          <span className="text-xs text-slate-500 flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-slate-400" />
+                            {cluster.city} {cluster.country ? `• ${cluster.country}` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-blue-950">
+                        Os viajantes do grupo estão hospedados em acomodações diferentes para este mesmo período.
+                      </p>
+                    </div>
                   </div>
 
-                  {currentSub.total_amount ? (
-                    <span className="font-bold text-slate-900 text-sm">
-                      {currentSub.currency || h.currency} {Number(currentSub.total_amount).toLocaleString('pt-BR')}
-                    </span>
-                  ) : null}
+                  <div className={`grid grid-cols-1 md:grid-cols-${Math.min(cluster.hotels.length, 2)} gap-4`}>
+                    {cluster.hotels.map((h) => renderHotelCard(h))}
+                  </div>
                 </div>
-              </div>
-            );
+              );
+            }
+
+            return null;
           })}
         </div>
       )}

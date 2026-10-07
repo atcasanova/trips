@@ -295,6 +295,22 @@ export interface HotelReservation {
   sub_reservations?: HotelSubReservation[];
 }
 
+export interface HotelCluster {
+  id: string;
+  startDate: string;
+  endDate: string;
+  city?: string | null;
+  country?: string | null;
+  hotels: (HotelReservation & {
+    guestCount?: number;
+    aggregatedCount?: number;
+  })[];
+  type: 'SINGLE' | 'CONCURRENT_OPTIONS' | 'SPLIT_GROUP';
+  competingGuests: string[];
+  distinctGuestsByHotel: Record<string, string[]>;
+}
+
+
 export interface DocumentItem {
   id: string;
   trip_id: string;

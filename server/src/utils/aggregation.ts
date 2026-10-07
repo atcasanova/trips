@@ -320,6 +320,150 @@ export function aggregateHotels(hotels: any[], options?: { anonymize?: boolean }
   });
 }
 
+function toIsoDateStr(d?: any): string {
+  if (!d) return '';
+  if (d instanceof Date) return d.toISOString().slice(0, 10);
+  return String(d).slice(0, 10);
+}
+
+export function doDatesOverlap(in1: string, out1: string, in2: string, out2: string): boolean {
+  if (!in1 || !in2) return false;
+  const dIn1 = in1.slice(0, 10);
+  const dOut1 = (out1 || dIn1).slice(0, 10);
+  const dIn2 = in2.slice(0, 10);
+  const dOut2 = (out2 || dIn2).slice(0, 10);
+
+  if (dOut1 > dIn1 && dOut2 > dIn2) {
+    return dIn1 < dOut2 && dIn2 < dOut1;
+  }
+  return dIn1 <= dOut2 && dIn2 <= dOut1;
+}
+
+export function parseGuestNames(raw?: string | null): string[] {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[,;\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export interface HotelCluster {
+  id: string;
+  startDate: string;
+  endDate: string;
+  city?: string | null;
+  country?: string | null;
+  hotels: any[];
+  type: 'SINGLE' | 'CONCURRENT_OPTIONS' | 'SPLIT_GROUP';
+  competingGuests: string[];
+  distinctGuestsByHotel: Record<string, string[]>;
+}
+
+/**
+ * Agrupa reservas de hotéis em clusters de períodos de estadia.
+ * Identifica se no mesmo período há opções concorrentes ou grupo dividido.
+ */
+export function detectHotelClusters(hotels: any[]): HotelCluster[] {
+  if (!Array.isArray(hotels) || hotels.length === 0) return [];
+
+  const sorted = [...hotels].sort((a, b) =>
+    toIsoDateStr(a.check_in_date).localeCompare(toIsoDateStr(b.check_in_date))
+  );
+
+  const rawClusters: {
+    startDate: string;
+    endDate: string;
+    city?: string | null;
+    country?: string | null;
+    hotels: any[];
+  }[] = [];
+
+  for (const h of sorted) {
+    const inH = toIsoDateStr(h.check_in_date);
+    const outH = toIsoDateStr(h.check_out_date) || inH;
+
+    const matchingIndices: number[] = [];
+    for (let i = 0; i < rawClusters.length; i++) {
+      const c = rawClusters[i];
+      if (doDatesOverlap(c.startDate, c.endDate, inH, outH)) {
+        matchingIndices.push(i);
+      }
+    }
+
+    if (matchingIndices.length === 0) {
+      rawClusters.push({
+        startDate: inH,
+        endDate: outH,
+        city: h.city || null,
+        country: h.country || null,
+        hotels: [h],
+      });
+    } else {
+      const firstIdx = matchingIndices[0];
+      const targetCluster = rawClusters[firstIdx];
+      targetCluster.hotels.push(h);
+      if (inH < targetCluster.startDate) targetCluster.startDate = inH;
+      if (outH > targetCluster.endDate) targetCluster.endDate = outH;
+      if (!targetCluster.city && h.city) targetCluster.city = h.city;
+      if (!targetCluster.country && h.country) targetCluster.country = h.country;
+
+      for (let i = matchingIndices.length - 1; i > 0; i--) {
+        const otherIdx = matchingIndices[i];
+        const other = rawClusters.splice(otherIdx, 1)[0];
+        targetCluster.hotels.push(...other.hotels);
+        if (other.startDate < targetCluster.startDate) targetCluster.startDate = other.startDate;
+        if (other.endDate > targetCluster.endDate) targetCluster.endDate = other.endDate;
+      }
+    }
+  }
+
+  return rawClusters.map((c, idx) => {
+    if (c.hotels.length <= 1) {
+      return {
+        ...c,
+        id: `cluster-${c.startDate}-${c.endDate}-${idx}`,
+        type: 'SINGLE',
+        competingGuests: [],
+        distinctGuestsByHotel: {},
+      };
+    }
+
+    const guestHotelMap = new Map<string, { originalName: string; hotelIds: Set<string> }>();
+    const distinctGuestsByHotel: Record<string, string[]> = {};
+
+    for (const h of c.hotels) {
+      const guests = parseGuestNames(h.guest_names);
+      distinctGuestsByHotel[h.id] = guests;
+      for (const g of guests) {
+        const norm = normalizeText(g);
+        if (!norm) continue;
+        if (!guestHotelMap.has(norm)) {
+          guestHotelMap.set(norm, { originalName: g, hotelIds: new Set() });
+        }
+        guestHotelMap.get(norm)!.hotelIds.add(h.id);
+      }
+    }
+
+    const competingGuests: string[] = [];
+    for (const [, data] of guestHotelMap.entries()) {
+      if (data.hotelIds.size > 1) {
+        competingGuests.push(data.originalName);
+      }
+    }
+
+    const type = competingGuests.length > 0 ? 'CONCURRENT_OPTIONS' : 'SPLIT_GROUP';
+
+    return {
+      ...c,
+      id: `cluster-${c.startDate}-${c.endDate}-${idx}`,
+      type,
+      competingGuests,
+      distinctGuestsByHotel,
+    };
+  });
+}
+
+
 /** Extrai palavras-chave essenciais de um título para comparação semântica */
 function getTitleKeywords(title?: string | null): string[] {
   if (!title) return [];
