@@ -433,7 +433,7 @@ export const inboundEmailService = {
     return false;
   },
 
-  // Prepare attachments or convert HTML/text email body to PDF
+  // Prepare attachments or convert HTML/text email body to PDF (merging email body and attached PDF vouchers into a unified document)
   async prepareFilesToProcess(parsed: ParsedMail): Promise<Array<{
     filePath: string;
     originalName: string;
@@ -454,7 +454,14 @@ export const inboundEmailService = {
       fs.mkdirSync(env.UPLOAD_PATH, { recursive: true });
     }
 
-    // 1. Process valid standalone attachments
+    const emailSubject = parsed.subject || 'Confirmação de Reserva';
+    const emailSender = parsed.from?.text || 'Remetente';
+    const emailDate = parsed.date ? parsed.date.toLocaleDateString('pt-BR') : '';
+
+    // 1. Separate attachments into PDF documents and other valid attachments (images/pkpass)
+    const pdfAttachments: Attachment[] = [];
+    const otherAttachments: Attachment[] = [];
+
     if (Array.isArray(parsed.attachments) && parsed.attachments.length > 0) {
       for (const att of parsed.attachments) {
         if (!isRealDocumentAttachment(att)) {
@@ -469,59 +476,61 @@ export const inboundEmailService = {
           continue;
         }
 
-        const rawFilename = (att.filename || `documento-${Date.now()}`).trim();
+        const rawFilename = (att.filename || '').trim();
         const ext = path.extname(rawFilename).toLowerCase();
-        const contentType = att.contentType?.toLowerCase() || '';
+        const contentType = (att.contentType || '').toLowerCase();
 
-        const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext || '.pdf'}`;
-        const savePath = path.join(env.UPLOAD_PATH, uniqueName);
-
-        fs.writeFileSync(savePath, att.content);
-        const hash = crypto.createHash('sha256').update(att.content).digest('hex');
-
-        let normalizedMime = att.contentType || 'application/pdf';
-        if (ext === '.pdf') normalizedMime = 'application/pdf';
-        else if (ext === '.jpg' || ext === '.jpeg') normalizedMime = 'image/jpeg';
-        else if (ext === '.png') normalizedMime = 'image/png';
-        else if (ext === '.webp') normalizedMime = 'image/webp';
-        else if (ext === '.pkpass') normalizedMime = 'application/vnd.apple.pkpass';
-
-        validFiles.push({
-          filePath: savePath,
-          originalName: rawFilename,
-          mimeType: normalizedMime,
-          size: att.size || att.content.length,
-          fileHash: hash,
-        });
+        if (contentType === 'application/pdf' || ext === '.pdf') {
+          pdfAttachments.push(att);
+        } else {
+          otherAttachments.push(att);
+        }
       }
     }
 
-    // 2. Render email body if no PDF attachments were found and body exists
-    const hasPdfAttachment = validFiles.some((f) => f.mimeType === 'application/pdf');
-    if ((validFiles.length === 0 || !hasPdfAttachment) && (parsed.html || parsed.text)) {
+    // 2. Process non-PDF standalone attachments (e.g. .pkpass or valid standalone photo receipts)
+    for (const att of otherAttachments) {
+      const rawFilename = (att.filename || `documento-${Date.now()}`).trim();
+      const ext = path.extname(rawFilename).toLowerCase();
+      const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext || ''}`;
+      const savePath = path.join(env.UPLOAD_PATH, uniqueName);
+
+      fs.writeFileSync(savePath, att.content);
+      const hash = crypto.createHash('sha256').update(att.content).digest('hex');
+
+      let normalizedMime = att.contentType || 'application/octet-stream';
+      if (ext === '.jpg' || ext === '.jpeg') normalizedMime = 'image/jpeg';
+      else if (ext === '.png') normalizedMime = 'image/png';
+      else if (ext === '.webp') normalizedMime = 'image/webp';
+      else if (ext === '.pkpass') normalizedMime = 'application/vnd.apple.pkpass';
+
+      validFiles.push({
+        filePath: savePath,
+        originalName: rawFilename,
+        mimeType: normalizedMime,
+        size: att.size || att.content.length,
+        fileHash: hash,
+      });
+    }
+
+    // 3. Process email body and PDF attachments
+    const hasBody = Boolean(
+      (parsed.html && parsed.html.trim().length > 0) ||
+      (parsed.text && parsed.text.trim().length > 0)
+    );
+
+    if (hasBody) {
       try {
         logger.info(
-          validFiles.length === 0
-            ? 'Nenhum anexo isolado de documento encontrado. Renderizando corpo do e-mail em PDF...'
-            : 'Anexos não incluem PDF. Renderizando corpo do e-mail em PDF para garantir leitura da reserva...'
+          pdfAttachments.length > 0
+            ? `E-mail possui corpo e ${pdfAttachments.length} anexo(s) PDF. Gerando PDF unificado (corpo sem imagens + comprovante em anexo)...`
+            : 'E-mail sem anexo PDF. Renderizando corpo do e-mail em PDF (sem imagens)...'
         );
-        const emailSubject = parsed.subject || 'Confirmação de Reserva';
-        const emailSender = parsed.from?.text || 'Remetente';
-        const emailDate = parsed.date ? parsed.date.toLocaleDateString('pt-BR') : '';
 
-        let bodyContent = parsed.html || `<pre style="white-space: pre-wrap; font-family: sans-serif;">${escapeHtml(parsed.text || '')}</pre>`;
-
-        // If HTML email has CID embedded attachments, replace cid:... with base64 data URIs so Puppeteer renders cleanly
-        if (parsed.html && Array.isArray(parsed.attachments)) {
-          for (const att of parsed.attachments) {
-            if (att.cid && att.content && att.contentType) {
-              const base64Data = `data:${att.contentType};base64,${att.content.toString('base64')}`;
-              const cleanCid = att.cid.replace(/^<|>$/g, '');
-              const regex = new RegExp(`cid:<?${cleanCid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}>?`, 'gi');
-              bodyContent = bodyContent.replace(regex, base64Data);
-            }
-          }
-        }
+        const cleanedBodyHtml = cleanEmailHtmlForPdf(parsed.html || '');
+        const bodyContent =
+          cleanedBodyHtml ||
+          `<pre style="white-space: pre-wrap; font-family: sans-serif;">${escapeHtml(parsed.text || '')}</pre>`;
 
         const fullHtml = `
           <!DOCTYPE html>
@@ -529,12 +538,14 @@ export const inboundEmailService = {
             <head>
               <meta charset="utf-8">
               <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 24px; color: #1e293b; }
-                .email-header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 2px solid #e2e8f0; }
-                .email-title { font-size: 20px; font-weight: bold; color: #0f172a; margin-bottom: 6px; }
-                .email-meta { font-size: 13px; color: #64748b; }
-                .email-content { font-size: 14px; line-height: 1.6; }
-                img { max-width: 100%; height: auto; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 20px; color: #1e293b; background: #ffffff; }
+                .email-header { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 2px solid #e2e8f0; }
+                .email-title { font-size: 18px; font-weight: bold; color: #0f172a; margin-bottom: 4px; }
+                .email-meta { font-size: 12px; color: #64748b; }
+                .email-content { font-size: 13px; line-height: 1.5; color: #1e293b; }
+                img, svg, picture, video, audio { display: none !important; }
+                * { background-image: none !important; }
+                a:empty { display: none !important; }
                 table { width: 100%; border-collapse: collapse; }
               </style>
             </head>
@@ -550,22 +561,82 @@ export const inboundEmailService = {
           </html>
         `;
 
-        const pdfBuffer = await pdfService.htmlToPdf(fullHtml);
+        const emailPdfBuffer = await pdfService.htmlToPdf(fullHtml, { blockImages: true });
+
+        let finalPdfBuffer: Buffer;
+        if (pdfAttachments.length > 0) {
+          const buffersToMerge = [emailPdfBuffer, ...pdfAttachments.map((a) => a.content)];
+          finalPdfBuffer = await pdfService.mergePdfs(buffersToMerge);
+        } else {
+          finalPdfBuffer = emailPdfBuffer;
+        }
+
+        const primaryPdfName = pdfAttachments[0]?.filename?.trim();
+        const isGenericName =
+          !primaryPdfName ||
+          ['attachment.pdf', 'unnamed.pdf', 'doc.pdf', 'documento.pdf', 'file.pdf'].includes(
+            primaryPdfName.toLowerCase()
+          );
+        const originalName = !isGenericName && primaryPdfName ? primaryPdfName : `${cleanSubjectForFilename(emailSubject)}.pdf`;
+
         const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}.pdf`;
         const savePath = path.join(env.UPLOAD_PATH, uniqueName);
 
-        fs.writeFileSync(savePath, pdfBuffer);
-        const hash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
+        fs.writeFileSync(savePath, finalPdfBuffer);
+        const hash = crypto.createHash('sha256').update(finalPdfBuffer).digest('hex');
 
         validFiles.push({
           filePath: savePath,
-          originalName: `${cleanSubjectForFilename(emailSubject)}.pdf`,
+          originalName,
           mimeType: 'application/pdf',
-          size: pdfBuffer.length,
+          size: finalPdfBuffer.length,
           fileHash: hash,
         });
+
+        logger.info('PDF unificado gerado e salvo com sucesso', {
+          originalName,
+          mergedPdfAttachmentsCount: pdfAttachments.length,
+          size: finalPdfBuffer.length,
+        });
       } catch (pdfErr: any) {
-        logger.error('Erro ao converter corpo de e-mail em PDF:', { error: pdfErr.message });
+        logger.error('Erro ao converter corpo de e-mail e mesclar PDFs, usando fallback de anexos brutos:', {
+          error: pdfErr.message,
+        });
+
+        for (const att of pdfAttachments) {
+          const rawFilename = (att.filename || `${cleanSubjectForFilename(emailSubject)}.pdf`).trim();
+          const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}.pdf`;
+          const savePath = path.join(env.UPLOAD_PATH, uniqueName);
+
+          fs.writeFileSync(savePath, att.content);
+          const hash = crypto.createHash('sha256').update(att.content).digest('hex');
+
+          validFiles.push({
+            filePath: savePath,
+            originalName: rawFilename,
+            mimeType: 'application/pdf',
+            size: att.content.length,
+            fileHash: hash,
+          });
+        }
+      }
+    } else {
+      // No email body, but has PDF attachments
+      for (const att of pdfAttachments) {
+        const rawFilename = (att.filename || `${cleanSubjectForFilename(emailSubject)}.pdf`).trim();
+        const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}.pdf`;
+        const savePath = path.join(env.UPLOAD_PATH, uniqueName);
+
+        fs.writeFileSync(savePath, att.content);
+        const hash = crypto.createHash('sha256').update(att.content).digest('hex');
+
+        validFiles.push({
+          filePath: savePath,
+          originalName: rawFilename,
+          mimeType: 'application/pdf',
+          size: att.content.length,
+          fileHash: hash,
+        });
       }
     }
 
@@ -1143,3 +1214,25 @@ function cleanSubjectForFilename(subject: string): string {
     .replace(/^_+|_+$/g, '')
     .slice(0, 60) || 'reserva';
 }
+
+function cleanEmailHtmlForPdf(html: string): string {
+  if (!html) return '';
+  return html
+    // Remove script tags and content
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    // Remove noscript tags and content
+    .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, '')
+    // Remove audio tags and content
+    .replace(/<audio\b[^<]*(?:(?!<\/audio>)<[^<]*)*<\/audio>/gi, '')
+    // Remove video tags and content
+    .replace(/<video\b[^<]*(?:(?!<\/video>)<[^<]*)*<\/video>/gi, '')
+    // Remove picture tags and content
+    .replace(/<picture\b[^<]*(?:(?!<\/picture>)<[^<]*)*<\/picture>/gi, '')
+    // Remove svg tags and content
+    .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
+    // Remove all img tags
+    .replace(/<img\b[^>]*>/gi, '')
+    // Remove CSS background-image declarations
+    .replace(/background(-image)?\s*:\s*url\([^)]+\);?/gi, '');
+}
+
