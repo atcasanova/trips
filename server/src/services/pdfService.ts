@@ -41,7 +41,7 @@ export const pdfService = {
 
       try {
         await page.setContent(html, {
-          waitUntil: options?.blockImages ? 'domcontentloaded' : 'load',
+          waitUntil: (options?.blockImages ? 'domcontentloaded' : 'networkidle2') as any,
           timeout: 35000,
         });
       } catch (e) {

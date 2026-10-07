@@ -488,10 +488,27 @@ export const inboundEmailService = {
       }
     }
 
-    // 2. Process non-PDF standalone attachments (e.g. .pkpass or valid standalone photo receipts)
+    // 3. Check if email has body content
+    const hasBody = Boolean(
+      (parsed.html && parsed.html.trim().length > 0) ||
+      (parsed.text && parsed.text.trim().length > 0)
+    );
+
+    // 2. Process non-PDF standalone attachments (e.g. .pkpass or standalone photo receipts when there is no rich email body)
     for (const att of otherAttachments) {
       const rawFilename = (att.filename || `documento-${Date.now()}`).trim();
       const ext = path.extname(rawFilename).toLowerCase();
+      const isPkPass = ext === '.pkpass' || att.contentType === 'application/vnd.apple.pkpass';
+
+      // If the email already has a body or PDF attachments, ignore loose images to avoid duplicate/fragmented documents
+      if (!isPkPass && hasBody) {
+        logger.info('Anexo de imagem ignorado como documento avulso (já faz parte do corpo do e-mail)', {
+          filename: rawFilename,
+          size: att.size || att.content?.length,
+        });
+        continue;
+      }
+
       const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext || ''}`;
       const savePath = path.join(env.UPLOAD_PATH, uniqueName);
 
@@ -513,21 +530,29 @@ export const inboundEmailService = {
       });
     }
 
-    // 3. Process email body and PDF attachments
-    const hasBody = Boolean(
-      (parsed.html && parsed.html.trim().length > 0) ||
-      (parsed.text && parsed.text.trim().length > 0)
-    );
-
     if (hasBody) {
       try {
         logger.info(
           pdfAttachments.length > 0
-            ? `E-mail possui corpo e ${pdfAttachments.length} anexo(s) PDF. Gerando PDF unificado (corpo sem imagens + comprovante em anexo)...`
-            : 'E-mail sem anexo PDF. Renderizando corpo do e-mail em PDF (sem imagens)...'
+            ? `E-mail possui corpo e ${pdfAttachments.length} anexo(s) PDF. Gerando PDF unificado (corpo com imagens + comprovante em anexo)...`
+            : 'E-mail sem anexo PDF. Renderizando corpo do e-mail em PDF com imagens...'
         );
 
-        const cleanedBodyHtml = cleanEmailHtmlForPdf(parsed.html || '');
+        // Resolve inline CID images if present in attachments
+        let bodyHtml = parsed.html || '';
+        if (Array.isArray(parsed.attachments) && parsed.attachments.length > 0) {
+          for (const att of parsed.attachments) {
+            if (att.cid && att.content && att.contentType) {
+              const base64Data = `data:${att.contentType};base64,${att.content.toString('base64')}`;
+              bodyHtml = bodyHtml.replace(
+                new RegExp(`cid:${att.cid.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'gi'),
+                base64Data
+              );
+            }
+          }
+        }
+
+        const cleanedBodyHtml = cleanEmailHtmlForPdf(bodyHtml);
         const bodyContent =
           cleanedBodyHtml ||
           `<pre style="white-space: pre-wrap; font-family: sans-serif;">${escapeHtml(parsed.text || '')}</pre>`;
@@ -543,8 +568,8 @@ export const inboundEmailService = {
                 .email-title { font-size: 18px; font-weight: bold; color: #0f172a; margin-bottom: 4px; }
                 .email-meta { font-size: 12px; color: #64748b; }
                 .email-content { font-size: 13px; line-height: 1.5; color: #1e293b; }
-                img, svg, picture, video, audio { display: none !important; }
-                * { background-image: none !important; }
+                video, audio { display: none !important; }
+                img { max-width: 100%; height: auto; }
                 a:empty { display: none !important; }
                 table { width: 100%; border-collapse: collapse; }
               </style>
@@ -561,7 +586,7 @@ export const inboundEmailService = {
           </html>
         `;
 
-        const emailPdfBuffer = await pdfService.htmlToPdf(fullHtml, { blockImages: true });
+        const emailPdfBuffer = await pdfService.htmlToPdf(fullHtml, { blockImages: false });
 
         let finalPdfBuffer: Buffer;
         if (pdfAttachments.length > 0) {
@@ -1225,14 +1250,6 @@ function cleanEmailHtmlForPdf(html: string): string {
     // Remove audio tags and content
     .replace(/<audio\b[^<]*(?:(?!<\/audio>)<[^<]*)*<\/audio>/gi, '')
     // Remove video tags and content
-    .replace(/<video\b[^<]*(?:(?!<\/video>)<[^<]*)*<\/video>/gi, '')
-    // Remove picture tags and content
-    .replace(/<picture\b[^<]*(?:(?!<\/picture>)<[^<]*)*<\/picture>/gi, '')
-    // Remove svg tags and content
-    .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
-    // Remove all img tags
-    .replace(/<img\b[^>]*>/gi, '')
-    // Remove CSS background-image declarations
-    .replace(/background(-image)?\s*:\s*url\([^)]+\);?/gi, '');
+    .replace(/<video\b[^<]*(?:(?!<\/video>)<[^<]*)*<\/video>/gi, '');
 }
 
