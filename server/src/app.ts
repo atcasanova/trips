@@ -8,24 +8,31 @@ import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import routes from './routes/index.js';
 import { reportController } from './controllers/reportController.js';
+import { securityHeaders, isAllowedOrigin } from './middleware/securityHeaders.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const app = express();
 
-// Trust reverse proxy (Nginx Proxy Manager: 1 hop)
+// Disable tech-stack fingerprinting
+app.disable('x-powered-by');
+
+// Trust reverse proxy (Nginx Proxy Manager / Cloudflare: 1 hop)
 app.set('trust proxy', 1);
 
-// CORS configuration
+// Global Security Headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
+app.use(securityHeaders);
+
+// CORS configuration (Strict allowlist: APP_URL, localhost/127.0.0.1, or non-browser agents)
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, server-to-server) or matching APP_URL
-      if (!origin || origin === env.APP_URL || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
-        callback(null, true); // Permissive in internal Docker network
+        // Untrusted origin: reject and do not reflect ACAO header
+        callback(null, false);
       }
     },
     credentials: true,
