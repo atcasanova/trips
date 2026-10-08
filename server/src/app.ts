@@ -62,10 +62,10 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 // REST API routes
 app.use('/api', routes);
 
-// Search engine robots control (disallow indexing on private & shared links)
+// Search engine robots control (private travel app: disallow all indexing)
 app.get('/robots.txt', (_req: Request, res: Response) => {
   res.type('text/plain');
-  res.send('User-agent: *\nDisallow: /s/\nDisallow: /share/\nDisallow: /api/\nDisallow: /uploads/\nDisallow: /tripbook/\n');
+  res.send('User-agent: *\nDisallow: /\n');
 });
 
 // Short friendly share links (bit.ly style: /s/:code)

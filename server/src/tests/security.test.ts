@@ -1,6 +1,10 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { isAllowedOrigin, securityHeaders, CSP_DIRECTIVES } from '../middleware/securityHeaders.js';
+import { healthController } from '../controllers/healthController.js';
+import { requireAuth } from '../middleware/auth.js';
+import { authController } from '../controllers/authController.js';
+import { env } from '../config/env.js';
 
 describe('4. Hardening de Infraestrutura & Segurança HTTP (Etapa 1)', () => {
   describe('CORS Allowlist Validation', () => {
@@ -77,5 +81,107 @@ describe('4. Hardening de Infraestrutura & Segurança HTTP (Etapa 1)', () => {
       assert.ok(csp.includes('https://images.pexels.com') || csp.includes('https:'), 'CSP deve permitir imagens');
       assert.ok(csp.includes("frame-ancestors 'self'"), 'CSP deve conter frame-ancestors self para prevenir clickjacking');
     });
+  });
+});
+
+describe('5. Higienização de Sessão, Healthcheck e Oráculo de 401 (Etapa 2)', () => {
+  test('Healthcheck não deve vazar métricas internas (Node version, uptime, latency, DB status)', async () => {
+    let capturedStatus = 0;
+    let capturedJson: any = null;
+
+    const mockReq: any = {};
+    const mockRes: any = {
+      status: (code: number) => {
+        capturedStatus = code;
+        return {
+          json: (data: any) => {
+            capturedJson = data;
+            return data;
+          },
+        };
+      },
+    };
+
+    await healthController.check(mockReq, mockRes);
+
+    assert.ok([200, 503].includes(capturedStatus));
+    assert.ok(['healthy', 'unhealthy'].includes(capturedJson.status));
+    assert.ok(capturedJson.timestamp);
+
+    // Não deve vazar dados de fingerprinting ou ambiente interno
+    assert.strictEqual(capturedJson.uptimeSeconds, undefined);
+    assert.strictEqual(capturedJson.components.application, undefined);
+    assert.strictEqual(capturedJson.components.database, undefined);
+    assert.strictEqual(capturedJson.components.integrations.openaiConfigured, undefined);
+    assert.strictEqual(capturedJson.components.integrations.pexelsConfigured, undefined);
+
+    // Deve preservar o que o frontend necessita para o login Turnstile
+    assert.ok('turnstileEnabled' in capturedJson.components.integrations);
+  });
+
+  test('requireAuth deve normalizar erro 401 para "Não autenticado" sem vazar oráculo de sessão', async () => {
+    let resCodeNoToken = 0;
+    let resJsonNoToken: any = null;
+    const reqNoToken: any = { cookies: {}, headers: {} };
+    const resNoToken: any = {
+      status: (c: number) => {
+        resCodeNoToken = c;
+        return { json: (d: any) => { resJsonNoToken = d; } };
+      },
+      clearCookie: () => {},
+    };
+
+    await requireAuth(reqNoToken, resNoToken, () => {});
+    assert.strictEqual(resCodeNoToken, 401);
+    assert.strictEqual(resJsonNoToken.error, 'Não autenticado');
+
+    // Com token inválido/garbage
+    let resCodeInvalid = 0;
+    let resJsonInvalid: any = null;
+    let clearedCookieName = '';
+    let clearedCookieOptions: any = null;
+
+    const reqInvalid: any = { cookies: { [env.COOKIE_NAME]: 'garbage.invalid.token' }, headers: {} };
+    const resInvalid: any = {
+      status: (c: number) => {
+        resCodeInvalid = c;
+        return { json: (d: any) => { resJsonInvalid = d; } };
+      },
+      clearCookie: (name: string, opts: any) => {
+        clearedCookieName = name;
+        clearedCookieOptions = opts;
+      },
+    };
+
+    await requireAuth(reqInvalid, resInvalid, () => {});
+    assert.strictEqual(resCodeInvalid, 401);
+    assert.strictEqual(resJsonInvalid.error, 'Não autenticado', 'Mensagem de 401 deve ser idêntica');
+    assert.strictEqual(clearedCookieName, env.COOKIE_NAME);
+    assert.strictEqual(clearedCookieOptions?.httpOnly, true);
+    assert.strictEqual(clearedCookieOptions?.sameSite, 'lax');
+    assert.strictEqual(clearedCookieOptions?.path, '/');
+  });
+
+  test('Logout deve limpar cookie com opções explícitas (HttpOnly, SameSite, Path)', async () => {
+    let clearedCookieName = '';
+    let clearedCookieOptions: any = null;
+    let resJson: any = null;
+
+    const mockReq: any = {};
+    const mockRes: any = {
+      clearCookie: (name: string, opts: any) => {
+        clearedCookieName = name;
+        clearedCookieOptions = opts;
+      },
+      json: (d: any) => { resJson = d; },
+    };
+
+    await authController.logout(mockReq, mockRes);
+
+    assert.strictEqual(clearedCookieName, env.COOKIE_NAME);
+    assert.strictEqual(clearedCookieOptions?.httpOnly, true);
+    assert.strictEqual(clearedCookieOptions?.sameSite, 'lax');
+    assert.strictEqual(clearedCookieOptions?.path, '/');
+    assert.strictEqual(resJson?.message, 'Logout realizado com sucesso');
   });
 });

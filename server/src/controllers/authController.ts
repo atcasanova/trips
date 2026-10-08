@@ -70,7 +70,12 @@ export const authController = {
   },
 
   async logout(_req: Request, res: Response) {
-    res.clearCookie(env.COOKIE_NAME, { path: '/' });
+    res.clearCookie(env.COOKIE_NAME, {
+      httpOnly: true,
+      secure: env.isProduction || env.APP_URL.startsWith('https'),
+      sameSite: 'lax',
+      path: '/',
+    });
     return res.json({ message: 'Logout realizado com sucesso' });
   },
 

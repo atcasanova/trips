@@ -69,8 +69,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   const payload = verifySessionToken(token);
   if (!payload) {
-    res.clearCookie(env.COOKIE_NAME);
-    return res.status(401).json({ error: 'Sessão inválida ou expirada' });
+    res.clearCookie(env.COOKIE_NAME, {
+      httpOnly: true,
+      secure: env.isProduction || env.APP_URL.startsWith('https'),
+      sameSite: 'lax',
+      path: '/',
+    });
+    return res.status(401).json({ error: 'Não autenticado' });
   }
 
   try {
@@ -81,8 +86,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     );
 
     if (rows.length === 0 || rows[0].status !== 'ACTIVE') {
-      res.clearCookie(env.COOKIE_NAME);
-      return res.status(401).json({ error: 'Conta inativa ou não encontrada' });
+      res.clearCookie(env.COOKIE_NAME, {
+        httpOnly: true,
+        secure: env.isProduction || env.APP_URL.startsWith('https'),
+        sameSite: 'lax',
+        path: '/',
+      });
+      return res.status(401).json({ error: 'Não autenticado' });
     }
 
     req.user = rows[0] as User;
