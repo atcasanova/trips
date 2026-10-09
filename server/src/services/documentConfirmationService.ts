@@ -1,6 +1,6 @@
 import { query } from '../db/pool.js';
 import { openaiService } from './openaiService.js';
-import { refreshItineraryLocations } from './itineraryLocationService.js';
+import { refreshItineraryLocations, resolveMissingHotelLocations } from './itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 import { tripBookPdfService } from './tripBookPdfService.js';
 import { tripDaySyncService } from './tripDaySyncService.js';
@@ -438,6 +438,11 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
        SET normalized_data = $1, updated_at = NOW()
        WHERE document_id = $2 AND trip_id = $3`,
       [JSON.stringify(data), documentId, tripId]
+    );
+
+    // Resolve hotel coordinates asynchronously so it appears in daily maps
+    resolveMissingHotelLocations(tripId).catch((err: any) =>
+      logger.warn(`Erro no resolveMissingHotelLocations para trip ${tripId}: ${err.message}`)
     );
 
     // Lança/atualiza despesa de hospedagem se houver valor

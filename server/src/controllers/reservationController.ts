@@ -3,6 +3,7 @@ import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
 import { aggregateHotels, extractPassengers } from '../utils/aggregation.js';
 import { tripBookPdfService } from '../services/tripBookPdfService.js';
+import { resolveMissingHotelLocations } from '../services/itineraryLocationService.js';
 
 export const reservationController = {
   // === TRANSPORTS ===
@@ -307,6 +308,12 @@ export const reservationController = {
 
       tripBookPdfService.queuePreGeneration(tripId);
 
+      if (!latitude || !longitude) {
+        resolveMissingHotelLocations(tripId).catch((err: any) =>
+          logger.warn(`Erro ao resolver coordenadas do hotel criado: ${err.message}`)
+        );
+      }
+
       return res.status(201).json({ hotel: rows[0] });
     } catch (err: any) {
       logger.error('Erro ao cadastrar hotel:', { error: err.message });
@@ -406,6 +413,13 @@ export const reservationController = {
       );
 
       tripBookPdfService.queuePreGeneration(tripId);
+
+      if (!updatedLatitude || !updatedLongitude) {
+        resolveMissingHotelLocations(tripId).catch((err: any) =>
+          logger.warn(`Erro ao resolver coordenadas do hotel atualizado: ${err.message}`)
+        );
+      }
+
       return res.json({ hotel: rows[0] });
     } catch (err: any) {
       logger.error('Erro ao atualizar hotel:', { error: err.message });
