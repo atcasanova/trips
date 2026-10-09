@@ -46,6 +46,30 @@
   transition: transform 0.15s ease;
 }
 
+.itinerary-marker-hotel {
+  background: #059669 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.45) !important;
+}
+
+.itinerary-marker-airport {
+  background: #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.45) !important;
+}
+
+.itinerary-mini-marker-hotel {
+  background: #059669 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.4) !important;
+}
+
+.itinerary-mini-marker-airport {
+  background: #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4) !important;
+}
+
 .itinerary-mini-marker:hover {
   transform: scale(1.15);
 }

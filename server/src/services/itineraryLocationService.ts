@@ -187,6 +187,9 @@ export async function refreshItineraryLocations(
       skippedIgnoredLocations,
     });
 
+    // Also geocode any hotels that are missing coordinates
+    await resolveMissingHotelLocations(params.tripId);
+
     return {
       candidates: candidates.length,
       resolved: resolution.locations.length,
@@ -211,3 +214,68 @@ export async function refreshItineraryLocations(
     };
   }
 }
+
+/**
+ * Automatically locates hotel reservations that do not have coordinates.
+ */
+export async function resolveMissingHotelLocations(tripId: string): Promise<number> {
+  try {
+    const { rows: hotels } = await query(
+      `SELECT id, hotel_name, address, city, country
+       FROM hotel_reservations
+       WHERE trip_id = $1
+         AND (latitude IS NULL OR longitude IS NULL OR (latitude = 0 AND longitude = 0))`,
+      [tripId]
+    );
+
+    if (hotels.length === 0) return 0;
+
+    const { rows: tripRows } = await query(
+      `SELECT title, destination_summary, primary_country, cities FROM trips WHERE id = $1`,
+      [tripId]
+    );
+    const trip = tripRows[0] || {};
+
+    const candidates: ItineraryLocationCandidate[] = hotels.map((h: any) => ({
+      id: h.id,
+      title: h.hotel_name,
+      category: 'HOTEL',
+      locationName: h.hotel_name,
+      address: h.address || h.city || h.country || '',
+      baseLocation: h.city || trip.cities?.[0] || '',
+    }));
+
+    const resolution = await openaiService.resolveItineraryLocations({
+      tripTitle: trip.title || 'Viagem',
+      destinationSummary: trip.destination_summary,
+      primaryCountry: trip.primary_country,
+      cities: Array.isArray(trip.cities) ? trip.cities : [],
+      candidates,
+      tripId,
+    });
+
+    if (!resolution.success) return 0;
+
+    let updated = 0;
+    for (const loc of resolution.locations) {
+      if (loc.latitude && loc.longitude && !(loc.latitude === 0 && loc.longitude === 0)) {
+        const { rowCount } = await query(
+          `UPDATE hotel_reservations
+           SET latitude = $1, longitude = $2, updated_at = NOW()
+           WHERE id = $3 AND trip_id = $4`,
+          [loc.latitude, loc.longitude, loc.id, tripId]
+        );
+        updated += rowCount || 0;
+      }
+    }
+
+    if (updated > 0) {
+      logger.info('Coordenadas de hotéis atualizadas com sucesso', { tripId, updated });
+    }
+    return updated;
+  } catch (err: any) {
+    logger.warn('Erro ao resolver coordenadas de hotéis:', { error: err.message, tripId });
+    return 0;
+  }
+}
+

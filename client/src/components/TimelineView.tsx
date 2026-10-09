@@ -37,8 +37,9 @@ import { api } from '../api/client.js';
 import { parseSafeDate, formatDateBr } from '../utils/date.js';
 import { ItineraryMap, type ItineraryMapPoint } from './ItineraryMap.js';
 import { GoogleMapsIcon } from './GoogleMapsIcon.js';
-import { DayMiniMap } from './DayMiniMap.js';
+import { DayMiniMap, type DayMapPoint } from './DayMiniMap.js';
 import { aggregateFlightSegments, aggregateHotels, parseGuestNames } from '../utils/aggregation.js';
+import { getAirportByCode } from '../utils/airportLocations.js';
 
 
 
@@ -512,7 +513,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   const mapPoints = useMemo<ItineraryMapPoint[]>(() => {
     let number = 0;
-    return localDays.flatMap((day) =>
+    const activityPoints: ItineraryMapPoint[] = localDays.flatMap((day) =>
       (day.items || []).flatMap((item) => {
         if (item.map_mode === 'SKIP') return [];
         const latitude = toFiniteCoordinate(item.latitude);
@@ -533,20 +534,91 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           dayLabel: day.title || `Dia ${day.day_number}`,
           latitude,
           longitude,
+          pointType: 'ACTIVITY',
         }];
       })
     );
-  }, [localDays]);
+
+    // Hotels with coordinates
+    const hotelPoints: ItineraryMapPoint[] = [];
+    for (const h of aggregatedHotels) {
+      const lat = toFiniteCoordinate(h.latitude);
+      const lng = toFiniteCoordinate(h.longitude);
+      if (
+        lat !== null && lat >= -90 && lat <= 90 &&
+        lng !== null && lng >= -180 && lng <= 180 &&
+        (lat !== 0 || lng !== 0)
+      ) {
+        const checkIn = h.check_in_date ? formatDateBr(h.check_in_date) : '';
+        const checkOut = h.check_out_date ? formatDateBr(h.check_out_date) : '';
+        const stayLabel = checkIn && checkOut ? `${checkIn} a ${checkOut}` : checkIn || 'Hospedagem';
+        hotelPoints.push({
+          itemId: `hotel-${h.id}`,
+          title: h.hotel_name,
+          subtitle: h.city || h.address || undefined,
+          dayLabel: stayLabel,
+          latitude: lat,
+          longitude: lng,
+          pointType: 'HOTEL',
+        });
+      }
+    }
+
+    // Airports involved in any segment of the trip
+    const airportMap = new Map<string, ItineraryMapPoint>();
+    for (const seg of allSegments) {
+      const depAirport = getAirportByCode(seg.departure_station_code || seg.departure_location);
+      if (depAirport && !airportMap.has(depAirport.code)) {
+        airportMap.set(depAirport.code, {
+          itemId: `airport-${depAirport.code}`,
+          title: depAirport.name,
+          subtitle: `${depAirport.city}, ${depAirport.country}`,
+          dayLabel: 'Aeroporto',
+          latitude: depAirport.latitude,
+          longitude: depAirport.longitude,
+          pointType: 'AIRPORT',
+          airportCode: depAirport.code,
+        });
+      }
+      const arrAirport = getAirportByCode(seg.arrival_station_code || seg.arrival_location);
+      if (arrAirport && !airportMap.has(arrAirport.code)) {
+        airportMap.set(arrAirport.code, {
+          itemId: `airport-${arrAirport.code}`,
+          title: arrAirport.name,
+          subtitle: `${arrAirport.city}, ${arrAirport.country}`,
+          dayLabel: 'Aeroporto',
+          latitude: arrAirport.latitude,
+          longitude: arrAirport.longitude,
+          pointType: 'AIRPORT',
+          airportCode: arrAirport.code,
+        });
+      }
+    }
+
+    return [...activityPoints, ...hotelPoints, ...Array.from(airportMap.values())];
+  }, [localDays, aggregatedHotels, allSegments]);
 
   const mapPointNumbers = useMemo(
-    () => new Map(mapPoints.map((point) => [point.itemId, point.number])),
+    () =>
+      new Map(
+        mapPoints
+          .filter((point) => point.pointType === 'ACTIVITY' && point.number != null)
+          .map((point) => [point.itemId, point.number as number])
+      ),
     [mapPoints]
   );
 
   const handleMapPointSelect = useCallback((itemId: string) => {
     setHighlightedItemId(itemId);
     requestAnimationFrame(() => {
-      const itemElement = document.getElementById(`itinerary-item-${itemId}`);
+      let itemElement = document.getElementById(`itinerary-item-${itemId}`);
+      if (!itemElement) {
+        itemElement = document.getElementById(itemId);
+      }
+      if (!itemElement && itemId.startsWith('airport-')) {
+        const code = itemId.replace(/^airport-(?:dep-|arr-)?/, '');
+        itemElement = document.querySelector(`[data-airport-code="${code}"]`);
+      }
       itemElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       itemElement?.focus({ preventScroll: true });
     });
@@ -1365,15 +1437,98 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           {localDays.map((day, dayIndex) => {
             const isDayDragTarget = dragOverDayId === day.id;
             const dayItemIds = new Set((day.items || []).map((i) => i.id));
-            const dayPoints = mapPoints
-              .filter((p) => dayItemIds.has(p.itemId))
+            const dayDateStr = toIsoDateStr(day.date);
+
+            const dayActivityPoints: DayMapPoint[] = mapPoints
+              .filter((p) => p.pointType === 'ACTIVITY' && dayItemIds.has(p.itemId))
               .map((p) => ({
                 itemId: p.itemId,
                 number: p.number,
                 title: p.title,
                 latitude: p.latitude,
                 longitude: p.longitude,
+                pointType: 'ACTIVITY',
               }));
+
+            // Day hotels: include hotel if this day falls within hotel stay
+            const dayHotelPoints: DayMapPoint[] = [];
+            const dayHotelsForMap = aggregatedHotels.filter((h) => {
+              const inD = toIsoDateStr(h.check_in_date);
+              const outD = toIsoDateStr(h.check_out_date) || inD;
+              if (!inD || !outD || !dayDateStr) return false;
+              return dayDateStr >= inD && dayDateStr <= outD;
+            });
+            for (const h of dayHotelsForMap) {
+              const lat = toFiniteCoordinate(h.latitude);
+              const lng = toFiniteCoordinate(h.longitude);
+              if (
+                lat !== null && lat >= -90 && lat <= 90 &&
+                lng !== null && lng >= -180 && lng <= 180 &&
+                (lat !== 0 || lng !== 0)
+              ) {
+                const inD = toIsoDateStr(h.check_in_date);
+                const outD = toIsoDateStr(h.check_out_date) || inD;
+                const statusLabel =
+                  dayDateStr === inD ? 'Check-in hoje' :
+                  dayDateStr === outD ? 'Check-out hoje' : 'Hospedagem ativa';
+                dayHotelPoints.push({
+                  itemId: `hotel-${h.id}`,
+                  title: h.hotel_name,
+                  subtitle: `${h.city ? `${h.city} • ` : ''}${statusLabel}`,
+                  latitude: lat,
+                  longitude: lng,
+                  pointType: 'HOTEL',
+                });
+              }
+            }
+
+            // Day airports: ONLY if this day has travel (displacement: arrivals and departures)
+            const dayAirportPoints: DayMapPoint[] = [];
+            const dayAirportMap = new Map<string, DayMapPoint>();
+            if (dayDateStr) {
+              for (const seg of allSegments) {
+                const depDate = toIsoDateStr(seg.departure_date) || (seg.departure_time ? toIsoDateStr(seg.departure_time.slice(0, 10)) : '');
+                const arrDate = toIsoDateStr(seg.arrival_date) || (seg.arrival_time ? toIsoDateStr(seg.arrival_time.slice(0, 10)) : '') || depDate;
+                const isExplicitDay = seg.trip_day_id === day.id;
+
+                if (depDate === dayDateStr || isExplicitDay) {
+                  const ap = getAirportByCode(seg.departure_station_code || seg.departure_location);
+                  if (ap && !dayAirportMap.has(ap.code)) {
+                    dayAirportMap.set(ap.code, {
+                      itemId: `airport-dep-${seg.id || ap.code}`,
+                      title: ap.name,
+                      subtitle: `${ap.city} • Embarque`,
+                      latitude: ap.latitude,
+                      longitude: ap.longitude,
+                      pointType: 'AIRPORT',
+                      airportCode: ap.code,
+                    });
+                  }
+                }
+
+                if (arrDate === dayDateStr || isExplicitDay) {
+                  const ap = getAirportByCode(seg.arrival_station_code || seg.arrival_location);
+                  if (ap && !dayAirportMap.has(ap.code)) {
+                    dayAirportMap.set(ap.code, {
+                      itemId: `airport-arr-${seg.id || ap.code}`,
+                      title: ap.name,
+                      subtitle: `${ap.city} • Desembarque`,
+                      latitude: ap.latitude,
+                      longitude: ap.longitude,
+                      pointType: 'AIRPORT',
+                      airportCode: ap.code,
+                    });
+                  }
+                }
+              }
+            }
+            dayAirportPoints.push(...Array.from(dayAirportMap.values()));
+
+            const dayPoints: DayMapPoint[] = [
+              ...dayActivityPoints,
+              ...dayHotelPoints,
+              ...dayAirportPoints,
+            ];
 
             return (
               <div
@@ -1539,6 +1694,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     {flightsByDate[day.date].map((fl, fIdx) => (
                       <div
                         key={fl.id || fIdx}
+                        id={fl.id ? `flight-${fl.id}` : undefined}
+                        data-airport-code={fl.departure_station_code || fl.arrival_station_code || undefined}
                         className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-sky-50/80 border border-sky-200/90 rounded-xl text-xs text-sky-950 shadow-2xs"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -1587,7 +1744,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                   if (dayHotels.length === 1) {
                     const activeHotel = dayHotels[0];
                     return (
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-950 shadow-2xs my-2.5">
+                      <div
+                        id={`hotel-${activeHotel.id}`}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-950 shadow-2xs my-2.5"
+                      >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
                             <Building2 className="w-4 h-4" />
@@ -1650,7 +1810,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                           {dayHotels.map((h, hIdx) => (
-                            <div key={h.id || hIdx} className="bg-white/95 border border-amber-200/90 rounded-lg p-2.5 shadow-2xs flex flex-col justify-between">
+                            <div
+                              key={h.id || hIdx}
+                              id={h.id ? `hotel-${h.id}` : undefined}
+                              className="bg-white/95 border border-amber-200/90 rounded-lg p-2.5 shadow-2xs flex flex-col justify-between"
+                            >
                               <div>
                                 <div className="flex items-center justify-between gap-1 mb-1.5">
                                   <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">
@@ -1696,7 +1860,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                         {dayHotels.map((h, hIdx) => (
-                          <div key={h.id || hIdx} className="bg-white/95 border border-indigo-200/90 rounded-lg p-2.5 shadow-2xs flex flex-col justify-between">
+                          <div
+                            key={h.id || hIdx}
+                            id={h.id ? `hotel-${h.id}` : undefined}
+                            className="bg-white/95 border border-indigo-200/90 rounded-lg p-2.5 shadow-2xs flex flex-col justify-between"
+                          >
                             <div>
                               <div className="flex items-center justify-between gap-1 mb-1.5">
                                 <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800">
