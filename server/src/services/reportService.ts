@@ -1117,7 +1117,9 @@ export const reportService = {
               ${h.document_id ? `
               <div class="hotel-detail-item">
                 <span class="detail-label">Voucher:</span>
-                <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" style="color: #059669; text-decoration: underline; font-weight: 600;">📄 ${escapeHtml(h.document_name || 'Ver Voucher')}</a></span>
+                <span class="detail-val">
+                  <a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a>
+                </span>
               </div>` : ''}
             </div>
             ${h.notes ? `<div class="day-hotel-notes">ℹ️ <strong>Notas & Observações:</strong> ${escapeHtml(h.notes)}</div>` : ''}
@@ -1157,7 +1159,7 @@ export const reportService = {
                     ${h.room_type ? `<div class="hotel-detail-item"><span class="detail-label">Quarto:</span> <span class="detail-val">${escapeHtml(h.room_type)}</span></div>` : ''}
                     ${!options?.anonymize && h.reservation_number ? `<div class="hotel-detail-item"><span class="detail-label">Reserva:</span> <span class="detail-val font-mono">#${escapeHtml(h.reservation_number)}</span></div>` : ''}
                     ${paxLabel ? `<div class="hotel-detail-item"><span class="detail-label">Hóspedes:</span> <span class="detail-val">${escapeHtml(paxLabel)}</span></div>` : ''}
-                    ${h.document_id ? `<div class="hotel-detail-item"><span class="detail-label">Voucher:</span> <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" style="color: #059669; text-decoration: underline; font-weight: 600;">📄 ${escapeHtml(h.document_name || 'Ver Voucher')}</a></span></div>` : ''}
+                    ${h.document_id ? `<div class="hotel-detail-item"><span class="detail-label">Voucher:</span> <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></span></div>` : ''}
                   </div>
                   ${h.notes ? `<div class="day-hotel-notes" style="font-size: 6.8pt;">ℹ️ ${escapeHtml(h.notes)}</div>` : ''}
                 </div>
@@ -2055,14 +2057,41 @@ export const reportService = {
       display: flex;
       align-items: baseline;
       gap: 4px;
+      min-width: 0;
     }
     .detail-label {
       color: #047857;
       font-weight: 600;
       font-size: 7pt;
+      flex-shrink: 0;
     }
     .detail-val {
       color: #064e3b;
+      min-width: 0;
+    }
+    .voucher-link-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      color: #047857 !important;
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      padding: 1.5px 7px;
+      border-radius: 4px;
+      font-size: 7pt;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+      vertical-align: middle;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .voucher-link-badge:hover {
+      background: #d1fae5;
+      border-color: #6ee7b7;
+      text-decoration: none;
+      color: #065f46 !important;
     }
     .day-hotel-notes {
       margin-top: 5px;
@@ -2883,7 +2912,7 @@ export const reportService = {
           <tr>
             <td>
               <strong>${escapeHtml(h.hotel_name)}</strong>
-              ${h.document_id ? `<br><a href="/api/documents/${h.document_id}/file" target="_blank" style="color: #059669; font-size: 7.5pt; text-decoration: underline; font-weight: 600;">📄 ${escapeHtml(h.document_name || 'Ver Voucher')}</a>` : ''}
+              ${h.document_id ? `<div style="margin-top: 3px;"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></div>` : ''}
               <br><small style="color: #64748b;">${escapeHtml(h.address || '')}</small>
               ${h.notes ? `<br><small style="color: #92400e; font-size: 7pt; font-style: italic;">ℹ️ ${escapeHtml(h.notes)}</small>` : ''}
             </td>
