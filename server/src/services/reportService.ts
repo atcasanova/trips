@@ -1114,7 +1114,7 @@ export const reportService = {
                 <span class="detail-label">Hóspedes:</span>
                 <span class="detail-val">${escapeHtml(paxLabel)}</span>
               </div>` : ''}
-              ${h.document_id ? `
+              ${!options?.anonymize && !options?.isPublicShare && h.document_id ? `
               <div class="hotel-detail-item">
                 <span class="detail-label">Voucher:</span>
                 <span class="detail-val">
@@ -1159,7 +1159,7 @@ export const reportService = {
                     ${h.room_type ? `<div class="hotel-detail-item"><span class="detail-label">Quarto:</span> <span class="detail-val">${escapeHtml(h.room_type)}</span></div>` : ''}
                     ${!options?.anonymize && h.reservation_number ? `<div class="hotel-detail-item"><span class="detail-label">Reserva:</span> <span class="detail-val font-mono">#${escapeHtml(h.reservation_number)}</span></div>` : ''}
                     ${paxLabel ? `<div class="hotel-detail-item"><span class="detail-label">Hóspedes:</span> <span class="detail-val">${escapeHtml(paxLabel)}</span></div>` : ''}
-                    ${h.document_id ? `<div class="hotel-detail-item"><span class="detail-label">Voucher:</span> <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></span></div>` : ''}
+                    ${!options?.anonymize && !options?.isPublicShare && h.document_id ? `<div class="hotel-detail-item"><span class="detail-label">Voucher:</span> <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></span></div>` : ''}
                   </div>
                   ${h.notes ? `<div class="day-hotel-notes" style="font-size: 6.8pt;">ℹ️ ${escapeHtml(h.notes)}</div>` : ''}
                 </div>
@@ -2912,7 +2912,7 @@ export const reportService = {
           <tr>
             <td>
               <strong>${escapeHtml(h.hotel_name)}</strong>
-              ${h.document_id ? `<div style="margin-top: 3px;"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></div>` : ''}
+              ${!options?.anonymize && !options?.isPublicShare && h.document_id ? `<div style="margin-top: 3px;"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></div>` : ''}
               <br><small style="color: #64748b;">${escapeHtml(h.address || '')}</small>
               ${h.notes ? `<br><small style="color: #92400e; font-size: 7pt; font-style: italic;">ℹ️ ${escapeHtml(h.notes)}</small>` : ''}
             </td>
