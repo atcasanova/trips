@@ -5,6 +5,7 @@ import {
   aggregateHotels,
   aggregateItineraryItems,
 } from '../utils/aggregation.js';
+import { getAirportByCode } from '../utils/airportLocations.js';
 
 export const reportService = {
   // Compiles complete Trip Book data for a trip
@@ -111,7 +112,14 @@ export const reportService = {
 
     // 4. Hotel reservations
     const { rows: hotels } = await query(
-      `SELECT * FROM hotel_reservations WHERE trip_id = $1 ORDER BY check_in_date ASC`,
+      `SELECT h.*,
+              doc.original_name AS document_name,
+              doc.mime_type AS document_mime_type,
+              doc.file_size AS document_size
+       FROM hotel_reservations h
+       LEFT JOIN documents doc ON doc.id = h.document_id AND doc.deleted_at IS NULL
+       WHERE h.trip_id = $1
+       ORDER BY h.check_in_date ASC, h.created_at ASC`,
       [tripId]
     );
 
@@ -165,7 +173,21 @@ export const reportService = {
   // Generates standalone, editorial HTML ready for print & PDF
   generateTripBookHtml(
     data: any,
-    options: { anonymize?: boolean; isPublicShare?: boolean; pdfDownloadUrl?: string } = {}
+    options: {
+      anonymize?: boolean;
+      isPublicShare?: boolean;
+      pdfDownloadUrl?: string;
+      sections?: {
+        cover?: boolean;
+        overview?: boolean;
+        calendar?: boolean;
+        climatePacking?: boolean;
+        dayByDay?: boolean;
+        transports?: boolean;
+        hotels?: boolean;
+        checklist?: boolean;
+      };
+    } = {}
   ): string {
     const { trip, days, transports, segments, hotels, climateGuides, checklists, expenses, members, travelers = [] } = data;
     const theme = trip.theme || {
@@ -176,37 +198,23 @@ export const reportService = {
       text: '#2f3941',
     };
 
+    const sec = {
+      cover: options.sections?.cover !== false,
+      overview: options.sections?.overview !== false,
+      calendar: options.sections?.calendar !== false,
+      climatePacking: options.sections?.climatePacking !== false,
+      dayByDay: options.sections?.dayByDay !== false,
+      transports: options.sections?.transports !== false,
+      hotels: options.sections?.hotels !== false,
+      checklist: options.sections?.checklist !== false,
+    };
+
     const toFiniteCoord = (val: any): number | null => {
       if (val === null || val === undefined || val === '') return null;
       const num = typeof val === 'number' ? val : Number(val);
       if (!Number.isFinite(num)) return null;
       return num;
     };
-
-    let stopCounter = 0;
-    const dayMapsData: Record<string, Array<{ number: number; title: string; latitude: number; longitude: number }>> = {};
-
-    for (const d of (days || [])) {
-      const validPoints: Array<{ number: number; title: string; latitude: number; longitude: number }> = [];
-      for (const item of (d.items || [])) {
-        if (item.map_mode === 'SKIP') continue;
-        const lat = toFiniteCoord(item.latitude);
-        const lng = toFiniteCoord(item.longitude);
-        if (lat === null || lng === null || lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) {
-          continue;
-        }
-        stopCounter += 1;
-        validPoints.push({
-          number: stopCounter,
-          title: String(item.title || 'Atração'),
-          latitude: lat,
-          longitude: lng,
-        });
-      }
-      if (validPoints.length > 0) {
-        dayMapsData[d.day_number] = validPoints;
-      }
-    }
 
     const citiesList = Array.isArray(trip.cities) ? trip.cities.join(' • ') : (trip.destination_summary || '');
 
@@ -442,28 +450,201 @@ export const reportService = {
     }
 
     // Index hotels by active stay dates
-    const rawHotelsByDate: Record<string, any[]> = {};
+    // Night of lodging is from check_in_date up to (but not including) check_out_date.
+    // If check_out is not specified or equal to check_in, it's considered for that single date.
+    const rawStayHotelsByDate: Record<string, any[]> = {};
+    const rawCheckInHotelsByDate: Record<string, any[]> = {};
+    const rawCheckOutHotelsByDate: Record<string, any[]> = {};
     const allHotels = hotels || [];
+
     for (const h of allHotels) {
       const inDate = toDateStr(h.check_in_date);
       const outDate = toDateStr(h.check_out_date);
       if (inDate) {
+        if (!rawCheckInHotelsByDate[inDate]) rawCheckInHotelsByDate[inDate] = [];
+        rawCheckInHotelsByDate[inDate].push(h);
+
+        if (outDate && outDate > inDate) {
+          if (!rawCheckOutHotelsByDate[outDate]) rawCheckOutHotelsByDate[outDate] = [];
+          rawCheckOutHotelsByDate[outDate].push(h);
+        }
+
         let cur = inDate;
-        const limit = outDate || inDate;
         let count = 0;
-        while (cur <= limit && count < 60) {
-          if (!rawHotelsByDate[cur]) rawHotelsByDate[cur] = [];
-          rawHotelsByDate[cur].push(h);
+        const isSingleDay = !outDate || outDate === inDate;
+        while (count < 60) {
+          if (isSingleDay) {
+            if (!rawStayHotelsByDate[cur]) rawStayHotelsByDate[cur] = [];
+            rawStayHotelsByDate[cur].push(h);
+            break;
+          }
+          if (cur >= outDate) break;
+          if (!rawStayHotelsByDate[cur]) rawStayHotelsByDate[cur] = [];
+          rawStayHotelsByDate[cur].push(h);
           cur = addDays(cur, 1);
           count++;
         }
       }
     }
 
+    const stayHotelsByDate: Record<string, any[]> = {};
     const hotelsByDate: Record<string, any> = {};
-    for (const [dt, hList] of Object.entries(rawHotelsByDate)) {
+    for (const [dt, hList] of Object.entries(rawStayHotelsByDate)) {
       const aggHotels = aggregateHotels(hList, { anonymize: options?.anonymize });
+      stayHotelsByDate[dt] = aggHotels;
       hotelsByDate[dt] = aggHotels[0] || null;
+    }
+
+    const checkInHotelsByDate: Record<string, any[]> = {};
+    for (const [dt, hList] of Object.entries(rawCheckInHotelsByDate)) {
+      checkInHotelsByDate[dt] = aggregateHotels(hList, { anonymize: options?.anonymize });
+    }
+
+    const checkOutHotelsByDate: Record<string, any[]> = {};
+    for (const [dt, hList] of Object.entries(rawCheckOutHotelsByDate)) {
+      checkOutHotelsByDate[dt] = aggregateHotels(hList, { anonymize: options?.anonymize });
+    }
+
+    // Build Day Mini-Maps data (attractions, active lodging, and travel airports)
+    let stopCounter = 0;
+    const dayMapsData: Record<string, Array<{
+      number?: number;
+      title: string;
+      subtitle?: string;
+      latitude: number;
+      longitude: number;
+      pointType: 'ACTIVITY' | 'HOTEL' | 'AIRPORT';
+    }>> = {};
+
+    const allTripTravelerNames = new Set(
+      travelers.map((t: any) => (t.display_name || t.name || '').trim().toLowerCase()).filter(Boolean)
+    );
+
+    const getDistKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    for (const d of (days || [])) {
+      const validPoints: Array<{
+        number?: number;
+        title: string;
+        subtitle?: string;
+        latitude: number;
+        longitude: number;
+        pointType: 'ACTIVITY' | 'HOTEL' | 'AIRPORT';
+      }> = [];
+
+      // 1. Activities / Stops
+      for (const item of (d.items || [])) {
+        if (item.map_mode === 'SKIP') continue;
+        const lat = toFiniteCoord(item.latitude);
+        const lng = toFiniteCoord(item.longitude);
+        if (lat === null || lng === null || lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) {
+          continue;
+        }
+        stopCounter += 1;
+        validPoints.push({
+          number: stopCounter,
+          title: String(item.title || 'Atração'),
+          latitude: lat,
+          longitude: lng,
+          pointType: 'ACTIVITY',
+        });
+      }
+
+      const dayDateStr = toDateStr(d.date);
+
+      // 2. Day Hotels (Active lodging for tonight; checkout hotels excluded to prevent zooming out to distant previous cities)
+      const dayHotelsForMap = stayHotelsByDate[dayDateStr] || [];
+      for (const h of dayHotelsForMap) {
+        const lat = toFiniteCoord(h.latitude);
+        const lng = toFiniteCoord(h.longitude);
+        if (lat !== null && lng !== null && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && (lat !== 0 || lng !== 0)) {
+          const inD = toDateStr(h.check_in_date);
+          const isCheckInToday = inD === dayDateStr;
+          validPoints.push({
+            title: h.hotel_name,
+            subtitle: `${h.city ? `${h.city} • ` : ''}${isCheckInToday ? 'Check-in hoje' : 'Hospedagem'}`,
+            latitude: lat,
+            longitude: lng,
+            pointType: 'HOTEL',
+          });
+        }
+      }
+
+      // 3. Day Airports (Only for actual travel days, excluding early partial departures)
+      if (dayDateStr) {
+        const actPoints = validPoints.filter(p => p.pointType === 'ACTIVITY');
+        const hasDayActivities = actPoints.length > 0;
+        const avgActLat = hasDayActivities ? actPoints.reduce((s, p) => s + p.latitude, 0) / actPoints.length : null;
+        const avgActLng = hasDayActivities ? actPoints.reduce((s, p) => s + p.longitude, 0) / actPoints.length : null;
+
+        const dayAirportMap = new Map<string, any>();
+        for (const seg of allSegments) {
+          const depDate = toDateStr(seg.departure_date);
+          const arrDate = toDateStr(seg.arrival_date) || depDate;
+          const isExplicitDay = seg.trip_day_id === d.id;
+
+          const segTravelers = (seg.passenger_names || [])
+            .map((p: any) => (typeof p?.name === 'string' ? p.name.trim().toLowerCase() : ''))
+            .filter(Boolean);
+          const isPartialGroup = allTripTravelerNames.size > 1 && segTravelers.length > 0 && segTravelers.length < allTripTravelerNames.size;
+          const isBeforeTripEnd = returnDateStr ? (depDate || '') < returnDateStr : false;
+          const isEarlyDeparture = isPartialGroup && isBeforeTripEnd && (hasDayActivities || d.day_number < (days.length - 2));
+
+          if (isEarlyDeparture) continue;
+
+          if (depDate === dayDateStr || isExplicitDay) {
+            const ap = getAirportByCode(seg.departure_station_code || seg.departure_location);
+            if (ap && !dayAirportMap.has(ap.code)) {
+              const isFar = hasDayActivities && avgActLat !== null && avgActLng !== null
+                ? getDistKm(avgActLat, avgActLng, ap.latitude, ap.longitude) > 800
+                : false;
+              if (!isFar) {
+                dayAirportMap.set(ap.code, {
+                  title: ap.name,
+                  subtitle: `${ap.city} • Embarque`,
+                  latitude: ap.latitude,
+                  longitude: ap.longitude,
+                  pointType: 'AIRPORT',
+                });
+              }
+            }
+          }
+
+          if (arrDate === dayDateStr || isExplicitDay) {
+            const ap = getAirportByCode(seg.arrival_station_code || seg.arrival_location);
+            if (ap && !dayAirportMap.has(ap.code)) {
+              const isFar = hasDayActivities && avgActLat !== null && avgActLng !== null
+                ? getDistKm(avgActLat, avgActLng, ap.latitude, ap.longitude) > 800
+                : false;
+              if (!isFar) {
+                dayAirportMap.set(ap.code, {
+                  title: ap.name,
+                  subtitle: `${ap.city} • Desembarque`,
+                  latitude: ap.latitude,
+                  longitude: ap.longitude,
+                  pointType: 'AIRPORT',
+                });
+              }
+            }
+          }
+        }
+        for (const apPoint of dayAirportMap.values()) {
+          validPoints.push(apPoint);
+        }
+      }
+
+      if (validPoints.length > 0) {
+        dayMapsData[d.day_number] = validPoints;
+      }
     }
 
     // Determine timeline date range
@@ -547,6 +728,8 @@ export const reportService = {
           items: aggregatedDayItems,
           flights: dayFlights,
           hotel: dayHotel,
+          hotels: stayHotelsByDate[cur] || [],
+          checkOutHotels: checkOutHotelsByDate[cur] || [],
           anchorId,
           hasDetailedCard: !!dayRecord,
           isReturnDay,
@@ -815,7 +998,14 @@ export const reportService = {
 
               // 3. Lodging / Overnight
               let lodgingHtml = '';
-              if (tDay.hotel) {
+              if (tDay.hotels && tDay.hotels.length > 0) {
+                lodgingHtml = tDay.hotels.map((h: any) => {
+                  const guests = !options?.anonymize && h.guest_names
+                    ? ` • Hóspedes: ${escapeHtml(h.guest_names)}`
+                    : (h.guestCount > 1 ? ` • ${h.guestCount} hóspedes` : '');
+                  return `<strong>🏨 ${escapeHtml(h.hotel_name)}</strong><br><small style="color: #64748b;">${escapeHtml(h.city || '')}${guests}</small>`;
+                }).join('<div style="margin-top: 4px; border-top: 1px dashed #e2e8f0; padding-top: 3px;"></div>');
+              } else if (tDay.hotel) {
                 const guests = !options?.anonymize && tDay.hotel.guest_names
                   ? ` • Hóspedes: ${escapeHtml(tDay.hotel.guest_names)}`
                   : (tDay.hotel.guestCount > 1 ? ` • ${tDay.hotel.guestCount} hóspedes` : '');
@@ -845,6 +1035,135 @@ export const reportService = {
             }).join('')}
           </tbody>
         </table>
+        </div>
+      `;
+    };
+
+    // Render hotel banner for detailed day cards
+    const renderDayHotelBanner = (
+      dayStayHotels: any[],
+      dayCheckOutHotels: any[],
+      dayDateStr: string
+    ) => {
+      if ((!dayStayHotels || dayStayHotels.length === 0) && (!dayCheckOutHotels || dayCheckOutHotels.length === 0)) {
+        return '';
+      }
+
+      let checkOutHtml = '';
+      if (dayCheckOutHotels && dayCheckOutHotels.length > 0) {
+        checkOutHtml = dayCheckOutHotels.map((h: any) => `
+          <div class="day-hotel-checkout-pill">
+            🧳 <strong>Check-out pela manhã:</strong> ${escapeHtml(h.hotel_name)}${h.city ? ` (${escapeHtml(h.city)})` : ''}${h.check_out_time ? ` até às ${escapeHtml(h.check_out_time)}` : ''}
+          </div>
+        `).join('');
+      }
+
+      if (!dayStayHotels || dayStayHotels.length === 0) {
+        return checkOutHtml;
+      }
+
+      // Single active hotel
+      if (dayStayHotels.length === 1) {
+        const h = dayStayHotels[0];
+        const inD = toDateStr(h.check_in_date);
+        const isCheckInToday = inD === dayDateStr;
+        const paxLabel = !options?.anonymize && h.guest_names
+          ? h.guest_names
+          : (h.guestCount > 1 ? `${h.guestCount} hóspedes` : '');
+
+        return `
+          ${checkOutHtml}
+          <div class="day-hotel-banner">
+            <div class="day-hotel-header">
+              <div class="day-hotel-title-wrap">
+                <span class="day-hotel-icon">🏨</span>
+                <div class="day-hotel-main">
+                  <div class="day-hotel-name">${escapeHtml(h.hotel_name)}</div>
+                  <div class="day-hotel-sub">
+                    ${h.city ? `<span class="day-hotel-city">📍 ${escapeHtml(h.city)}</span>` : ''}
+                    ${h.address ? `<span class="day-hotel-addr">• ${escapeHtml(h.address)}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <span class="day-hotel-tag ${isCheckInToday ? 'tag-checkin' : 'tag-active'}">
+                ${isCheckInToday ? '🛎️ Check-in hoje' : '🏨 Hospedagem ativa'}
+              </span>
+            </div>
+
+            <div class="day-hotel-details-grid">
+              <div class="hotel-detail-item">
+                <span class="detail-label">Check-in:</span>
+                <span class="detail-val">${formatDateBr(h.check_in_date)}${h.check_in_time ? ` a partir das ${escapeHtml(h.check_in_time)}` : ''}</span>
+              </div>
+              <div class="hotel-detail-item">
+                <span class="detail-label">Check-out:</span>
+                <span class="detail-val">${formatDateBr(h.check_out_date)}${h.check_out_time ? ` até às ${escapeHtml(h.check_out_time)}` : ''}</span>
+              </div>
+              ${!options?.anonymize && h.reservation_number ? `
+              <div class="hotel-detail-item">
+                <span class="detail-label">Reserva:</span>
+                <span class="detail-val font-mono">#${escapeHtml(h.reservation_number)}</span>
+              </div>` : ''}
+              ${h.room_type ? `
+              <div class="hotel-detail-item">
+                <span class="detail-label">Acomodação:</span>
+                <span class="detail-val">${escapeHtml(h.room_type)}</span>
+              </div>` : ''}
+              ${paxLabel ? `
+              <div class="hotel-detail-item">
+                <span class="detail-label">Hóspedes:</span>
+                <span class="detail-val">${escapeHtml(paxLabel)}</span>
+              </div>` : ''}
+              ${h.document_id ? `
+              <div class="hotel-detail-item">
+                <span class="detail-label">Voucher:</span>
+                <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" style="color: #059669; text-decoration: underline; font-weight: 600;">📄 ${escapeHtml(h.document_name || 'Ver Voucher')}</a></span>
+              </div>` : ''}
+            </div>
+            ${h.notes ? `<div class="day-hotel-notes">ℹ️ <strong>Notas & Observações:</strong> ${escapeHtml(h.notes)}</div>` : ''}
+          </div>
+        `;
+      }
+
+      // Multiple hotels (competing options or split group)
+      return `
+        ${checkOutHtml}
+        <div class="day-hotel-banner day-hotel-multi">
+          <div class="day-hotel-multi-header">
+            <span class="day-hotel-multi-icon">⚡</span>
+            <div class="day-hotel-multi-title">
+              Opções Concorrentes de Hospedagem (${dayStayHotels.length} opções cadastradas)
+            </div>
+          </div>
+          <div class="day-hotel-multi-grid">
+            ${dayStayHotels.map((h: any, idx: number) => {
+              const inD = toDateStr(h.check_in_date);
+              const isCheckInToday = inD === dayDateStr;
+              const paxLabel = !options?.anonymize && h.guest_names
+                ? h.guest_names
+                : (h.guestCount > 1 ? `${h.guestCount} hóspedes` : '');
+
+              return `
+                <div class="day-hotel-multi-card">
+                  <div class="day-hotel-multi-card-top">
+                    <span class="day-hotel-option-badge">Opção ${idx + 1}</span>
+                    <span class="day-hotel-tag ${isCheckInToday ? 'tag-checkin' : 'tag-active'}">
+                      ${isCheckInToday ? '🛎️ Check-in' : '🏨 Noite ativa'}
+                    </span>
+                  </div>
+                  <div class="day-hotel-name" style="margin-top: 3px;">${escapeHtml(h.hotel_name)}</div>
+                  <div class="day-hotel-sub">${escapeHtml(h.city || '')}${h.address ? ` • ${escapeHtml(h.address)}` : ''}</div>
+                  <div class="day-hotel-details-grid" style="grid-template-columns: 1fr; margin-top: 4px; padding-top: 4px;">
+                    ${h.room_type ? `<div class="hotel-detail-item"><span class="detail-label">Quarto:</span> <span class="detail-val">${escapeHtml(h.room_type)}</span></div>` : ''}
+                    ${!options?.anonymize && h.reservation_number ? `<div class="hotel-detail-item"><span class="detail-label">Reserva:</span> <span class="detail-val font-mono">#${escapeHtml(h.reservation_number)}</span></div>` : ''}
+                    ${paxLabel ? `<div class="hotel-detail-item"><span class="detail-label">Hóspedes:</span> <span class="detail-val">${escapeHtml(paxLabel)}</span></div>` : ''}
+                    ${h.document_id ? `<div class="hotel-detail-item"><span class="detail-label">Voucher:</span> <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" style="color: #059669; text-decoration: underline; font-weight: 600;">📄 ${escapeHtml(h.document_name || 'Ver Voucher')}</a></span></div>` : ''}
+                  </div>
+                  ${h.notes ? `<div class="day-hotel-notes" style="font-size: 6.8pt;">ℹ️ ${escapeHtml(h.notes)}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
         </div>
       `;
     };
@@ -1616,6 +1935,154 @@ export const reportService = {
       margin-bottom: 12px;
     }
 
+    .day-hotel-banner {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-left: 4px solid #16a34a;
+      border-radius: 6px;
+      padding: 9px 12px;
+      margin-bottom: 12px;
+      font-size: 8pt;
+      color: #14532d;
+    }
+    .day-hotel-multi {
+      background: #fdfaf0;
+      border-color: #fde68a;
+      border-left-color: #d97706;
+      color: #78350f;
+    }
+    .day-hotel-multi-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      font-size: 8.5pt;
+      margin-bottom: 8px;
+      color: #92400e;
+    }
+    .day-hotel-multi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 8px;
+    }
+    .day-hotel-multi-card {
+      background: #ffffff;
+      border: 1px solid #fde68a;
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .day-hotel-multi-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3px;
+    }
+    .day-hotel-option-badge {
+      font-size: 6.5pt;
+      font-weight: 700;
+      background: #fef3c7;
+      color: #92400e;
+      padding: 1px 5px;
+      border-radius: 3px;
+      text-transform: uppercase;
+    }
+    .day-hotel-checkout-pill {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-left: 3px solid #64748b;
+      border-radius: 4px;
+      padding: 5px 9px;
+      font-size: 7.5pt;
+      color: #334155;
+      margin-bottom: 8px;
+    }
+    .day-hotel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 5px;
+    }
+    .day-hotel-title-wrap {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+    }
+    .day-hotel-icon {
+      font-size: 13pt;
+      line-height: 1;
+    }
+    .day-hotel-name {
+      font-weight: 700;
+      font-size: 9pt;
+      color: #064e3b;
+    }
+    .day-hotel-sub {
+      font-size: 7.2pt;
+      color: #047857;
+      margin-top: 1px;
+    }
+    .day-hotel-tag {
+      font-size: 6.5pt;
+      font-weight: 700;
+      padding: 1.5px 5px;
+      border-radius: 3px;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .tag-checkin {
+      background: #dcfce7;
+      color: #15803d;
+      border: 1px solid #86efac;
+    }
+    .tag-active {
+      background: #e0e7ff;
+      color: #3730a3;
+      border: 1px solid #c7d2fe;
+    }
+    .day-hotel-details-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 4px 12px;
+      padding-top: 5px;
+      border-top: 1px solid rgba(22, 163, 74, 0.15);
+      margin-top: 5px;
+    }
+    .hotel-detail-item {
+      font-size: 7.5pt;
+      color: #166534;
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .detail-label {
+      color: #047857;
+      font-weight: 600;
+      font-size: 7pt;
+    }
+    .detail-val {
+      color: #064e3b;
+    }
+    .day-hotel-notes {
+      margin-top: 5px;
+      padding-top: 4px;
+      border-top: 1px dashed #bbf7d0;
+      font-size: 7pt;
+      color: #15803d;
+      line-height: 1.35;
+    }
+    .marker-hotel {
+      background: #059669 !important;
+      color: #ffffff !important;
+      font-size: 11px !important;
+    }
+    .marker-airport {
+      background: #0284c7 !important;
+      color: #ffffff !important;
+      font-size: 11px !important;
+    }
+
     /* Top Action Bar (Public & Internal View) */
     .tripbook-top-bar, .public-share-top-bar {
       background: #0f172a;
@@ -1940,6 +2407,7 @@ export const reportService = {
   <div class="tripbook-wrapper">
     <div class="tripbook-sheet">
 
+  ${sec.cover ? `
   <!-- CAPA EDITORIAL -->
   <div class="cover-page">
     <div class="cover-top">
@@ -1961,9 +2429,12 @@ export const reportService = {
       <div class="cover-tagline">${trip.tagline || 'Guia e Roteiro Completo de Viagem'}</div>
     </div>
   </div>
+  ` : ''}
 
+  ${sec.overview || sec.calendar ? `
   <!-- VISÃO GERAL & CALENDÁRIO -->
   <div class="page-content">
+    ${sec.overview ? `
     <h1 class="section-title">Visão Geral da Viagem</h1>
     ${
       trip.description
@@ -1975,7 +2446,9 @@ export const reportService = {
       <div class="callout-title">🌸 JANELA SAZONAL & INFORMAÇÕES DE VIAGEM</div>
       <p>As datas do roteiro foram estrategicamente planejadas para coincidir com as melhores condições e atrativos locais. Recomenda-se checar previsões meteorológicas finas e horários locais 7 a 10 dias antes do embarque.</p>
     </div>
+    ` : ''}
 
+    ${sec.calendar ? `
     <div id="calendario">
       <h2 class="subsection-title">📅 Visão de Calendário da Viagem</h2>
       <p class="section-subtitle">Grade mensal da viagem. Clique em qualquer dia para navegar diretamente aos detalhes do roteiro.</p>
@@ -1987,7 +2460,9 @@ export const reportService = {
 
       ${renderAgendaTable()}
     </div>
+    ` : ''}
   </div>
+  ` : ''}
 
   ${
     climateGuides && climateGuides.length > 0
@@ -2025,6 +2500,7 @@ export const reportService = {
       : ''
   }
 
+  ${sec.dayByDay ? `
   <!-- ROTEIRO DIA A DIA -->
   <div class="page-break">
     <h1 class="section-title">Roteiro Detalhado por Dia</h1>
@@ -2034,6 +2510,8 @@ export const reportService = {
         (day: any) => {
           const ds = toDateStr(day.date);
           const dayFlights = segmentsByDate[ds] || [];
+          const dayStayHotels = stayHotelsByDate[ds] || [];
+          const dayCheckOutHotels = checkOutHotelsByDate[ds] || [];
           const dayItems = aggregateItineraryItems(day.items || [], { anonymize: options?.anonymize });
 
           return `
@@ -2071,6 +2549,8 @@ export const reportService = {
             : ''
         }
 
+        ${sec.hotels ? renderDayHotelBanner(dayStayHotels, dayCheckOutHotels, ds) : ''}
+
         ${day.narrative ? `<div class="day-narrative">${day.narrative}</div>` : ''}
 
         <div class="day-meta-strip">
@@ -2093,7 +2573,7 @@ export const reportService = {
             ? `
           <div class="day-minimap-wrapper">
             <div class="day-minimap-header">
-              <span>📍 Mapa do dia • ${dayMapsData[day.day_number].length} ${dayMapsData[day.day_number].length === 1 ? 'parada localizada' : 'paradas localizadas'}</span>
+              <span>📍 Mapa do dia • ${dayMapsData[day.day_number].length} ${dayMapsData[day.day_number].length === 1 ? 'local mapeado' : 'locais mapeados'}${dayMapsData[day.day_number].some((p: any) => p.pointType === 'HOTEL') ? ' (com hospedagem)' : ''}</span>
             </div>
             <div id="map-day-${day.day_number}" class="day-minimap-canvas"></div>
           </div>
@@ -2188,8 +2668,9 @@ export const reportService = {
 
     <div class="footer-ornament">❀  ❀  ❀</div>
   </div>
+  ` : ''}
 
-  ${(() => {
+  ${sec.transports ? (() => {
     if (!transports || transports.length === 0) return '';
 
     // Condense / group transports that share the same flights or empty duplicate reservations
@@ -2374,13 +2855,13 @@ export const reportService = {
       .join('')}
   </div>
   `;
-  })()}
+  })() : ''}
 
   ${
-    hotels && hotels.length > 0
+    sec.hotels && hotels && hotels.length > 0
       ? `
   <!-- HOSPEDAGENS -->
-  <div class="page-break">
+  <div class="page-break" id="hospedagens">
     <h1 class="section-title">Hospedagens & Vouchers</h1>
     <div class="table-responsive">
     <table class="data-table">
@@ -2400,13 +2881,18 @@ export const reportService = {
           .map(
             (h: any) => `
           <tr>
-            <td><strong>${h.hotel_name}</strong><br><small style="color: #64748b;">${h.address || ''}</small></td>
-            <td>${h.city || ''}</td>
-            <td>${formatDateBr(h.check_in_date)} ${h.check_in_time ? `às ${h.check_in_time}` : ''}</td>
-            <td>${formatDateBr(h.check_out_date)} ${h.check_out_time ? `até ${h.check_out_time}` : ''}</td>
-            <td>${options?.anonymize ? 'Confirmada' : (h.reservation_number || '—')}<br><small>${options?.anonymize ? 'Viajante(s)' : (h.guest_names || '')}</small></td>
-            <td>${h.room_type || 'Quarto Standard'}</td>
-            <td><span style="color: green; font-weight: bold;">${h.payment_status || 'Confirmado'}</span></td>
+            <td>
+              <strong>${escapeHtml(h.hotel_name)}</strong>
+              ${h.document_id ? `<br><a href="/api/documents/${h.document_id}/file" target="_blank" style="color: #059669; font-size: 7.5pt; text-decoration: underline; font-weight: 600;">📄 ${escapeHtml(h.document_name || 'Ver Voucher')}</a>` : ''}
+              <br><small style="color: #64748b;">${escapeHtml(h.address || '')}</small>
+              ${h.notes ? `<br><small style="color: #92400e; font-size: 7pt; font-style: italic;">ℹ️ ${escapeHtml(h.notes)}</small>` : ''}
+            </td>
+            <td>${escapeHtml(h.city || '')}</td>
+            <td>${formatDateBr(h.check_in_date)} ${h.check_in_time ? `às ${escapeHtml(h.check_in_time)}` : ''}</td>
+            <td>${formatDateBr(h.check_out_date)} ${h.check_out_time ? `até às ${escapeHtml(h.check_out_time)}` : ''}</td>
+            <td>${options?.anonymize ? 'Confirmada' : escapeHtml(h.reservation_number || '—')}<br><small>${options?.anonymize ? 'Viajante(s)' : escapeHtml(h.guest_names || '')}</small></td>
+            <td>${escapeHtml(h.room_type || 'Quarto Standard')}</td>
+            <td><span style="color: #16a34a; font-weight: bold;">${escapeHtml(h.payment_status || 'Confirmado')}</span></td>
           </tr>
         `
           )
@@ -2420,7 +2906,7 @@ export const reportService = {
   }
 
   ${
-    checklists && checklists.length > 0
+    sec.checklist && checklists && checklists.length > 0
       ? `
   <!-- CHECKLIST FINAL -->
   <div class="page-break">
@@ -2473,14 +2959,35 @@ export const reportService = {
 
             var group = L.layerGroup().addTo(map);
             points.forEach(function(p) {
-              var icon = L.divIcon({
-                className: 'itinerary-mini-marker-wrap',
-                html: '<span class="itinerary-mini-marker" style="background-color: ${theme.primary || '#b94a5d'}">' + p.number + '</span>',
-                iconSize: [20, 20],
-                iconAnchor: [10, 10]
-              });
+              var icon;
+              var tooltipContent;
+              if (p.pointType === 'HOTEL') {
+                icon = L.divIcon({
+                  className: 'itinerary-mini-marker-wrap',
+                  html: '<span class="itinerary-mini-marker marker-hotel">🏨</span>',
+                  iconSize: [22, 22],
+                  iconAnchor: [11, 11]
+                });
+                tooltipContent = '🏨 ' + p.title + (p.subtitle ? ' (' + p.subtitle + ')' : '');
+              } else if (p.pointType === 'AIRPORT') {
+                icon = L.divIcon({
+                  className: 'itinerary-mini-marker-wrap',
+                  html: '<span class="itinerary-mini-marker marker-airport">✈️</span>',
+                  iconSize: [22, 22],
+                  iconAnchor: [11, 11]
+                });
+                tooltipContent = '✈️ ' + p.title + (p.subtitle ? ' (' + p.subtitle + ')' : '');
+              } else {
+                icon = L.divIcon({
+                  className: 'itinerary-mini-marker-wrap',
+                  html: '<span class="itinerary-mini-marker" style="background-color: ${theme.primary || '#b94a5d'}">' + (p.number || '•') + '</span>',
+                  iconSize: [20, 20],
+                  iconAnchor: [10, 10]
+                });
+                tooltipContent = (p.number ? p.number + '. ' : '') + p.title;
+              }
               L.marker([p.latitude, p.longitude], { icon: icon })
-                .bindTooltip(p.number + '. ' + p.title, { direction: 'top', offset: [0, -10] })
+                .bindTooltip(tooltipContent, { direction: 'top', offset: [0, -10] })
                 .addTo(group);
             });
 
@@ -2488,7 +2995,7 @@ export const reportService = {
               map.setView([points[0].latitude, points[0].longitude], 14, { animate: false });
             } else {
               var bounds = L.latLngBounds(points.map(function(p) { return [p.latitude, p.longitude]; }));
-              map.fitBounds(bounds.pad(0.28), { maxZoom: 15, animate: false });
+              map.fitBounds(bounds.pad(0.35), { maxZoom: 15, animate: false, paddingTopLeft: [0, 22] });
             }
             setTimeout(function() { map.invalidateSize(); }, 200);
           } catch (err) {

@@ -169,7 +169,11 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
     }
   };
 
-  const printHtmlUrl = api.reports.getHtmlUrl(trip.id);
+  const enabledSectionKeys = Object.entries(sections)
+    .filter(([_, enabled]) => enabled)
+    .map(([key]) => key);
+  const sectionsQuery = enabledSectionKeys.length === 8 ? '' : `?sections=${enabledSectionKeys.join(',')}`;
+  const printHtmlUrl = `${api.reports.getHtmlUrl(trip.id)}${sectionsQuery}`;
 
   return (
     <div className="space-y-6">

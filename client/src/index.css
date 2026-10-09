@@ -74,6 +74,19 @@
   transform: scale(1.15);
 }
 
+.itinerary-day-tooltip {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #1e293b !important;
+  background-color: #ffffff !important;
+  border-radius: 6px !important;
+  padding: 4px 8px !important;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.22) !important;
+  border: 1px solid rgba(226, 232, 240, 0.9) !important;
+  white-space: nowrap !important;
+  z-index: 1000 !important;
+}
+
 .leaflet-container {
   font-family: inherit;
   z-index: 0 !important;

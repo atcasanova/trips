@@ -223,6 +223,15 @@ export const api = {
         `/trips/${tripId}/itinerary/locations/refresh`,
         { method: 'POST', body: dayId ? JSON.stringify({ dayId }) : undefined }
       ),
+    syncFlights: (tripId: string) =>
+      request<{
+        success: boolean;
+        daysAdded: number;
+        daysReordered: number;
+        segmentsLinked: number;
+      }>(`/trips/${tripId}/itinerary/sync-flights`, {
+        method: 'POST',
+      }),
     setLocationConfirmation: (tripId: string, itemId: string, confirmed: boolean) =>
       request<{ item: ItineraryItem }>(`/trips/${tripId}/itinerary/items/${itemId}/location-confirmation`, {
         method: 'PUT',

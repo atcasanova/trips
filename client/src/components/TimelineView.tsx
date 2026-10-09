@@ -101,6 +101,18 @@ function toIsoDateStr(val?: string | null): string | null {
   return null;
 }
 
+function getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 export const TimelineView: React.FC<TimelineViewProps> = ({
   trip,
   days,
@@ -113,6 +125,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline');
   const [generatingDayId, setGeneratingDayId] = useState<string | null>(null);
   const [refreshingLocations, setRefreshingLocations] = useState(false);
+  const [syncingFlights, setSyncingFlights] = useState(false);
   const [locationRefreshMessage, setLocationRefreshMessage] = useState<string | null>(null);
   const [locationRefreshError, setLocationRefreshError] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
@@ -141,6 +154,18 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     }
     return list;
   }, [transports]);
+
+  const allTripTravelerNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const seg of allSegments) {
+      for (const p of (seg.passenger_names || [])) {
+        if (p?.name && typeof p.name === 'string') {
+          names.add(p.name.trim().toLowerCase());
+        }
+      }
+    }
+    return names;
+  }, [allSegments]);
 
   // Origin and Return Segment Resolution
   const { originLocation, returnDateStr } = useMemo(() => {
@@ -513,7 +538,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   const mapPoints = useMemo<ItineraryMapPoint[]>(() => {
     let number = 0;
-    const activityPoints: ItineraryMapPoint[] = localDays.flatMap((day) =>
+    return localDays.flatMap((day) =>
       (day.items || []).flatMap((item) => {
         if (item.map_mode === 'SKIP') return [];
         const latitude = toFiniteCoordinate(item.latitude);
@@ -538,65 +563,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         }];
       })
     );
-
-    // Hotels with coordinates
-    const hotelPoints: ItineraryMapPoint[] = [];
-    for (const h of aggregatedHotels) {
-      const lat = toFiniteCoordinate(h.latitude);
-      const lng = toFiniteCoordinate(h.longitude);
-      if (
-        lat !== null && lat >= -90 && lat <= 90 &&
-        lng !== null && lng >= -180 && lng <= 180 &&
-        (lat !== 0 || lng !== 0)
-      ) {
-        const checkIn = h.check_in_date ? formatDateBr(h.check_in_date) : '';
-        const checkOut = h.check_out_date ? formatDateBr(h.check_out_date) : '';
-        const stayLabel = checkIn && checkOut ? `${checkIn} a ${checkOut}` : checkIn || 'Hospedagem';
-        hotelPoints.push({
-          itemId: `hotel-${h.id}`,
-          title: h.hotel_name,
-          subtitle: h.city || h.address || undefined,
-          dayLabel: stayLabel,
-          latitude: lat,
-          longitude: lng,
-          pointType: 'HOTEL',
-        });
-      }
-    }
-
-    // Airports involved in any segment of the trip
-    const airportMap = new Map<string, ItineraryMapPoint>();
-    for (const seg of allSegments) {
-      const depAirport = getAirportByCode(seg.departure_station_code || seg.departure_location);
-      if (depAirport && !airportMap.has(depAirport.code)) {
-        airportMap.set(depAirport.code, {
-          itemId: `airport-${depAirport.code}`,
-          title: depAirport.name,
-          subtitle: `${depAirport.city}, ${depAirport.country}`,
-          dayLabel: 'Aeroporto',
-          latitude: depAirport.latitude,
-          longitude: depAirport.longitude,
-          pointType: 'AIRPORT',
-          airportCode: depAirport.code,
-        });
-      }
-      const arrAirport = getAirportByCode(seg.arrival_station_code || seg.arrival_location);
-      if (arrAirport && !airportMap.has(arrAirport.code)) {
-        airportMap.set(arrAirport.code, {
-          itemId: `airport-${arrAirport.code}`,
-          title: arrAirport.name,
-          subtitle: `${arrAirport.city}, ${arrAirport.country}`,
-          dayLabel: 'Aeroporto',
-          latitude: arrAirport.latitude,
-          longitude: arrAirport.longitude,
-          pointType: 'AIRPORT',
-          airportCode: arrAirport.code,
-        });
-      }
-    }
-
-    return [...activityPoints, ...hotelPoints, ...Array.from(airportMap.values())];
-  }, [localDays, aggregatedHotels, allSegments]);
+  }, [localDays]);
 
   const mapPointNumbers = useMemo(
     () =>
@@ -680,6 +647,26 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       );
     } finally {
       setRefreshingLocations(false);
+    }
+  };
+
+  const handleSyncFlights = async () => {
+    setSyncingFlights(true);
+    try {
+      const res = await api.days.syncFlights(trip.id);
+      if (res.daysAdded > 0) {
+        showToast(
+          `${res.daysAdded} novo(s) dia(s) de voo adicionado(s) e roteiro reordenado!`,
+          'success'
+        );
+      } else {
+        showToast('Roteiro e voos já estão sincronizados.', 'success');
+      }
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao sincronizar voos com o roteiro.');
+    } finally {
+      setSyncingFlights(false);
     }
   };
 
@@ -1167,6 +1154,23 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
         {canEdit && (
           <div className="flex items-center gap-2">
+            {allSegments.length > 0 && (
+              <button
+                type="button"
+                onClick={handleSyncFlights}
+                disabled={syncingFlights}
+                title="Sincroniza datas dos voos criando automaticamente os dias correspondentes no roteiro"
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
+              >
+                {syncingFlights ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
+                ) : (
+                  <Plane className="w-4 h-4 text-sky-600" />
+                )}
+                <span>Sincronizar Voos</span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 setShowAiModal(true);
@@ -1451,11 +1455,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
               }));
 
             // Day hotels: include hotel if this day falls within hotel stay
+            // Exclude checkout hotel to prevent zooming out to distant previous cities
             const dayHotelPoints: DayMapPoint[] = [];
             const dayHotelsForMap = aggregatedHotels.filter((h) => {
               const inD = toIsoDateStr(h.check_in_date);
               const outD = toIsoDateStr(h.check_out_date) || inD;
               if (!inD || !outD || !dayDateStr) return false;
+              // Omit check-out hotel from map if checkout is today and stay was at least 1 night
+              if (outD > inD && dayDateStr === outD) return false;
               return dayDateStr >= inD && dayDateStr <= outD;
             });
             for (const h of dayHotelsForMap) {
@@ -1482,42 +1489,77 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
               }
             }
 
-            // Day airports: ONLY if this day has travel (displacement: arrivals and departures)
+            // Day airports: ONLY for actual displacement days, excluding early departures while group remains
             const dayAirportPoints: DayMapPoint[] = [];
             const dayAirportMap = new Map<string, DayMapPoint>();
             if (dayDateStr) {
+              const hasDayActivities = dayActivityPoints.length > 0;
+              const avgActLat = hasDayActivities
+                ? dayActivityPoints.reduce((s, p) => s + p.latitude, 0) / dayActivityPoints.length
+                : null;
+              const avgActLng = hasDayActivities
+                ? dayActivityPoints.reduce((s, p) => s + p.longitude, 0) / dayActivityPoints.length
+                : null;
+
               for (const seg of allSegments) {
                 const depDate = toIsoDateStr(seg.departure_date) || (seg.departure_time ? toIsoDateStr(seg.departure_time.slice(0, 10)) : '');
                 const arrDate = toIsoDateStr(seg.arrival_date) || (seg.arrival_time ? toIsoDateStr(seg.arrival_time.slice(0, 10)) : '') || depDate;
                 const isExplicitDay = seg.trip_day_id === day.id;
 
+                // Check if this segment belongs to someone leaving early while others stay
+                const segTravelers = (seg.passenger_names || [])
+                  .map((p: any) => (typeof p?.name === 'string' ? p.name.trim().toLowerCase() : ''))
+                  .filter(Boolean);
+                const isPartialGroup = allTripTravelerNames.size > 1 && segTravelers.length > 0 && segTravelers.length < allTripTravelerNames.size;
+                const isBeforeTripEnd = returnDateStr ? (depDate || '') < returnDateStr : false;
+                const isEarlyDeparture = isPartialGroup && isBeforeTripEnd && (hasDayActivities || dayIndex < localDays.length - 2);
+
+                // If this is an early departure of someone going home while others stay, do NOT show airports on this day's map
+                if (isEarlyDeparture) {
+                  continue;
+                }
+
                 if (depDate === dayDateStr || isExplicitDay) {
                   const ap = getAirportByCode(seg.departure_station_code || seg.departure_location);
                   if (ap && !dayAirportMap.has(ap.code)) {
-                    dayAirportMap.set(ap.code, {
-                      itemId: `airport-dep-${seg.id || ap.code}`,
-                      title: ap.name,
-                      subtitle: `${ap.city} • Embarque`,
-                      latitude: ap.latitude,
-                      longitude: ap.longitude,
-                      pointType: 'AIRPORT',
-                      airportCode: ap.code,
-                    });
+                    const isFarFromActivities =
+                      hasDayActivities && avgActLat !== null && avgActLng !== null
+                        ? getDistanceFromLatLonInKm(avgActLat, avgActLng, ap.latitude, ap.longitude) > 800
+                        : false;
+
+                    if (!isFarFromActivities) {
+                      dayAirportMap.set(ap.code, {
+                        itemId: `airport-dep-${seg.id || ap.code}`,
+                        title: ap.name,
+                        subtitle: `${ap.city} • Embarque`,
+                        latitude: ap.latitude,
+                        longitude: ap.longitude,
+                        pointType: 'AIRPORT',
+                        airportCode: ap.code,
+                      });
+                    }
                   }
                 }
 
                 if (arrDate === dayDateStr || isExplicitDay) {
                   const ap = getAirportByCode(seg.arrival_station_code || seg.arrival_location);
                   if (ap && !dayAirportMap.has(ap.code)) {
-                    dayAirportMap.set(ap.code, {
-                      itemId: `airport-arr-${seg.id || ap.code}`,
-                      title: ap.name,
-                      subtitle: `${ap.city} • Desembarque`,
-                      latitude: ap.latitude,
-                      longitude: ap.longitude,
-                      pointType: 'AIRPORT',
-                      airportCode: ap.code,
-                    });
+                    const isFarFromActivities =
+                      hasDayActivities && avgActLat !== null && avgActLng !== null
+                        ? getDistanceFromLatLonInKm(avgActLat, avgActLng, ap.latitude, ap.longitude) > 800
+                        : false;
+
+                    if (!isFarFromActivities) {
+                      dayAirportMap.set(ap.code, {
+                        itemId: `airport-arr-${seg.id || ap.code}`,
+                        title: ap.name,
+                        subtitle: `${ap.city} • Desembarque`,
+                        latitude: ap.latitude,
+                        longitude: ap.longitude,
+                        pointType: 'AIRPORT',
+                        airportCode: ap.code,
+                      });
+                    }
                   }
                 }
               }

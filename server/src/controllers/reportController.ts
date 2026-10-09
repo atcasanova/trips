@@ -42,11 +42,29 @@ export const reportController = {
   // 2. Render Print-ready HTML
   async renderHtml(req: Request, res: Response) {
     const { tripId } = req.params;
+    const { sections } = req.query;
 
     try {
       const data = await reportService.getTripBookData(tripId);
+
+      let parsedSections: Record<string, boolean> | undefined;
+      if (typeof sections === 'string') {
+        const secList = sections.split(',').map((s) => s.trim().toLowerCase());
+        parsedSections = {
+          cover: secList.includes('cover'),
+          overview: secList.includes('overview'),
+          calendar: secList.includes('calendar'),
+          climatePacking: secList.includes('climatepacking'),
+          dayByDay: secList.includes('daybyday'),
+          transports: secList.includes('transports'),
+          hotels: secList.includes('hotels'),
+          checklist: secList.includes('checklist'),
+        };
+      }
+
       const html = reportService.generateTripBookHtml(data, {
         pdfDownloadUrl: `/api/trips/${tripId}/report/pdf`,
+        sections: parsedSections,
       });
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');

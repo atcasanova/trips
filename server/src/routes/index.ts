@@ -83,6 +83,7 @@ router.put('/trips/:tripId/days/:dayId/items/reorder', requireAuth, requireTripR
 router.put('/trips/:tripId/days/:dayId/items/:itemId', requireAuth, requireTripRole('EDITOR'), itineraryController.updateItineraryItem);
 router.delete('/trips/:tripId/days/:dayId/items/:itemId', requireAuth, requireTripRole('EDITOR'), itineraryController.deleteItineraryItem);
 router.post('/trips/:tripId/itinerary/locations/refresh', requireAuth, requireTripRole('EDITOR'), itineraryController.refreshLocations);
+router.post('/trips/:tripId/itinerary/sync-flights', requireAuth, requireTripRole('EDITOR'), itineraryController.syncFlights);
 router.put('/trips/:tripId/itinerary/items/:itemId/location-confirmation', requireAuth, requireTripRole('EDITOR'), itineraryController.setLocationConfirmation);
 router.put('/trips/:tripId/itinerary/items/:itemId/map-mode', requireAuth, requireTripRole('EDITOR'), itineraryController.setMapMode);
 

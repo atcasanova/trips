@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { refreshItineraryLocations } from '../services/itineraryLocationService.js';
 import { aggregateItineraryItems } from '../utils/aggregation.js';
 import { tripBookPdfService } from '../services/tripBookPdfService.js';
+import { tripDaySyncService } from '../services/tripDaySyncService.js';
 
 /**
  * Re-orders all days of a trip chronologically by date and creation time,
@@ -612,6 +613,19 @@ export const itineraryController = {
     } catch (err: any) {
       logger.error('Erro ao alterar visibilidade do item no mapa:', { error: err.message, tripId, itemId });
       return res.status(500).json({ error: 'Não foi possível alterar a visibilidade no mapa.' });
+    }
+  },
+
+  // 14. Synchronize trip days from flight reservations
+  async syncFlights(req: Request, res: Response) {
+    const { tripId } = req.params;
+    try {
+      const result = await tripDaySyncService.syncTripDaysFromTransports(tripId);
+      tripBookPdfService.queuePreGeneration(tripId);
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      logger.error('Erro ao sincronizar voos com roteiro:', { error: err.message, tripId });
+      return res.status(500).json({ error: 'Erro ao sincronizar voos com o roteiro.' });
     }
   },
 };

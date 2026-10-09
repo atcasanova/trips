@@ -207,7 +207,7 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
             </div>
             <p className="text-xs text-slate-500 mt-1">
               {points.length > 0
-                ? 'Clique em qualquer parada, hotel ou aeroporto para navegar até os detalhes no roteiro.'
+                ? 'Clique em qualquer parada para navegar até os detalhes no roteiro.'
                 : 'As paradas com localização verificada aparecerão aqui.'}
             </p>
             {refreshMessage && <p className="mt-1 text-xs font-medium text-sky-700" role="status">{refreshMessage}</p>}
@@ -241,18 +241,22 @@ export const ItineraryMap: React.FC<ItineraryMapProps> = ({
               <span className="w-3.5 h-3.5 rounded-full text-white text-[9px] font-bold flex items-center justify-center" style={{ backgroundColor: accentColor }}>1</span>
               <span>Paradas</span>
             </span>
-            <span className="flex items-center gap-1 text-emerald-800">
-              <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center">
-                <Hotel className="w-2.5 h-2.5" />
+            {hotelCount > 0 && (
+              <span className="flex items-center gap-1 text-emerald-800">
+                <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+                  <Hotel className="w-2.5 h-2.5" />
+                </span>
+                <span>Hotéis</span>
               </span>
-              <span>Hotéis</span>
-            </span>
-            <span className="flex items-center gap-1 text-sky-800">
-              <span className="w-3.5 h-3.5 rounded-full bg-sky-600 text-white flex items-center justify-center">
-                <Plane className="w-2.5 h-2.5" />
+            )}
+            {airportCount > 0 && (
+              <span className="flex items-center gap-1 text-sky-800">
+                <span className="w-3.5 h-3.5 rounded-full bg-sky-600 text-white flex items-center justify-center">
+                  <Plane className="w-2.5 h-2.5" />
+                </span>
+                <span>Aeroportos</span>
               </span>
-              <span>Aeroportos</span>
-            </span>
+            )}
           </div>
         )}
 

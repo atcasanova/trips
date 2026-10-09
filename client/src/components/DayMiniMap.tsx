@@ -119,7 +119,11 @@ export const DayMiniMap: React.FC<DayMiniMapProps> = ({
       const marker = L.marker([point.latitude, point.longitude], {
         icon: miniMarkerIcon(point, accentColor),
       })
-        .bindTooltip(tooltipContent, { direction: 'top', offset: [0, -11] })
+        .bindTooltip(tooltipContent, {
+          direction: 'auto',
+          offset: [0, -6],
+          className: 'itinerary-day-tooltip',
+        })
         .on('click', () => {
           if (onSelectPoint) onSelectPoint(point.itemId);
         });
@@ -131,7 +135,12 @@ export const DayMiniMap: React.FC<DayMiniMapProps> = ({
       map.setView([points[0].latitude, points[0].longitude], 14, { animate: false });
     } else {
       const bounds = L.latLngBounds(points.map((p) => [p.latitude, p.longitude] as L.LatLngTuple));
-      map.fitBounds(bounds.pad(0.25), { maxZoom: 15, animate: false });
+      map.fitBounds(bounds.pad(0.2), {
+        paddingTopLeft: [28, 30],
+        paddingBottomRight: [20, 20],
+        maxZoom: 15,
+        animate: false,
+      });
     }
 
     const timer = window.setTimeout(() => {
@@ -214,7 +223,7 @@ export const DayMiniMap: React.FC<DayMiniMapProps> = ({
 
       {/* Static Mini Map View */}
       {!isCollapsed && (
-        <div className="relative h-32 sm:h-36 w-full bg-slate-100">
+        <div className="relative h-36 sm:h-40 w-full bg-slate-100">
           <div ref={containerRef} className="h-full w-full" />
         </div>
       )}

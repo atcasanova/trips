@@ -3,6 +3,7 @@ import { openaiService } from './openaiService.js';
 import { refreshItineraryLocations } from './itineraryLocationService.js';
 import { logger } from '../utils/logger.js';
 import { tripBookPdfService } from './tripBookPdfService.js';
+import { tripDaySyncService } from './tripDaySyncService.js';
 import {
   areFlightsMatching,
   areHotelsMatching,
@@ -374,6 +375,13 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
     }
 
     await query(`UPDATE documents SET category = 'FLIGHT' WHERE id = $1`, [documentId]);
+
+    // Automatically synchronize itinerary days with flight segments
+    try {
+      await tripDaySyncService.syncTripDaysFromTransports(tripId);
+    } catch (syncErr: any) {
+      logger.warn('Aviso: falha ao sincronizar dias do roteiro com voos:', { error: syncErr.message, tripId });
+    }
   } else if (confirmedType === 'hotel_reservation' || confirmedType === 'HOTEL') {
     const checkIn = data.checkInDate || new Date().toISOString().split('T')[0];
     const checkOut = data.checkOutDate || checkIn;
