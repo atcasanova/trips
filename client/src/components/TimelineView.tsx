@@ -125,7 +125,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline');
   const [generatingDayId, setGeneratingDayId] = useState<string | null>(null);
   const [refreshingLocations, setRefreshingLocations] = useState(false);
-  const [syncingFlights, setSyncingFlights] = useState(false);
   const [locationRefreshMessage, setLocationRefreshMessage] = useState<string | null>(null);
   const [locationRefreshError, setLocationRefreshError] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
@@ -592,20 +591,35 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     window.setTimeout(() => setHighlightedItemId((current) => (current === itemId ? null : current)), 2200);
   }, []);
 
+  const pendingItems = useMemo(() => {
+    return localDays.flatMap((day) => day.items || []).filter(
+      (item) =>
+        item.category !== 'NOTE' &&
+        item.map_mode !== 'SKIP' &&
+        !hasMapCoordinates(item)
+    );
+  }, [localDays]);
+
+  const pendingHotels = useMemo(() => {
+    return hotels.filter((h) => !hasMapCoordinates(h as any));
+  }, [hotels]);
+
+  const pendingPointsCount = pendingItems.length + pendingHotels.length;
+  const hasPointsToUpdate = pendingPointsCount > 0;
+
   const handleRefreshLocations = async () => {
     const daysToRefresh = localDays.filter((day) =>
       (day.items || []).some(
         (item) =>
           item.category !== 'NOTE' &&
           item.map_mode !== 'SKIP' &&
-          !item.location_confirmed_at &&
-          (!hasMapCoordinates(item) || item.location_source === 'OPENAI_WEB_SEARCH')
+          !hasMapCoordinates(item)
       )
     );
 
-    if (daysToRefresh.length === 0) {
+    if (daysToRefresh.length === 0 && pendingHotels.length === 0) {
       setLocationRefreshError(null);
-      setLocationRefreshMessage('Todos os pontos localizados já foram confirmados ou informados manualmente.');
+      setLocationRefreshMessage('Todos os pontos do roteiro e hotéis já possuem localização.');
       return;
     }
 
@@ -616,19 +630,30 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const failedDays: string[] = [];
 
     try {
-      for (let index = 0; index < daysToRefresh.length; index += 1) {
-        const day = daysToRefresh[index];
-        const label = day.title || `Dia ${day.day_number}`;
-        setLocationRefreshMessage(`Localizando ${label} (${index + 1}/${daysToRefresh.length})…`);
+      if (daysToRefresh.length > 0) {
+        for (let index = 0; index < daysToRefresh.length; index += 1) {
+          const day = daysToRefresh[index];
+          const label = day.title || `Dia ${day.day_number}`;
+          setLocationRefreshMessage(`Localizando ${label} (${index + 1}/${daysToRefresh.length})…`);
 
+          try {
+            const { locationRefresh } = await api.days.refreshLocations(trip.id, day.id);
+            updated += locationRefresh.updated;
+            resolved += locationRefresh.resolved;
+            if (locationRefresh.error) failedDays.push(label);
+          } catch (err: any) {
+            failedDays.push(label);
+            console.error('Erro ao localizar pontos do dia:', { dayId: day.id, error: err?.message });
+          }
+        }
+      } else if (pendingHotels.length > 0) {
+        setLocationRefreshMessage(`Localizando endereços de hotéis…`);
         try {
-          const { locationRefresh } = await api.days.refreshLocations(trip.id, day.id);
+          const { locationRefresh } = await api.days.refreshLocations(trip.id);
           updated += locationRefresh.updated;
           resolved += locationRefresh.resolved;
-          if (locationRefresh.error) failedDays.push(label);
         } catch (err: any) {
-          failedDays.push(label);
-          console.error('Erro ao localizar pontos do dia:', { dayId: day.id, error: err?.message });
+          console.error('Erro ao localizar hotéis:', { error: err?.message });
         }
       }
 
@@ -641,32 +666,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         );
       }
       setLocationRefreshMessage(
-        `${updated} ponto${updated === 1 ? '' : 's'} atualizado${updated === 1 ? '' : 's'} ` +
-        `em ${daysToRefresh.length - failedDays.length}/${daysToRefresh.length} dia(s). ` +
+        `${updated} ponto${updated === 1 ? '' : 's'} atualizado${updated === 1 ? '' : 's'}. ` +
         `${resolved} localização(ões) verificadas.`
       );
     } finally {
       setRefreshingLocations(false);
-    }
-  };
-
-  const handleSyncFlights = async () => {
-    setSyncingFlights(true);
-    try {
-      const res = await api.days.syncFlights(trip.id);
-      if (res.daysAdded > 0) {
-        showToast(
-          `${res.daysAdded} novo(s) dia(s) de voo adicionado(s) e roteiro reordenado!`,
-          'success'
-        );
-      } else {
-        showToast('Roteiro e voos já estão sincronizados.', 'success');
-      }
-      onRefresh();
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao sincronizar voos com o roteiro.');
-    } finally {
-      setSyncingFlights(false);
     }
   };
 
@@ -1154,23 +1158,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
         {canEdit && (
           <div className="flex items-center gap-2">
-            {allSegments.length > 0 && (
-              <button
-                type="button"
-                onClick={handleSyncFlights}
-                disabled={syncingFlights}
-                title="Sincroniza datas dos voos criando automaticamente os dias correspondentes no roteiro"
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
-              >
-                {syncingFlights ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
-                ) : (
-                  <Plane className="w-4 h-4 text-sky-600" />
-                )}
-                <span>Sincronizar Voos</span>
-              </button>
-            )}
-
             <button
               onClick={() => {
                 setShowAiModal(true);
@@ -1401,7 +1388,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
             onPointSelect={handleMapPointSelect}
             onRefresh={handleRefreshLocations}
             isRefreshing={refreshingLocations}
-            canRefresh={canEdit}
+            canRefresh={canEdit && (hasPointsToUpdate || refreshingLocations)}
+            pendingPointsCount={pendingPointsCount}
             accentColor={primaryColor}
             refreshMessage={locationRefreshMessage}
             refreshError={locationRefreshError}

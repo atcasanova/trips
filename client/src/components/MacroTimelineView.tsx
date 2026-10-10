@@ -36,6 +36,8 @@ import {
   HotelReservation,
 } from '../types/index.js';
 import { formatDateBr, formatDateRange, parseSafeDate } from '../utils/date.js';
+import { getAirportByCode } from '../utils/airportLocations.js';
+import { extractPassengers, normalizeText } from '../utils/aggregation.js';
 
 interface MacroTimelineViewProps {
   trip: Trip;
@@ -93,6 +95,57 @@ function formatLayoverTime(arrTime?: string | null, depTime?: string | null): st
   if (h === 0) return `${m}m`;
   if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;
+}
+
+// Grupos de aeroportos na mesma região metropolitana
+const METRO_AIRPORT_GROUPS: string[][] = [
+  ['NRT', 'HND', 'TYO'], // Tóquio
+  ['GRU', 'CGH', 'VCP', 'CPQ', 'SAO'], // São Paulo
+  ['GIG', 'SDU', 'RIO'], // Rio de Janeiro
+  ['JFK', 'EWR', 'LGA', 'SWF', 'NYC'], // Nova York
+  ['LHR', 'LGW', 'STN', 'LTN', 'LCY', 'SEN', 'LON'], // Londres
+  ['CDG', 'ORY', 'BVA', 'PAR'], // Paris
+  ['CNF', 'PLU', 'BHZ'], // Belo Horizonte
+  ['FCO', 'CIA', 'ROM'], // Roma
+  ['EZE', 'AEP', 'BUE'], // Buenos Aires
+  ['MXP', 'LIN', 'BGY', 'MIL'], // Milão
+  ['ORD', 'MDW', 'CHI'], // Chicago
+  ['IAD', 'DCA', 'BWI', 'WAS'], // Washington DC
+];
+
+function isSameCityOrMetro(
+  arrLoc: string,
+  arrCode: string,
+  depLoc: string,
+  depCode: string
+): boolean {
+  const codeA = (arrCode || '').trim().toUpperCase();
+  const codeB = (depCode || '').trim().toUpperCase();
+  if (codeA && codeB && codeA === codeB) return true;
+
+  const locA = normalizeText(arrLoc);
+  const locB = normalizeText(depLoc);
+  if (locA && locB && (locA.includes(locB) || locB.includes(locA))) return true;
+
+  if (codeA && codeB) {
+    for (const group of METRO_AIRPORT_GROUPS) {
+      if (group.includes(codeA) && group.includes(codeB)) {
+        return true;
+      }
+    }
+  }
+
+  const apA = getAirportByCode(codeA || arrLoc);
+  const apB = getAirportByCode(codeB || depLoc);
+  if (apA && apB) {
+    const cityA = normalizeText(apA.city);
+    const cityB = normalizeText(apB.city);
+    if (cityA && cityB && (cityA === cityB || cityA.includes(cityB) || cityB.includes(cityA))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 const WEEKDAYS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
@@ -307,29 +360,105 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
 
     const result: DayTimelineItem[] = [];
 
-    // Pre-calculate transport route gaps between consecutive segments
+    // Pre-calculate transport route gaps per passenger / reservation journey
     const routeGapAlertsByDate = new Map<string, { title: string; description: string }>();
-    for (let i = 0; i < allSegmentsWithParent.length - 1; i++) {
-      const currSeg = allSegmentsWithParent[i].segment;
-      const nextSeg = allSegmentsWithParent[i + 1].segment;
 
-      const currArrLoc = (currSeg.arrival_location || '').trim().toLowerCase();
-      const currArrCode = (currSeg.arrival_station_code || '').trim().toUpperCase();
-      const nextDepLoc = (nextSeg.departure_location || '').trim().toLowerCase();
-      const nextDepCode = (nextSeg.departure_station_code || '').trim().toUpperCase();
+    // 1. Group segments by traveler
+    const passengerSegmentChains = new Map<string, Array<{ segment: TransportSegment; reservation: TransportReservation }>>();
+    const unnamedSegments: Array<{ segment: TransportSegment; reservation: TransportReservation }> = [];
 
-      const sameCityOrCode =
-        (currArrCode && nextDepCode && currArrCode === nextDepCode) ||
-        (currArrLoc && nextDepLoc && (currArrLoc.includes(nextDepLoc) || nextDepLoc.includes(currArrLoc)));
-
-      if (!sameCityOrCode && currArrLoc && nextDepLoc) {
-        const nextDepDate = toIsoDateStr(nextSeg.departure_date);
-        if (nextDepDate) {
-          routeGapAlertsByDate.set(nextDepDate, {
-            title: 'Descontinuidade de transporte entre trechos',
-            description: `O trecho anterior desembarcou em "${currSeg.arrival_location}" (${currArrCode || 'aeroporto'}), mas o próximo trecho parte de "${nextSeg.departure_location}" (${nextDepCode || 'aeroporto'}). Verifique a necessidade de transfer ou transporte terrestre intermediário.`,
-          });
+    for (const item of allSegmentsWithParent) {
+      const paxes = extractPassengers(item.segment.passengers || item.segment.passenger_names);
+      if (paxes.length > 0) {
+        for (const pax of paxes) {
+          const key = normalizeText(pax.name);
+          if (key) {
+            if (!passengerSegmentChains.has(key)) {
+              passengerSegmentChains.set(key, []);
+            }
+            passengerSegmentChains.get(key)!.push(item);
+          }
         }
+      } else {
+        unnamedSegments.push(item);
+      }
+    }
+
+    const checkSegmentChain = (
+      chain: Array<{ segment: TransportSegment; reservation: TransportReservation }>,
+      travelerName?: string
+    ) => {
+      // Sort chronologically by departure
+      const sorted = [...chain].sort((a, b) => {
+        const da = (toIsoDateStr(a.segment.departure_date) || '') + (a.segment.departure_time || '00:00');
+        const db = (toIsoDateStr(b.segment.departure_date) || '') + (b.segment.departure_time || '00:00');
+        return da.localeCompare(db);
+      });
+
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const currSeg = sorted[i].segment;
+        const nextSeg = sorted[i + 1].segment;
+
+        const currArrLoc = (currSeg.arrival_location || '').trim();
+        const currArrCode = (currSeg.arrival_station_code || '').trim().toUpperCase();
+        const nextDepLoc = (nextSeg.departure_location || '').trim();
+        const nextDepCode = (nextSeg.departure_station_code || '').trim().toUpperCase();
+
+        // Check if current segment already landed back at trip origin:
+        const isArrOrigin =
+          (originStationCode && currArrCode === originStationCode) ||
+          (originLocation && currArrLoc.toLowerCase().includes(originLocation.toLowerCase()));
+
+        if (isArrOrigin) {
+          // Traveler already arrived home/origin, this leg of the journey ended
+          continue;
+        }
+
+        const sameCityOrCode = isSameCityOrMetro(currArrLoc, currArrCode, nextDepLoc, nextDepCode);
+
+        if (!sameCityOrCode && currArrLoc && nextDepLoc) {
+          const nextDepDate = toIsoDateStr(nextSeg.departure_date);
+          if (nextDepDate && !routeGapAlertsByDate.has(nextDepDate)) {
+            const prefix = travelerName ? `Para ${travelerName}: ` : '';
+            routeGapAlertsByDate.set(nextDepDate, {
+              title: 'Descontinuidade de transporte entre trechos',
+              description: `${prefix}O trecho anterior desembarcou em "${currArrLoc}" (${currArrCode || 'aeroporto'}), mas o próximo trecho parte de "${nextDepLoc}" (${nextDepCode || 'aeroporto'}). Verifique a necessidade de transfer ou transporte terrestre intermediário.`,
+            });
+          }
+        }
+      }
+    };
+
+    if (passengerSegmentChains.size > 0) {
+      // Check each passenger's timeline individually
+      for (const [key, chain] of passengerSegmentChains.entries()) {
+        const firstPaxes = extractPassengers(chain[0]?.segment?.passengers || chain[0]?.segment?.passenger_names);
+        const displayName = firstPaxes.find((p) => normalizeText(p.name) === key)?.name || key;
+        checkSegmentChain(chain, passengerSegmentChains.size > 1 ? displayName : undefined);
+      }
+
+      // If there are also unnamed segments, check them grouped by reservation
+      if (unnamedSegments.length > 0) {
+        const byRes = new Map<string, Array<{ segment: TransportSegment; reservation: TransportReservation }>>();
+        for (const item of unnamedSegments) {
+          const rId = item.reservation.id || 'default';
+          if (!byRes.has(rId)) byRes.set(rId, []);
+          byRes.get(rId)!.push(item);
+        }
+        for (const chain of byRes.values()) {
+          checkSegmentChain(chain);
+        }
+      }
+    } else {
+      // No passengers named on any segment: group by reservation_id
+      const byRes = new Map<string, Array<{ segment: TransportSegment; reservation: TransportReservation }>>();
+      for (const item of allSegmentsWithParent) {
+        const rId = item.reservation.id || 'default';
+        if (!byRes.has(rId)) byRes.set(rId, []);
+        byRes.get(rId)!.push(item);
+      }
+      for (const chain of byRes.values()) {
+        checkSegmentChain(chain);
       }
     }
 
@@ -389,10 +518,24 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
         // Check if there is a connecting segment departing from this arrival airport on this same day
         const arrCode = (item.segment.arrival_station_code || '').toUpperCase();
         const arrLoc = (item.segment.arrival_location || '').toLowerCase();
+        const itemPaxes = extractPassengers(item.segment.passengers || item.segment.passenger_names);
         const connecting = rawDeparting.find((dep) => {
           const dCode = (dep.segment.departure_station_code || '').toUpperCase();
           const dLoc = (dep.segment.departure_location || '').toLowerCase();
-          return (arrCode && dCode === arrCode) || (arrLoc && dLoc.includes(arrLoc));
+          const sameLoc = (arrCode && dCode === arrCode) || (arrLoc && dLoc.includes(arrLoc));
+          if (!sameLoc) return false;
+
+          // Must be same reservation or share common passengers
+          if (dep.reservation.id === item.reservation.id) return true;
+          const depPaxes = extractPassengers(dep.segment.passengers || dep.segment.passenger_names);
+          if (itemPaxes.length === 0 || depPaxes.length === 0) return true;
+          return itemPaxes.some((ip) => {
+            const nI = normalizeText(ip.name);
+            return depPaxes.some((dp) => {
+              const nD = normalizeText(dp.name);
+              return nI && nD && (nI === nD || nI.includes(nD) || nD.includes(nI));
+            });
+          });
         });
 
         const layoverFormatted = connecting

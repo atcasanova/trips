@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { aggregateHotels, extractPassengers } from '../utils/aggregation.js';
 import { tripBookPdfService } from '../services/tripBookPdfService.js';
 import { resolveMissingHotelLocations } from '../services/itineraryLocationService.js';
+import { tripDaySyncService } from '../services/tripDaySyncService.js';
 
 export const reservationController = {
   // === TRANSPORTS ===
@@ -148,6 +149,13 @@ export const reservationController = {
         }
       }
 
+      // Automatically synchronize itinerary days with flight segments
+      try {
+        await tripDaySyncService.syncTripDaysFromTransports(tripId);
+      } catch (syncErr: any) {
+        logger.warn('Aviso: falha ao sincronizar dias do roteiro com voo criado:', { error: syncErr.message, tripId });
+      }
+
       tripBookPdfService.queuePreGeneration(tripId);
 
       return res.status(201).json({
@@ -195,6 +203,13 @@ export const reservationController = {
             [tripId, bookingCode]
           );
         }
+      }
+
+      // Automatically re-sync itinerary days after flight removal
+      try {
+        await tripDaySyncService.syncTripDaysFromTransports(tripId);
+      } catch (syncErr: any) {
+        logger.warn('Aviso: falha ao sincronizar dias do roteiro com transporte removido:', { error: syncErr.message, tripId });
       }
 
       tripBookPdfService.queuePreGeneration(tripId);

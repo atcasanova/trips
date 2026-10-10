@@ -7,6 +7,7 @@ interface RefreshItineraryLocationsParams {
   userId?: string;
   itemIds?: string[];
   dayIds?: string[];
+  forceRefresh?: boolean;
 }
 
 export interface ItineraryLocationRefreshResult {
@@ -126,7 +127,7 @@ export async function refreshItineraryLocations(
     const rawItemsNeedingCoords = eligibleItems.filter(
       (item: any) =>
         !item.location_confirmed_at &&
-        (!hasCoordinates(item) || item.location_source === 'OPENAI_WEB_SEARCH')
+        (!hasCoordinates(item) || (params.forceRefresh && item.location_source === 'OPENAI_WEB_SEARCH'))
     );
 
     // Reuse known verified locations directly if available
