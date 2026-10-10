@@ -241,6 +241,86 @@ export const reservationController = {
     }
   },
 
+  async suggestHotels(req: Request, res: Response) {
+    const { tripId } = req.params;
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+
+    if (!q || q.length < 2) {
+      return res.json({ suggestions: [] });
+    }
+
+    try {
+      const searchPattern = `%${q}%`;
+      const { rows } = await query(
+        `SELECT 
+          hotel_name,
+          city,
+          country,
+          address,
+          latitude,
+          longitude,
+          phone,
+          website,
+          trip_id
+        FROM hotel_reservations
+        WHERE hotel_name ILIKE $1
+          AND (
+            (latitude IS NOT NULL AND longitude IS NOT NULL AND NOT (latitude = 0 AND longitude = 0))
+            OR (address IS NOT NULL AND address <> '')
+          )
+        ORDER BY 
+          (trip_id = $2) DESC,
+          (latitude IS NOT NULL AND longitude IS NOT NULL) DESC,
+          updated_at DESC
+        LIMIT 30`,
+        [searchPattern, tripId]
+      );
+
+      // Deduplica sugestões por nome do hotel e cidade normalizados
+      const seen = new Set<string>();
+      const suggestions: Array<{
+        hotel_name: string;
+        city: string | null;
+        country: string | null;
+        address: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        phone: string | null;
+        website: string | null;
+        hasCoordinates: boolean;
+      }> = [];
+
+      for (const row of rows) {
+        const key = `${row.hotel_name.toLowerCase().trim()}|${(row.city || '').toLowerCase().trim()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const hasCoords = Boolean(
+          row.latitude && row.longitude && !(Number(row.latitude) === 0 && Number(row.longitude) === 0)
+        );
+
+        suggestions.push({
+          hotel_name: row.hotel_name,
+          city: row.city || null,
+          country: row.country || null,
+          address: row.address || null,
+          latitude: row.latitude ? Number(row.latitude) : null,
+          longitude: row.longitude ? Number(row.longitude) : null,
+          phone: row.phone || null,
+          website: row.website || null,
+          hasCoordinates: hasCoords,
+        });
+
+        if (suggestions.length >= 8) break;
+      }
+
+      return res.json({ suggestions });
+    } catch (err: any) {
+      logger.error('Erro ao sugerir hotéis:', { error: err.message });
+      return res.status(500).json({ error: 'Erro ao buscar sugestões de hotéis' });
+    }
+  },
+
   async createHotel(req: Request, res: Response) {
     const { tripId } = req.params;
     const {
@@ -272,6 +352,53 @@ export const reservationController = {
     }
 
     try {
+      let resolvedLat = latitude ? Number(latitude) : null;
+      let resolvedLng = longitude ? Number(longitude) : null;
+      let resolvedAddress = address ? String(address).trim() : null;
+      let resolvedCity = city ? String(city).trim() : null;
+      let resolvedCountry = country ? String(country).trim() : null;
+      let resolvedPhone = phone ? String(phone).trim() : null;
+      let resolvedWebsite = website ? String(website).trim() : null;
+
+      // Se latitude/longitude ou endereço não foram informados manualmente, busca na base de dados de hotéis já conhecidos (system-wide)
+      if (!resolvedLat || !resolvedLng || !resolvedAddress) {
+        try {
+          const { rows: matchRows } = await query(
+            `SELECT address, city, country, latitude, longitude, phone, website
+             FROM hotel_reservations
+             WHERE LOWER(TRIM(hotel_name)) = LOWER(TRIM($1))
+               AND (
+                 (latitude IS NOT NULL AND longitude IS NOT NULL AND NOT (latitude = 0 AND longitude = 0))
+                 OR (address IS NOT NULL AND address <> '')
+               )
+             ORDER BY (trip_id = $2) DESC,
+                      (latitude IS NOT NULL AND longitude IS NOT NULL) DESC,
+                      updated_at DESC
+             LIMIT 1`,
+            [hotel_name.trim(), tripId]
+          );
+
+          if (matchRows.length > 0) {
+            const match = matchRows[0];
+            if (!resolvedLat && !resolvedLng && match.latitude && match.longitude) {
+              resolvedLat = Number(match.latitude);
+              resolvedLng = Number(match.longitude);
+            }
+            if (!resolvedAddress && match.address) resolvedAddress = match.address;
+            if (!resolvedCity && match.city) resolvedCity = match.city;
+            if (!resolvedCountry && match.country) resolvedCountry = match.country;
+            if (!resolvedPhone && match.phone) resolvedPhone = match.phone;
+            if (!resolvedWebsite && match.website) resolvedWebsite = match.website;
+            logger.info(`Dados pré-existentes do hotel "${hotel_name}" reutilizados no cadastro manual`, {
+              tripId,
+              hasCoords: Boolean(resolvedLat && resolvedLng),
+            });
+          }
+        } catch (matchErr: any) {
+          logger.warn('Erro ao consultar hotel pré-existente no cadastro manual:', { error: matchErr.message });
+        }
+      }
+
       const { rows } = await query(
         `INSERT INTO hotel_reservations (
           trip_id, hotel_name, address, city, country, latitude, longitude,
@@ -283,11 +410,11 @@ export const reservationController = {
         [
           tripId,
           hotel_name.trim(),
-          address || null,
-          city || null,
-          country || null,
-          latitude || null,
-          longitude || null,
+          resolvedAddress || null,
+          resolvedCity || null,
+          resolvedCountry || null,
+          resolvedLat || null,
+          resolvedLng || null,
           check_in_date,
           check_in_time || null,
           check_out_date,
@@ -298,9 +425,9 @@ export const reservationController = {
           total_amount || null,
           currency || 'USD',
           payment_status || 'CONFIRMED',
-          phone || null,
+          resolvedPhone || null,
           email || null,
-          website || null,
+          resolvedWebsite || null,
           document_id || null,
           notes || null,
         ]
@@ -308,7 +435,7 @@ export const reservationController = {
 
       tripBookPdfService.queuePreGeneration(tripId);
 
-      if (!latitude || !longitude) {
+      if (!resolvedLat || !resolvedLng) {
         resolveMissingHotelLocations(tripId).catch((err: any) =>
           logger.warn(`Erro ao resolver coordenadas do hotel criado: ${err.message}`)
         );

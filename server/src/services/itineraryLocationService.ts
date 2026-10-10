@@ -328,6 +328,50 @@ export async function resolveMissingHotelLocations(tripId: string): Promise<numb
 
     if (hotels.length === 0) return 0;
 
+    // Primeiro tenta resolver coordenadas e endereço a partir de hotéis conhecidos no sistema (economia de chamadas à IA)
+    let updatedFromDb = 0;
+    const remainingHotels: typeof hotels = [];
+
+    for (const h of hotels) {
+      const { rows: knownHotels } = await query(
+        `SELECT address, city, country, latitude, longitude
+         FROM hotel_reservations
+         WHERE LOWER(TRIM(hotel_name)) = LOWER(TRIM($1))
+           AND latitude IS NOT NULL AND longitude IS NOT NULL
+           AND NOT (latitude = 0 AND longitude = 0)
+           AND id <> $2
+         ORDER BY (trip_id = $3) DESC, updated_at DESC
+         LIMIT 1`,
+        [h.hotel_name, h.id, tripId]
+      );
+
+      if (knownHotels.length > 0) {
+        const known = knownHotels[0];
+        await query(
+          `UPDATE hotel_reservations
+           SET latitude = $1,
+               longitude = $2,
+               address = COALESCE(NULLIF(address, ''), $3),
+               city = COALESCE(NULLIF(city, ''), $4),
+               country = COALESCE(NULLIF(country, ''), $5),
+               updated_at = NOW()
+           WHERE id = $6`,
+          [known.latitude, known.longitude, known.address, known.city, known.country, h.id]
+        );
+        updatedFromDb++;
+        logger.info(`Hotel "${h.hotel_name}" resolvido via base de dados existente (economia de IA)`, {
+          tripId,
+          hotelId: h.id,
+        });
+      } else {
+        remainingHotels.push(h);
+      }
+    }
+
+    if (remainingHotels.length === 0) {
+      return updatedFromDb;
+    }
+
     const { rows: tripRows } = await query(
       `SELECT title, destination_summary, primary_country, cities FROM trips WHERE id = $1`,
       [tripId]
@@ -336,7 +380,7 @@ export async function resolveMissingHotelLocations(tripId: string): Promise<numb
 
     // Group duplicate hotel reservations so identical hotels are only queried once
     const hotelGroups = new Map<string, { representative: ItineraryLocationCandidate; hotelIds: string[] }>();
-    for (const h of hotels) {
+    for (const h of remainingHotels) {
       const key = normalizeLocationKey(h.hotel_name, h.hotel_name, h.city || h.country);
       if (!hotelGroups.has(key)) {
         hotelGroups.set(key, {
@@ -373,7 +417,7 @@ export async function resolveMissingHotelLocations(tripId: string): Promise<numb
       idToHotelIds.set(group.representative.id, group.hotelIds);
     }
 
-    let updated = 0;
+    let updated = updatedFromDb;
     for (const loc of resolution.locations) {
       if (loc.latitude && loc.longitude && !(loc.latitude === 0 && loc.longitude === 0)) {
         const targetIds = idToHotelIds.get(loc.id) || [loc.id];

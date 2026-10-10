@@ -18,7 +18,7 @@ import {
   ExternalLink,
   Sparkles,
 } from 'lucide-react';
-import { HotelReservation, HotelSubReservation, TripTraveler, HotelCluster } from '../types/index.js';
+import { HotelReservation, HotelSubReservation, TripTraveler, HotelCluster, HotelSuggestion } from '../types/index.js';
 import { api } from '../api/client.js';
 import { formatDateBr } from '../utils/date.js';
 import { detectHotelClusters } from '../utils/aggregation.js';
@@ -52,6 +52,47 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
   const [notes, setNotes] = useState('');
   const [modalGuests, setModalGuests] = useState<string[]>([]);
   const [customModalGuest, setCustomModalGuest] = useState('');
+
+  // Autocomplete e sugestões de hotéis do sistema
+  const [hotelSuggestions, setHotelSuggestions] = useState<HotelSuggestion[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestionsDropdown, setShowSuggestionsDropdown] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<HotelSuggestion | null>(null);
+
+  useEffect(() => {
+    if (!showAddModal || !hotelName || hotelName.trim().length < 2) {
+      setHotelSuggestions([]);
+      setShowSuggestionsDropdown(false);
+      return;
+    }
+
+    if (selectedSuggestion && selectedSuggestion.hotel_name.toLowerCase().trim() === hotelName.toLowerCase().trim()) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingSuggestions(true);
+        const res = await api.reservations.suggestHotels(tripId, hotelName.trim());
+        setHotelSuggestions(res.suggestions || []);
+        setShowSuggestionsDropdown((res.suggestions || []).length > 0);
+      } catch {
+        setHotelSuggestions([]);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [hotelName, showAddModal, tripId, selectedSuggestion]);
+
+  const handleSelectSuggestion = (s: HotelSuggestion) => {
+    setHotelName(s.hotel_name);
+    if (s.city) setCity(s.city);
+    if (s.address) setAddress(s.address);
+    setSelectedSuggestion(s);
+    setShowSuggestionsDropdown(false);
+  };
 
   // Local state for hotels
   const [localHotels, setLocalHotels] = useState<HotelReservation[]>(hotels);
@@ -163,6 +204,8 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
         hotel_name: hotelName,
         city,
         address,
+        latitude: selectedSuggestion?.latitude ?? null,
+        longitude: selectedSuggestion?.longitude ?? null,
         check_in_date: checkInDate,
         check_out_date: checkOutDate,
         reservation_number: resNumber || null,
@@ -184,6 +227,9 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       setAmount('');
       setNotes('');
       setModalGuests([]);
+      setSelectedSuggestion(null);
+      setHotelSuggestions([]);
+      setShowSuggestionsDropdown(false);
       onRefresh();
     } catch (err: any) {
       setAddHotelError(err.message || 'Erro ao cadastrar hotel');
@@ -984,16 +1030,107 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                   <span>{addHotelError}</span>
                 </div>
               )}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Nome do Hotel / Ryokan *</label>
-                <input
-                  type="text"
-                  required
-                  value={hotelName}
-                  onChange={(e) => setHotelName(e.target.value)}
-                  placeholder="Ex: Hotel Intergate Kanazawa"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
-                />
+              <div className="relative">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">Nome do Hotel / Ryokan *</label>
+                  {loadingSuggestions && (
+                    <span className="flex items-center gap-1 text-[10px] text-slate-400">
+                      <Loader2 className="w-3 h-3 animate-spin text-brand-500" />
+                      <span>Buscando no sistema...</span>
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    value={hotelName}
+                    onChange={(e) => {
+                      setHotelName(e.target.value);
+                      if (selectedSuggestion && e.target.value !== selectedSuggestion.hotel_name) {
+                        setSelectedSuggestion(null);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (hotelSuggestions.length > 0) setShowSuggestionsDropdown(true);
+                    }}
+                    placeholder="Ex: Miyako City Tokyo Takanawa"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                  />
+                  {selectedSuggestion && (
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-medium pointer-events-none">
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      <span>Conhecido</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Dropdown de sugestões do sistema */}
+                {showSuggestionsDropdown && hotelSuggestions.length > 0 && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                    <div className="px-3 py-1.5 bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-brand-600" />
+                        Hotéis cadastrados no sistema (preenchimento automático)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowSuggestionsDropdown(false)}
+                        className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                    {hotelSuggestions.map((s, idx) => (
+                      <button
+                        key={`${s.hotel_name}-${idx}`}
+                        type="button"
+                        onClick={() => handleSelectSuggestion(s)}
+                        className="w-full px-3 py-2 text-left hover:bg-brand-50/60 transition-colors flex items-start gap-2.5 cursor-pointer group"
+                      >
+                        <Building className="w-4 h-4 text-brand-600 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-900 group-hover:text-brand-700 truncate">
+                              {s.hotel_name}
+                            </span>
+                            {s.hasCoordinates && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-semibold shrink-0">
+                                <MapPin className="w-2.5 h-2.5" />
+                                Coordenadas salvas
+                              </span>
+                            )}
+                          </div>
+                          {(s.city || s.address) && (
+                            <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                              {[s.city, s.address].filter(Boolean).join(' • ')}
+                            </p>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {selectedSuggestion && (
+                  <div className="mt-1.5 p-2 bg-emerald-50/80 border border-emerald-200 rounded-lg flex items-center justify-between text-[11px] text-emerald-800">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span className="truncate">
+                        Endereço e coordenadas carregados do sistema <strong>(economiza busca na IA)</strong>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSuggestion(null);
+                      }}
+                      className="text-emerald-700 hover:text-emerald-900 font-medium text-[10px] shrink-0 ml-2 underline cursor-pointer"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1196,7 +1333,12 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    setShowAddModal(false);
+                    setSelectedSuggestion(null);
+                    setHotelSuggestions([]);
+                    setShowSuggestionsDropdown(false);
+                  }}
                   className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
                 >
                   Cancelar

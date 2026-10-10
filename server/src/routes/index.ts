@@ -93,6 +93,7 @@ router.post('/trips/:tripId/transports', requireAuth, requireTripRole('EDITOR'),
 router.delete('/trips/:tripId/transports/:transportId', requireAuth, requireTripRole('EDITOR'), reservationController.deleteTransport);
 
 router.get('/trips/:tripId/hotels', requireAuth, requireTripRole('VIEWER'), reservationController.listHotels);
+router.get('/trips/:tripId/hotels/suggestions', requireAuth, requireTripRole('VIEWER'), reservationController.suggestHotels);
 router.post('/trips/:tripId/hotels', requireAuth, requireTripRole('EDITOR'), reservationController.createHotel);
 router.put('/trips/:tripId/hotels/:hotelId', requireAuth, requireTripRole('EDITOR'), reservationController.updateHotel);
 router.delete('/trips/:tripId/hotels/:hotelId', requireAuth, requireTripRole('EDITOR'), reservationController.deleteHotel);

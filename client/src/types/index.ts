@@ -295,6 +295,18 @@ export interface HotelReservation {
   sub_reservations?: HotelSubReservation[];
 }
 
+export interface HotelSuggestion {
+  hotel_name: string;
+  city?: string | null;
+  country?: string | null;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  phone?: string | null;
+  website?: string | null;
+  hasCoordinates: boolean;
+}
+
 export interface HotelCluster {
   id: string;
   startDate: string;

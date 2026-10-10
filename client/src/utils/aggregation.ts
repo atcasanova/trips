@@ -187,17 +187,24 @@ export function aggregateFlightSegments(
   });
 }
 
+function toIsoDateStr(d?: any): string {
+  if (!d) return '';
+  if (d instanceof Date) return d.toISOString().slice(0, 10);
+  return String(d).slice(0, 10);
+}
+
 /** Verifica se duas reservas de hotel representam a mesma hospedagem */
 export function areHotelsMatching(h1: HotelReservation, h2: HotelReservation): boolean {
   if (!h1 || !h2) return false;
 
-  const in1 = h1.check_in_date;
-  const in2 = h2.check_in_date;
-  const out1 = h1.check_out_date || in1;
-  const out2 = h2.check_out_date || in2;
+  const in1 = toIsoDateStr(h1.check_in_date);
+  const in2 = toIsoDateStr(h2.check_in_date);
+  const out1 = toIsoDateStr(h1.check_out_date || h1.check_in_date);
+  const out2 = toIsoDateStr(h2.check_out_date || h2.check_in_date);
 
-  const overlaps = in1 <= out2 && in2 <= out1;
-  if (!overlaps) return false;
+  // Duas reservas só representam a mesma hospedagem se forem para o mesmo período exato.
+  // Períodos distintos ou estadas consecutivas (ex: 17->18 e 18->22) são estadas separadas.
+  if (!in1 || !in2 || in1 !== in2 || out1 !== out2) return false;
 
   const n1 = normalizeText(h1.hotel_name);
   const n2 = normalizeText(h2.hotel_name);
@@ -267,11 +274,6 @@ export function aggregateHotels(hotels: HotelReservation[]): (HotelReservation &
   });
 }
 
-function toIsoDateStr(d?: any): string {
-  if (!d) return '';
-  if (d instanceof Date) return d.toISOString().slice(0, 10);
-  return String(d).slice(0, 10);
-}
 
 export function doDatesOverlap(in1: string, out1: string, in2: string, out2: string): boolean {
   if (!in1 || !in2) return false;

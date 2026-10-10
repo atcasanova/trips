@@ -7,6 +7,7 @@ import {
   ItineraryItem,
   TransportReservation,
   HotelReservation,
+  HotelSuggestion,
   DocumentItem,
   ExpenseItem,
   ExpenseTransfer,
@@ -284,6 +285,10 @@ export const api = {
     },
 
     listHotels: (tripId: string) => request<{ hotels: HotelReservation[] }>(`/trips/${tripId}/hotels`),
+    suggestHotels: (tripId: string, q: string) =>
+      request<{ suggestions: HotelSuggestion[] }>(
+        `/trips/${tripId}/hotels/suggestions?q=${encodeURIComponent(q)}`
+      ),
     createHotel: (tripId: string, data: Partial<HotelReservation>) =>
       request<{ hotel: HotelReservation }>(`/trips/${tripId}/hotels`, {
         method: 'POST',
