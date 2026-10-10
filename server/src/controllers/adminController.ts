@@ -5,6 +5,7 @@ import { query } from '../db/pool.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { resolveCountry } from '../utils/countryResolver.js';
+import { openaiCostsService } from '../services/openaiCostsService.js';
 
 export const adminController = {
   // 1. Overview, Tech Stack & Product Adoption
@@ -72,6 +73,8 @@ export const adminController = {
         openAiModel: env.OPENAI_MODEL,
         openAiMapModel: env.OPENAI_MAP_MODEL,
         hasOpenAiKey: Boolean(env.OPENAI_API_KEY && env.OPENAI_API_KEY.length > 5),
+        hasOpenAiAdminKey: Boolean(env.OPENAI_ADMIN_KEY && env.OPENAI_ADMIN_KEY.length > 5),
+        openAiKeyId: env.OPENAI_KEY_ID || null,
         smtpConfigured: Boolean(env.SMTP_HOST),
         smtpHost: env.SMTP_HOST,
         smtpPort: env.SMTP_PORT,
@@ -229,7 +232,12 @@ export const adminController = {
 
       const promptTokens = Number(summary.total_prompt_tokens || 0);
       const completionTokens = Number(summary.total_completion_tokens || 0);
-      const estimatedCostUsd = ((promptTokens * 0.0000025) + (completionTokens * 0.000010)).toFixed(4);
+      const localEstimatedCostUsd = ((promptTokens * 0.0000025) + (completionTokens * 0.000010)).toFixed(4);
+
+      // Consulta custos oficiais da OpenAI se OPENAI_ADMIN_KEY estiver configurada
+      const officialCosts = await openaiCostsService.getOfficialCosts(startDate, endDate);
+      const isOfficial = officialCosts.success;
+      const finalCostUsd = isOfficial ? officialCosts.totalCostUsd : Number(localEstimatedCostUsd);
 
       // By operation
       const { rows: byOperation } = await query(`
@@ -354,7 +362,14 @@ export const adminController = {
           totalPromptTokens: Number(summary.total_prompt_tokens || 0),
           totalCompletionTokens: Number(summary.total_completion_tokens || 0),
           totalTokens: Number(summary.total_tokens || 0),
-          estimatedCostUsd: Number(estimatedCostUsd),
+          estimatedCostUsd: Number(finalCostUsd),
+          costSource: isOfficial ? 'OPENAI_API' : 'LOCAL_ESTIMATE',
+          officialCostUsd: isOfficial ? officialCosts.totalCostUsd : null,
+          localEstimatedCostUsd: Number(localEstimatedCostUsd),
+          keyId: isOfficial ? officialCosts.keyId : null,
+          isKeyFiltered: isOfficial ? officialCosts.isKeyFiltered : false,
+          orgTotalCostUsd: isOfficial ? officialCosts.orgTotalCostUsd : null,
+          dailyCostBreakdown: isOfficial ? (officialCosts.dailyBreakdown || []) : [],
           avgDurationMs: Number(summary.avg_duration_ms || 0),
           p95DurationMs: Number(summary.p95_duration_ms || 0),
         },

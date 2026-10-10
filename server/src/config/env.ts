@@ -29,6 +29,8 @@ export const env = {
   TURNSTILE_SECRET: process.env.TURNSTILE_SECRET || '',
   
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  OPENAI_ADMIN_KEY: process.env.OPENAI_ADMIN_KEY || process.env.OPENAI_COSTS_API_KEY || '',
+  OPENAI_KEY_ID: process.env.OPENAI_KEY_ID || '',
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4o-mini',
   // Pode ser definido separadamente porque a localização usa Responses + web_search.
   OPENAI_MAP_MODEL: process.env.OPENAI_MAP_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6-luna',
