@@ -217,4 +217,153 @@ export const tripDaySyncService = {
       throw err;
     }
   },
+
+  /**
+   * Automatically inspects hotel reservations and creates missing trip_days for any dates
+   * in the check-in to check-out range, preserving existing days and re-sequencing the itinerary.
+   */
+  async syncTripDaysFromHotels(tripId: string): Promise<TripDaySyncResult> {
+    try {
+      const { rows: hotels } = await query(
+        `SELECT id, hotel_name, city, country, check_in_date, check_out_date
+         FROM hotel_reservations
+         WHERE trip_id = $1 AND check_in_date IS NOT NULL AND check_out_date IS NOT NULL
+         ORDER BY check_in_date ASC, check_out_date ASC`,
+        [tripId]
+      );
+
+      if (hotels.length === 0) {
+        return { daysAdded: 0, daysReordered: 0, segmentsLinked: 0 };
+      }
+
+      const { rows: existingDays } = await query(
+        `SELECT id, day_number, date, title, base_location, order_index
+         FROM trip_days
+         WHERE trip_id = $1
+         ORDER BY date ASC`,
+        [tripId]
+      );
+
+      const existingDateMap = new Map<string, any>();
+      for (const d of existingDays) {
+        const ds = toIsoDateStr(d.date);
+        if (ds) existingDateMap.set(ds, d);
+      }
+
+      let daysAdded = 0;
+
+      for (const hotel of hotels) {
+        const checkInStr = toIsoDateStr(hotel.check_in_date);
+        const checkOutStr = toIsoDateStr(hotel.check_out_date);
+        if (!checkInStr || !checkOutStr) continue;
+
+        const start = new Date(checkInStr + 'T00:00:00Z');
+        const end = new Date(checkOutStr + 'T00:00:00Z');
+        const cityName = hotel.city || 'Destino';
+
+        // Iterate through each date from check-in to check-out
+        for (let curr = new Date(start); curr <= end; curr.setUTCDate(curr.getUTCDate() + 1)) {
+          const dateStr = curr.toISOString().slice(0, 10);
+
+          if (!existingDateMap.has(dateStr)) {
+            let title = `Dia em ${cityName}`;
+            let icon = '🗺️';
+            let subtitle = hotel.hotel_name;
+
+            if (dateStr === checkInStr) {
+              title = `Chegada em ${cityName} & Check-in`;
+              icon = '🏨';
+            } else if (dateStr === checkOutStr) {
+              title = `Check-out em ${cityName}`;
+              icon = '🧳';
+            }
+
+            const { rows: newDayRows } = await query(
+              `INSERT INTO trip_days (
+                 trip_id, date, day_number, title, subtitle, base_location, icon, order_index
+               ) VALUES ($1, $2, 1, $3, $4, $5, $6, 0)
+               RETURNING id, date`,
+              [tripId, dateStr, title, subtitle, cityName, icon]
+            );
+
+            if (newDayRows.length > 0) {
+              daysAdded += 1;
+              existingDateMap.set(dateStr, newDayRows[0]);
+            }
+          } else {
+            // Se o dia já existe mas não possui base_location, preenche com a cidade do hotel
+            const existingDay = existingDateMap.get(dateStr);
+            if (existingDay && !existingDay.base_location && hotel.city) {
+              await query(
+                `UPDATE trip_days SET base_location = $1, updated_at = NOW() WHERE id = $2`,
+                [hotel.city, existingDay.id]
+              );
+              existingDay.base_location = hotel.city;
+            }
+          }
+        }
+      }
+
+      // Re-sequence all days chronologically by date
+      const { rows: allDays } = await query(
+        `SELECT id, date, order_index
+         FROM trip_days
+         WHERE trip_id = $1
+         ORDER BY date ASC, order_index ASC`,
+        [tripId]
+      );
+
+      let daysReordered = 0;
+      for (let i = 0; i < allDays.length; i++) {
+        const day = allDays[i];
+        const newDayNumber = i + 1;
+        const newOrderIndex = i;
+        await query(
+          `UPDATE trip_days
+           SET day_number = $1, order_index = $2, updated_at = NOW()
+           WHERE id = $3`,
+          [newDayNumber, newOrderIndex, day.id]
+        );
+        daysReordered += 1;
+      }
+
+      // Adjust trip start_date and end_date if new days extend boundaries
+      if (allDays.length > 0) {
+        const earliestDate = toIsoDateStr(allDays[0].date);
+        const latestDate = toIsoDateStr(allDays[allDays.length - 1].date);
+        await query(
+          `UPDATE trips
+           SET start_date = LEAST(start_date, $1::date),
+               end_date = GREATEST(end_date, $2::date),
+               updated_at = NOW()
+           WHERE id = $3`,
+          [earliestDate, latestDate, tripId]
+        );
+      }
+
+      logger.info('Sincronização de dias com hotéis concluída', {
+        tripId,
+        daysAdded,
+        daysReordered,
+      });
+
+      return { daysAdded, daysReordered, segmentsLinked: 0 };
+    } catch (err: any) {
+      logger.error('Erro ao sincronizar dias com hotéis:', { error: err.message, tripId });
+      throw err;
+    }
+  },
+
+  /**
+   * Sincroniza dias a partir de voos/transportes e hotéis em conjunto.
+   */
+  async syncAllTripDays(tripId: string): Promise<TripDaySyncResult> {
+    const transportResult = await this.syncTripDaysFromTransports(tripId);
+    const hotelResult = await this.syncTripDaysFromHotels(tripId);
+    return {
+      daysAdded: transportResult.daysAdded + hotelResult.daysAdded,
+      daysReordered: hotelResult.daysReordered || transportResult.daysReordered,
+      segmentsLinked: transportResult.segmentsLinked,
+    };
+  },
 };

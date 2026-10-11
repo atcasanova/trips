@@ -453,6 +453,9 @@ export const reservationController = {
 
       tripBookPdfService.queuePreGeneration(tripId);
       tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
+      tripDaySyncService.syncTripDaysFromHotels(tripId).catch((err: any) =>
+        logger.warn(`Erro ao sincronizar dias do hotel criado: ${err.message}`)
+      );
 
       if (!resolvedLat || !resolvedLng) {
         resolveMissingHotelLocations(tripId).catch((err: any) =>
@@ -560,6 +563,9 @@ export const reservationController = {
 
       tripBookPdfService.queuePreGeneration(tripId);
       tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
+      tripDaySyncService.syncTripDaysFromHotels(tripId).catch((err: any) =>
+        logger.warn(`Erro ao sincronizar dias do hotel atualizado: ${err.message}`)
+      );
 
       if (!updatedLatitude || !updatedLongitude) {
         resolveMissingHotelLocations(tripId).catch((err: any) =>

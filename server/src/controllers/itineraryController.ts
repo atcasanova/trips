@@ -616,11 +616,11 @@ export const itineraryController = {
     }
   },
 
-  // 14. Synchronize trip days from flight reservations
+  // 14. Synchronize trip days from reservations (flights & hotels)
   async syncFlights(req: Request, res: Response) {
     const { tripId } = req.params;
     try {
-      const result = await tripDaySyncService.syncTripDaysFromTransports(tripId);
+      const result = await tripDaySyncService.syncAllTripDays(tripId);
       tripBookPdfService.queuePreGeneration(tripId);
       return res.json({ success: true, ...result });
     } catch (err: any) {

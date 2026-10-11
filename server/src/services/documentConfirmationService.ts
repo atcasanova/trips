@@ -446,6 +446,13 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
       logger.warn(`Erro no resolveMissingHotelLocations para trip ${tripId}: ${err.message}`)
     );
 
+    // Sincroniza os dias do roteiro com as datas da reserva de hotel
+    try {
+      await tripDaySyncService.syncTripDaysFromHotels(tripId);
+    } catch (syncErr: any) {
+      logger.warn('Aviso: falha ao sincronizar dias do roteiro com hotéis:', { error: syncErr.message, tripId });
+    }
+
     // Lança/atualiza despesa de hospedagem se houver valor
     if (data.totalAmount && parseFloat(data.totalAmount) > 0) {
       const expenseDate = data.checkInDate || new Date().toISOString().split('T')[0];
