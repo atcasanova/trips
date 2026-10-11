@@ -201,7 +201,7 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
 
       {localTransports.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-xs">
-          Nenhuma reserva de voo ou transporte cadastrada. Envie um PDF de passagem na aba Documentos para extrair automaticamente com IA!
+          Nenhum voo ou transporte cadastrado. Envie bilhetes na aba Documentos ou adicione manualmente.
         </div>
       ) : (
         <div className="space-y-4">

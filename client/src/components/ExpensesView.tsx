@@ -138,6 +138,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   // Filters
   const [selectedCurrency, setSelectedCurrency] = useState<string>('ALL');
   const [scopeFilter, setScopeFilter] = useState<'ALL' | 'SHARED' | 'PERSONAL'>('ALL');
+  const [payerFilter, setPayerFilter] = useState<string>('ALL');
+  const [participantFilter, setParticipantFilter] = useState<string>('ALL');
   const [chartTravelerId, setChartTravelerId] = useState<string>('ALL');
 
   // Modal state
@@ -269,6 +271,24 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     return [...base, ...tripOnly, ...systemOnly];
   }, [trip, hotels, transports, data]);
 
+  // Determina a quem pertence uma despesa individual (splits > paid_by_traveler > traveler_id > user_id)
+  const getExpenseTravelerId = (exp: ExpenseItem): string | null => {
+    if (exp.splits && exp.splits.length > 0 && exp.splits[0].traveler_id) {
+      return exp.splits[0].traveler_id;
+    }
+    if (exp.paid_by_traveler_id) {
+      return exp.paid_by_traveler_id;
+    }
+    if (exp.traveler_id) {
+      return exp.traveler_id;
+    }
+    if (exp.paid_by_user_id && data?.travelers) {
+      const match = data.travelers.find((t) => t.user_id === exp.paid_by_user_id);
+      if (match) return match.id;
+    }
+    return null;
+  };
+
   // Custo total da viagem do usuário logado: despesas pessoais + cotas devidas nas despesas divididas
   const userTotalsByCurrency = useMemo(() => {
     if (!data) return {};
@@ -284,11 +304,10 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       if (!exp.is_shared) {
         // Despesa pessoal: pertence ao usuário logado?
-        const isUserExpense =
-          (userTravelerId &&
-            (exp.paid_by_traveler_id === userTravelerId || exp.traveler_id === userTravelerId)) ||
-          (currentUserId && exp.paid_by_user_id === currentUserId) ||
-          (!currentUserId && !exp.paid_by_traveler_id && !exp.paid_by_user_id);
+        const expTravelerId = getExpenseTravelerId(exp);
+        const isUserExpense = userTravelerId
+          ? expTravelerId === userTravelerId
+          : (!exp.paid_by_traveler_id && !exp.paid_by_user_id);
 
         if (isUserExpense) {
           totals[curr] = (totals[curr] || 0) + amt;
@@ -322,12 +341,41 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const filteredExpenses = useMemo(() => {
     if (!data) return [];
     return data.expenses.filter((exp) => {
+      // 1. Filtro de moeda
       if (selectedCurrency !== 'ALL' && exp.currency !== selectedCurrency) return false;
+      // 2. Filtro de tipo (Compartilhada vs Individual)
       if (scopeFilter === 'SHARED' && !exp.is_shared) return false;
       if (scopeFilter === 'PERSONAL' && exp.is_shared) return false;
+
+      // 3. Filtro por Quem Pagou
+      if (payerFilter !== 'ALL') {
+        const expPayerId = exp.paid_by_traveler_id || exp.traveler_id;
+        if (expPayerId !== payerFilter) {
+          if (exp.paid_by_user_id) {
+            const mappedTr = data.travelers.find((t) => t.user_id === exp.paid_by_user_id);
+            if (mappedTr?.id !== payerFilter) return false;
+          } else {
+            return false;
+          }
+        }
+      }
+
+      // 4. Filtro por Participante / Beneficiário
+      if (participantFilter !== 'ALL') {
+        if (!exp.is_shared) {
+          const expTravelerId = getExpenseTravelerId(exp);
+          if (expTravelerId !== participantFilter) return false;
+        } else {
+          if (exp.splits && exp.splits.length > 0) {
+            const hasParticipant = exp.splits.some((s) => s.traveler_id === participantFilter);
+            if (!hasParticipant) return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [data, selectedCurrency, scopeFilter]);
+  }, [data, selectedCurrency, scopeFilter, payerFilter, participantFilter]);
 
   // Filtered transfers between travelers
   const filteredTransfers = useMemo(() => {
@@ -484,11 +532,36 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const counts = useMemo(() => {
     if (!data) return { all: 0, shared: 0, personal: 0 };
-    const all = data.expenses.length;
-    const shared = data.expenses.filter((e) => e.is_shared).length;
+    const baseList = data.expenses.filter((exp) => {
+      if (selectedCurrency !== 'ALL' && exp.currency !== selectedCurrency) return false;
+      if (payerFilter !== 'ALL') {
+        const expPayerId = exp.paid_by_traveler_id || exp.traveler_id;
+        if (expPayerId !== payerFilter) {
+          if (exp.paid_by_user_id) {
+            const mappedTr = data.travelers.find((t) => t.user_id === exp.paid_by_user_id);
+            if (mappedTr?.id !== payerFilter) return false;
+          } else {
+            return false;
+          }
+        }
+      }
+      if (participantFilter !== 'ALL') {
+        if (!exp.is_shared) {
+          const expTravelerId = getExpenseTravelerId(exp);
+          if (expTravelerId !== participantFilter) return false;
+        } else {
+          if (exp.splits && exp.splits.length > 0) {
+            if (!exp.splits.some((s) => s.traveler_id === participantFilter)) return false;
+          }
+        }
+      }
+      return true;
+    });
+    const all = baseList.length;
+    const shared = baseList.filter((e) => e.is_shared).length;
     const personal = all - shared;
     return { all, shared, personal };
-  }, [data]);
+  }, [data, selectedCurrency, payerFilter, participantFilter]);
 
   const currentBalances: TravelerBalance[] = useMemo(() => {
     if (!data?.balancesByCurrency) return [];
@@ -516,12 +589,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       } else {
         if (!exp.is_shared) {
           // Despesa pessoal: pertence a este viajante selecionado?
-          const targetTraveler = data.travelers.find((t) => t.id === chartTravelerId);
-          const isThisTraveler =
-            exp.paid_by_traveler_id === chartTravelerId ||
-            exp.traveler_id === chartTravelerId ||
-            (targetTraveler?.user_id && exp.paid_by_user_id === targetTraveler.user_id);
-          if (isThisTraveler) {
+          const expTravelerId = getExpenseTravelerId(exp);
+          if (expTravelerId === chartTravelerId) {
             categoryMap[cat] = (categoryMap[cat] || 0) + amt;
           }
         } else {
@@ -1212,13 +1281,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         {/* Simplified Settlements */}
         <div className="pt-2">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2.5">
-            Pagamentos Sugeridos para Quitação (Menor número de transações)
+            Sugestão de Acertos Diretos
           </span>
 
           {currentSettlements.length === 0 ? (
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>Nenhum pagamento pendente em {activeSettlementCurrency}. As contas do grupo estão equilibradas!</span>
+              <span>Nenhum acerto pendente em {activeSettlementCurrency}. As contas estão equilibradas.</span>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1274,11 +1343,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
               <div className="flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-emerald-600" />
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  Planilha de Pagamentos & Transferências ({filteredTransfers.length})
+                  Transferências & Acertos Realizados ({filteredTransfers.length})
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Registro de pagamentos diretos entre viajantes (Pix, dinheiro, etc.) para abater dívidas
+                Histórico de pagamentos diretos entre participantes
               </p>
             </div>
 
@@ -1297,7 +1366,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             <div className="p-6 bg-slate-50/70 border border-dashed border-slate-200 rounded-xl text-xs text-slate-500 text-center space-y-1">
               <p className="font-semibold text-slate-700">Nenhum pagamento registrado nesta moeda.</p>
               <p className="text-[11px] text-slate-400">
-                Quando alguém fizer um Pix ou pagamento a outro participante para acertar as contas, registre aqui para abater o saldo automaticamente.
+                Registre pagamentos entre participantes para abater os saldos calculados.
               </p>
             </div>
           ) : (
@@ -1592,45 +1661,99 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       {/* SECTION: LISTA DE DESPESAS COM BOTÃO EDITAR */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-        {/* Table Filter Tabs */}
-        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setScopeFilter('ALL')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                scopeFilter === 'ALL'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Todas ({counts.all})
-            </button>
-            <button
-              onClick={() => setScopeFilter('SHARED')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${
-                scopeFilter === 'SHARED'
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              Compartilhadas ({counts.shared})
-            </button>
-            <button
-              onClick={() => setScopeFilter('PERSONAL')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${
-                scopeFilter === 'PERSONAL'
-                  ? 'bg-slate-700 text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              Individuais ({counts.personal})
-            </button>
+        {/* Table Filter Tabs & Dropdowns */}
+        <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Scope Buttons */}
+            <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200">
+              <button
+                onClick={() => setScopeFilter('ALL')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  scopeFilter === 'ALL'
+                    ? 'bg-slate-900 text-white shadow-2xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                Todas ({counts.all})
+              </button>
+              <button
+                onClick={() => setScopeFilter('SHARED')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${
+                  scopeFilter === 'SHARED'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                Compartilhadas ({counts.shared})
+              </button>
+              <button
+                onClick={() => setScopeFilter('PERSONAL')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${
+                  scopeFilter === 'PERSONAL'
+                    ? 'bg-slate-700 text-white shadow-2xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                Individuais ({counts.personal})
+              </button>
+            </div>
+
+            {/* Payer Filter Dropdown */}
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-700 shadow-2xs">
+              <CreditCard className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="font-semibold text-slate-500 shrink-0">Quem pagou:</span>
+              <select
+                value={payerFilter}
+                onChange={(e) => setPayerFilter(e.target.value)}
+                className="bg-transparent border-none text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="ALL">Todos</option>
+                {data?.travelers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Participant Filter Dropdown */}
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-700 shadow-2xs">
+              <UserCheck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="font-semibold text-slate-500 shrink-0">Participante:</span>
+              <select
+                value={participantFilter}
+                onChange={(e) => setParticipantFilter(e.target.value)}
+                className="bg-transparent border-none text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="ALL">Todos</option>
+                {data?.travelers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Clear filters button */}
+            {(payerFilter !== 'ALL' || participantFilter !== 'ALL' || scopeFilter !== 'ALL') && (
+              <button
+                onClick={() => {
+                  setScopeFilter('ALL');
+                  setPayerFilter('ALL');
+                  setParticipantFilter('ALL');
+                }}
+                className="px-2.5 py-1 text-slate-500 hover:text-slate-800 text-xs font-semibold hover:bg-slate-200/80 rounded-lg transition-colors cursor-pointer"
+                title="Limpar filtros da tabela"
+              >
+                Limpar filtros
+              </button>
+            )}
           </div>
 
-          <span className="text-xs text-slate-400">
-            {filteredExpenses.length} despesas exibidas
+          <span className="text-xs text-slate-400 shrink-0 font-medium">
+            {filteredExpenses.length} {filteredExpenses.length === 1 ? 'despesa exibida' : 'despesas exibidas'}
           </span>
         </div>
 
@@ -1683,9 +1806,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                               : 'Compartilhada'}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
                             <User className="w-3 h-3 text-slate-400" />
-                            Individual (Pessoal)
+                            {(() => {
+                              const tId = getExpenseTravelerId(exp);
+                              const tr = data?.travelers.find((t) => t.id === tId);
+                              return tr ? `Individual (${tr.display_name.split(' ')[0]})` : 'Individual';
+                            })()}
                           </span>
                         )}
                       </td>
@@ -2509,7 +2636,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             </div>
 
             <p className="text-xs text-slate-500 mb-4">
-              O saldo dos participantes e as sugestões de acerto serão recalculados automaticamente.
+              Os saldos dos participantes serão recalculados.
             </p>
 
             {deleteTransferError && (

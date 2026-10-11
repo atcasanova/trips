@@ -227,13 +227,13 @@ export const expenseController = {
         // Traveler category breakdown: personal expenses belong to the payer/owner,
         // while shared expenses are distributed among travelers according to their splits/quotas
         if (!exp.is_shared) {
-
-          if (payerId) {
-            if (!categoryBreakdown[curr].byTraveler[payerId]) {
-              categoryBreakdown[curr].byTraveler[payerId] = {};
+          const ownerId = (exp.splits && exp.splits.length > 0 && exp.splits[0].traveler_id) || payerId;
+          if (ownerId) {
+            if (!categoryBreakdown[curr].byTraveler[ownerId]) {
+              categoryBreakdown[curr].byTraveler[ownerId] = {};
             }
-            categoryBreakdown[curr].byTraveler[payerId][cat] =
-              (categoryBreakdown[curr].byTraveler[payerId][cat] || 0) + amt;
+            categoryBreakdown[curr].byTraveler[ownerId][cat] =
+              (categoryBreakdown[curr].byTraveler[ownerId][cat] || 0) + amt;
           }
         } else {
           if (exp.splits && exp.splits.length > 0) {

@@ -829,7 +829,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
         </div>
         <h3 className="text-base font-bold text-slate-800">Nenhuma data ou reserva encontrada</h3>
         <p className="text-xs text-slate-500 max-w-md mx-auto">
-          Defina as datas de início e fim da viagem nas configurações ou envie passagens aéreas e confirmações de hotel na aba Documentos para gerar a timeline automaticamente.
+          Defina o período da viagem ou adicione passagens e hospedagens para visualizar a timeline.
         </p>
         {canEdit && (
           <div className="flex items-center justify-center gap-2 pt-2">
@@ -863,10 +863,10 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
               </span>
               <div>
                 <h2 className="text-lg sm:text-xl font-bold font-serif text-slate-900">
-                  Timeline Macro & Verificação de Datas
+                  Timeline da Viagem
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Visão cronológica dia a dia com voos, hospedagens, cidades e detecção automática de noites sem hotel ou erros de datas.
+                  Acompanhe datas, deslocamentos e hospedagens.
                 </p>
               </div>
             </div>
@@ -886,7 +886,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
           <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-start sm:items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5 sm:mt-0" />
             <div className="flex-1 text-xs">
-              <span className="font-bold">Logística e Datas 100% Cobertas!</span> Todas as noites da viagem possuem hospedagem confirmada, voo noturno registrado ou retorno concluído para casa, sem inconsistências.
+              <span className="font-bold">Roteiro consistente:</span> Todas as datas e hospedagens estão confirmadas, sem pendências de logística.
             </div>
           </div>
         ) : (
@@ -894,8 +894,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
             <div className="flex items-start sm:items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
               <div className="text-xs">
-                <span className="font-bold">Atenção à Logística:</span> Encontramos{' '}
-                <strong>{stats.totalAlerts} ponto{stats.totalAlerts > 1 ? 's' : ''} de atenção</strong> nas datas desta viagem
+                <span className="font-bold">Atenção:</span> {stats.totalAlerts} ponto{stats.totalAlerts > 1 ? 's' : ''} de atenção identificado{stats.totalAlerts > 1 ? 's' : ''}
                 {stats.missingHotelNights > 0 && ` (${stats.missingHotelNights} noite${stats.missingHotelNights > 1 ? 's' : ''} sem hotel)`}
                 {stats.conflictNights > 0 && ` (${stats.conflictNights} sobreposição de reservas)`}.
               </div>
@@ -905,7 +904,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
               onClick={() => setFilterMode(filterMode === 'ALERTS' ? 'ALL' : 'ALERTS')}
               className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shrink-0"
             >
-              {filterMode === 'ALERTS' ? 'Mostrar Todos os Dias' : 'Filtrar Apenas Alertas'}
+              {filterMode === 'ALERTS' ? 'Ver todos os dias' : 'Filtrar alertas'}
             </button>
           </div>
         )}
@@ -916,7 +915,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
           <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex flex-col justify-between">
             <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
               <BedDouble className="w-3.5 h-3.5 text-indigo-600" />
-              Cobertura de Hotéis
+              Hospedagem coberta
             </span>
             <div className="mt-2">
               <div className="flex items-baseline justify-between">
@@ -946,7 +945,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
           <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex flex-col justify-between">
             <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
               <Plane className="w-3.5 h-3.5 text-sky-600 -rotate-45" />
-              Trechos de Voo/Trem
+              Deslocamentos
             </span>
             <div className="mt-2 flex items-baseline justify-between">
               <span className="text-base sm:text-lg font-bold text-slate-900">
@@ -962,7 +961,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
           <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex flex-col justify-between">
             <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
               <Building className="w-3.5 h-3.5 text-emerald-600" />
-              Hotéis Reservados
+              Hotéis
             </span>
             <div className="mt-2 flex items-baseline justify-between">
               <span className="text-base sm:text-lg font-bold text-slate-900">

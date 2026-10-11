@@ -792,7 +792,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
 
       {localHotels.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-xs">
-          Nenhuma hospedagem cadastrada nesta viagem. Você pode enviar a confirmação de reserva na aba Documentos para preenchimento automático por IA!
+          Nenhuma hospedagem cadastrada. Envie confirmações na aba Documentos ou adicione manualmente.
         </div>
       ) : (
         <div className="space-y-6">

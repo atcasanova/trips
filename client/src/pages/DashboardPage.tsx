@@ -54,7 +54,7 @@ export const DashboardPage: React.FC = () => {
             Olá, {user?.name?.split(' ')[0]}! Para onde vamos a seguir?
           </h1>
           <p className="mt-2 text-sm text-slate-300 leading-relaxed">
-            Organize suas viagens com extração inteligente de documentos por IA, reservas detalhadas, roteiros ilustrados e gere dossiês completos em PDF (Trip Book).
+            Planeje roteiros, organize passagens e hospedagens, e gere seu Trip Book completo em PDF.
           </p>
 
           <div className="mt-6 flex items-center gap-3">

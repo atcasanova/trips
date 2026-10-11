@@ -1120,10 +1120,10 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
         <div className="flex items-center gap-4 flex-wrap">
           <div>
             <h2 className="text-xl font-bold font-serif text-slate-900">
-              {viewMode === 'timeline' ? 'Roteiro Cronológico por Dia' : 'Visão Geral em Calendário'}
+              {viewMode === 'timeline' ? 'Roteiro' : 'Calendário'}
             </h2>
             <p className="text-xs text-slate-500">
-              {localDays.length} dias programados • Voos, hotéis e atrações unificados por data
+              {localDays.length} dias programados
             </p>
           </div>
 
@@ -1139,7 +1139,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
               }`}
             >
               <LayoutList className="w-3.5 h-3.5" />
-              <span>Roteiro & Timeline</span>
+              <span>Lista</span>
             </button>
             <button
               type="button"
@@ -1151,7 +1151,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
               }`}
             >
               <CalendarDays className="w-3.5 h-3.5" />
-              <span>Visão de Calendário</span>
+              <span>Calendário</span>
             </button>
           </div>
         </div>
@@ -1399,9 +1399,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       {localDays.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200">
           <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-slate-800">Nenhum dia cadastrado no roteiro</h3>
+          <h3 className="text-base font-semibold text-slate-800">Nenhum dia cadastrado</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-5">
-            Você pode colar anotações de viagem (dias, datas, atrações) para a IA estruturar automaticamente, ou cadastrar manualmente.
+            Adicione dias manualmente ou crie o roteiro com auxílio da IA.
           </p>
           {canEdit && (
             <div className="flex justify-center gap-3">
@@ -1943,7 +1943,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 <div className="mt-4 pt-4 border-t border-slate-100">
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Atividades & Pontos Turísticos ({day.items?.length || 0})
+                      Atividades ({day.items?.length || 0})
                     </h4>
                     {canEdit && (
                       <button
@@ -2221,7 +2221,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                       }}
                       className="p-4 border-2 border-dashed border-slate-200 rounded-xl text-center text-xs text-slate-400 italic"
                     >
-                      Nenhuma atração listada. Arraste uma atividade aqui ou clique em "Adicionar Atividade".
+                      Nenhuma atividade neste dia.
                     </div>
                   )}
                 </div>
@@ -2231,7 +2231,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                   {day.ideas && day.ideas.length > 0 && (
                     <div className="p-3 bg-emerald-50/70 border border-emerald-200/60 rounded-xl text-xs text-emerald-900">
                       <strong className="flex items-center gap-1 mb-1 text-emerald-800">
-                        <Lightbulb className="w-3.5 h-3.5 text-emerald-600" /> Sugestões & Ideias
+                        <Lightbulb className="w-3.5 h-3.5 text-emerald-600" /> Sugestões
                       </strong>
                       <p>{Array.isArray(day.ideas) ? day.ideas.join(' • ') : day.ideas}</p>
                     </div>
@@ -2240,7 +2240,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                   {day.alerts && day.alerts.length > 0 && (
                     <div className="p-3 bg-amber-50/70 border border-amber-200/60 rounded-xl text-xs text-amber-900">
                       <strong className="flex items-center gap-1 mb-1 text-amber-800">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Reservar & Conferir
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Avisos
                       </strong>
                       <p>{Array.isArray(day.alerts) ? day.alerts.join(' • ') : day.alerts}</p>
                     </div>
@@ -2376,7 +2376,7 @@ Ou instruções livres de adição/sugestão como:
                             )}
                             {!aiReplaceExisting && !d.isExistingDay && (
                               <span className="px-2 py-0.5 bg-emerald-100 border border-emerald-300 rounded text-emerald-800 font-semibold text-[10px] flex items-center gap-1">
-                                <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> Novo Dia • Encaixe cronológico
+                                <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> Novo Dia
                               </span>
                             )}
                           </div>

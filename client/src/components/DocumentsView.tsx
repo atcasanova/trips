@@ -1938,7 +1938,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                       <div className="text-[11px] text-amber-900/90 bg-amber-100/70 p-2.5 rounded-lg flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
                         <span>
-                          Ao confirmar, este evento será programado automaticamente no dia correspondente do <strong>Roteiro</strong>, com marcador cartográfico no mapa e despesa registrada.
+                          Ao confirmar, este evento será adicionado ao dia correspondente do <strong>Roteiro</strong> com localização e despesa.
                         </span>
                       </div>
                     </div>
@@ -2294,7 +2294,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                     Excluir também as reservas e itens vinculados no sistema
                   </span>
                   <span className="text-amber-800 text-[11px] block mt-0.5">
-                    Remove automaticamente os registros correspondentes em Hospedagens, Voos ou Atividades do Roteiro.
+                    Também remove as hospedagens, voos ou atividades gerados a partir deste documento.
                   </span>
                 </div>
               </label>

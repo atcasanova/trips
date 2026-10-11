@@ -1122,7 +1122,7 @@ export const reportService = {
                 </span>
               </div>` : ''}
             </div>
-            ${h.notes ? `<div class="day-hotel-notes">ℹ️ <strong>Notas & Observações:</strong> ${escapeHtml(h.notes)}</div>` : ''}
+            ${!options?.anonymize && !options?.isPublicShare && h.notes ? `<div class="day-hotel-notes">ℹ️ <strong>Notas & Observações:</strong> ${escapeHtml(h.notes)}</div>` : ''}
           </div>
         `;
       }
@@ -1161,7 +1161,7 @@ export const reportService = {
                     ${paxLabel ? `<div class="hotel-detail-item"><span class="detail-label">Hóspedes:</span> <span class="detail-val">${escapeHtml(paxLabel)}</span></div>` : ''}
                     ${!options?.anonymize && !options?.isPublicShare && h.document_id ? `<div class="hotel-detail-item"><span class="detail-label">Voucher:</span> <span class="detail-val"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></span></div>` : ''}
                   </div>
-                  ${h.notes ? `<div class="day-hotel-notes" style="font-size: 6.8pt;">ℹ️ ${escapeHtml(h.notes)}</div>` : ''}
+                  ${!options?.anonymize && !options?.isPublicShare && h.notes ? `<div class="day-hotel-notes" style="font-size: 6.8pt;">ℹ️ ${escapeHtml(h.notes)}</div>` : ''}
                 </div>
               `;
             }).join('')}
@@ -2463,18 +2463,9 @@ export const reportService = {
   ${sec.overview || sec.calendar ? `
   <!-- VISÃO GERAL & CALENDÁRIO -->
   <div class="page-content">
-    ${sec.overview ? `
+    ${sec.overview && trip.description ? `
     <h1 class="section-title">Visão Geral da Viagem</h1>
-    ${
-      trip.description
-        ? `<p style="font-size: 9.5pt; line-height: 1.6; margin-bottom: 15px; text-align: justify;">${trip.description}</p>`
-        : ''
-    }
-
-    <div class="callout-box">
-      <div class="callout-title">🌸 JANELA SAZONAL & INFORMAÇÕES DE VIAGEM</div>
-      <p>As datas do roteiro foram estrategicamente planejadas para coincidir com as melhores condições e atrativos locais. Recomenda-se checar previsões meteorológicas finas e horários locais 7 a 10 dias antes do embarque.</p>
-    </div>
+    <p style="font-size: 9.5pt; line-height: 1.6; margin-bottom: 15px; text-align: justify;">${trip.description}</p>
     ` : ''}
 
     ${sec.calendar ? `
@@ -2914,7 +2905,7 @@ export const reportService = {
               <strong>${escapeHtml(h.hotel_name)}</strong>
               ${!options?.anonymize && !options?.isPublicShare && h.document_id ? `<div style="margin-top: 3px;"><a href="/api/documents/${h.document_id}/file" target="_blank" rel="noopener noreferrer" class="voucher-link-badge" title="${escapeHtml(h.document_name || 'Ver Voucher')}">📄 Ver Voucher</a></div>` : ''}
               <br><small style="color: #64748b;">${escapeHtml(h.address || '')}</small>
-              ${h.notes ? `<br><small style="color: #92400e; font-size: 7pt; font-style: italic;">ℹ️ ${escapeHtml(h.notes)}</small>` : ''}
+              ${!options?.anonymize && !options?.isPublicShare && h.notes ? `<br><small style="color: #92400e; font-size: 7pt; font-style: italic;">ℹ️ ${escapeHtml(h.notes)}</small>` : ''}
             </td>
             <td>${escapeHtml(h.city || '')}</td>
             <td>${formatDateBr(h.check_in_date)} ${h.check_in_time ? `às ${escapeHtml(h.check_in_time)}` : ''}</td>

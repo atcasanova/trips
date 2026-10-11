@@ -435,7 +435,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ tripId, members, onR
                 </h4>
                 {companionsList.length === 0 ? (
                   <div className="p-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
-                    Nenhum acompanhante cadastrado ainda. Eles podem ser adicionados aqui ou criados automaticamente na importação de passagens/reservas.
+                    Nenhum acompanhante cadastrado ainda.
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
@@ -486,7 +486,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ tripId, members, onR
                     Convites Pendentes ({pendingInvites.length})
                   </h4>
                   <p className="text-[11px] text-slate-500">
-                    Pessoas convidadas que ainda não definiram sua senha e ativaram o acesso
+                    Convites enviados aguardando ativação
                   </p>
                 </div>
               </div>
@@ -495,7 +495,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ tripId, members, onR
                 <div className="py-8 text-center text-xs text-slate-400">Carregando convites...</div>
               ) : pendingInvites.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
-                  Nenhum convite pendente para esta viagem. Utilize a aba "Membros Ativos" para convidar novos participantes.
+                  Nenhum convite pendente no momento.
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">

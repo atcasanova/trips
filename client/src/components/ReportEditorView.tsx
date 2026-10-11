@@ -202,60 +202,21 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
             <h2 className="text-xl font-bold font-serif text-slate-900">Trip Book</h2>
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-            Geração de dossiê completo de viagem formatado para papel A4 e web, integrando identidade visual, mapas diários, timeline, reservas de voos e hotéis.
+            Dossiê completo de viagem com roteiro unificado, mapas diários e reservas.
           </p>
-
-          {/* Pre-generated PDF status pill */}
-          <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 flex-wrap">
-            {pdfStatus?.hasPreGenerated ? (
-              <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                <Zap className="w-3.5 h-3.5 text-emerald-600 fill-emerald-500" />
-                <span className="font-semibold">PDF Pré-gerado Pronto</span>
-                <span className="text-emerald-600">({pdfStatus.fullSizeFormatted || '10 MB'})</span>
-                {pdfStatus.fullGeneratedAt && (
-                  <span className="text-emerald-500 hidden sm:inline">
-                    • {new Date(pdfStatus.fullGeneratedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                )}
-              </div>
-            ) : pdfStatus?.isGenerating || regeneratingPdf ? (
-              <div className="flex items-center gap-1.5 text-xs text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200">
-                <RefreshCw className="w-3.5 h-3.5 text-sky-600 animate-spin" />
-                <span className="font-semibold">Gerando PDF em segundo plano...</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                <Clock className="w-3.5 h-3.5 text-amber-600" />
-                <span>Aguardando geração do PDF</span>
-              </div>
-            )}
-
-            {canEdit && (
-              <button
-                type="button"
-                onClick={handleRegeneratePdf}
-                disabled={regeneratingPdf || downloading}
-                title="Forçar atualização e re-renderização dos arquivos PDF"
-                className="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 px-2 py-1 rounded-lg transition-colors cursor-pointer"
-              >
-                <RefreshCw className={`w-3 h-3 ${regeneratingPdf ? 'animate-spin' : ''}`} />
-                <span>{regeneratingPdf ? 'Regenerando...' : 'Regenerar PDF'}</span>
-              </button>
-            )}
-          </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
           <button
             onClick={() => setShowSharePanel(!showSharePanel)}
-            className={`flex items-center gap-1.5 px-3.5 py-2 border rounded-xl text-xs font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 border rounded-xl text-xs font-semibold transition-colors ${
               shareData?.share_enabled
                 ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
                 : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
             }`}
           >
             <Share2 className="w-4 h-4 text-emerald-600" />
-            <span>Compartilhar Link</span>
+            <span>Compartilhar link</span>
             {shareData?.share_enabled && (
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
             )}
@@ -266,16 +227,16 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
             href={printHtmlUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1.5 px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
           >
             <Printer className="w-4 h-4 text-slate-500" />
-            Versão para Impressão
+            <span>Versão para impressão</span>
           </a>
 
           <button
             onClick={handleDownloadPdf}
             disabled={downloading}
-            className={`flex items-center gap-1.5 px-5 py-2 disabled:opacity-75 text-white rounded-xl text-xs font-semibold shadow-sm transition-all cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-4 py-2 disabled:opacity-75 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer whitespace-nowrap ${
               downloadSuccess
                 ? 'bg-emerald-600 hover:bg-emerald-700'
                 : 'bg-brand-600 hover:bg-brand-700'
@@ -294,7 +255,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
             ) : (
               <>
                 <Download className="w-4 h-4" />
-                <span>Baixar Trip Book em PDF (A4)</span>
+                <span>Baixar tripbook em PDF</span>
               </>
             )}
           </button>
@@ -385,26 +346,26 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div className="flex items-center gap-2 text-slate-600">
-                  <Zap className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <Globe className="w-4 h-4 text-emerald-600 flex-shrink-0" />
                   <span>
-                    <strong>Versão PDF Anonimizada:</strong> Pronta para download público imediato ({pdfStatus?.anonSizeFormatted || 'otimizada'}).
+                    Versão pública em PDF disponível para download ({pdfStatus?.anonSizeFormatted || 'otimizada'}).
                   </span>
                 </div>
                 <a
                   href={`${shareData.share_url}/pdf`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 font-medium text-emerald-700 hover:text-emerald-800 hover:underline flex-shrink-0"
+                  className="inline-flex items-center gap-1.5 font-semibold text-emerald-700 hover:text-emerald-800 hover:underline flex-shrink-0"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Testar Download do PDF</span>
+                  <span>Baixar PDF público</span>
                 </a>
               </div>
 
             </div>
           ) : (
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
-              <span>O compartilhamento público está desativado. Nenhuma pessoa externa consegue acessar este Trip Book.</span>
+              <span>O compartilhamento público está desativado. Somente participantes têm acesso a este Trip Book.</span>
               {canEdit && (
                 <button
                   type="button"
@@ -430,14 +391,14 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
 
           <div className="space-y-2.5 text-xs text-slate-700">
             {[
-              { id: 'cover', label: 'Capa Editorial & Tema' },
-              { id: 'overview', label: 'Visão Geral & Janela Sazonal' },
-              { id: 'calendar', label: 'Calendário Rápido de Bases' },
-              { id: 'climatePacking', label: 'Clima, Mala & Dicas' },
-              { id: 'dayByDay', label: 'Roteiro Ilustrado & Mini-Mapas' },
-              { id: 'transports', label: 'Transportes & Voos (PNR)' },
-              { id: 'hotels', label: 'Hospedagens & Vouchers' },
-              { id: 'checklist', label: 'Checklist Final de Viagem' },
+              { id: 'cover', label: 'Capa e Tema' },
+              { id: 'overview', label: 'Visão Geral' },
+              { id: 'calendar', label: 'Calendário de Bases' },
+              { id: 'climatePacking', label: 'Clima e Mala' },
+              { id: 'dayByDay', label: 'Roteiro com Mapas' },
+              { id: 'transports', label: 'Transportes e Voos' },
+              { id: 'hotels', label: 'Hospedagens' },
+              { id: 'checklist', label: 'Checklist de Viagem' },
             ].map((sec) => (
               <label key={sec.id} className="flex items-center gap-2 cursor-pointer p-1.5 rounded hover:bg-slate-50">
                 <input
@@ -452,7 +413,7 @@ export const ReportEditorView: React.FC<ReportEditorViewProps> = ({ trip, canEdi
           </div>
 
           <div className="pt-4 border-t border-slate-100 text-[11px] text-slate-400">
-            O documento respeita o padrão gráfico editorial (com paleta customizável por viagem, mini-mapas estáticos OpenStreetMap por dia e layout A4 para impressão).
+            Documento formatado para impressão ou leitura digital, com mapas diários e reservas integradas.
           </div>
         </div>
 
