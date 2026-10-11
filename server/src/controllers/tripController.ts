@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { TripRole } from '../types/index.js';
 import { resolveCountry } from '../utils/countryResolver.js';
 import { tripBookPdfService } from '../services/tripBookPdfService.js';
+import { tripTimelineHealthService } from '../services/tripTimelineHealthService.js';
 
 export const tripController = {
   // 1. List trips accessible to user
@@ -49,7 +50,11 @@ export const tripController = {
       }
 
       const { rows } = await query(sql, params);
-      return res.json({ trips: rows });
+      const sanitized = rows.map((trip: any) => ({
+        ...trip,
+        status: trip.status === 'CONFIRMED' ? 'PLANNED' : trip.status,
+      }));
+      return res.json({ trips: sanitized });
     } catch (err: any) {
       logger.error('Erro ao listar viagens:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao carregar viagens' });
@@ -74,6 +79,14 @@ export const tripController = {
       }
 
       const trip = trips[0];
+
+      // Sync trip timeline health status
+      try {
+        const health = await tripTimelineHealthService.syncTripStatus(id);
+        trip.status = health.status;
+      } catch (healthErr: any) {
+        logger.warn('Aviso: falha ao sincronizar status de saúde da timeline da viagem:', { error: healthErr.message, tripId: id });
+      }
 
       // Get members
       const { rows: members } = await query(
@@ -286,11 +299,28 @@ export const tripController = {
       // Queue pre-generation of TripBook PDFs
       tripBookPdfService.queuePreGeneration(id);
 
+      // Sincronizar saúde da timeline e status da viagem caso datas ou cidades tenham sido alteradas
+      if (updates.start_date !== undefined || updates.end_date !== undefined || updates.cities !== undefined) {
+        tripTimelineHealthService.syncTripStatus(id).catch(() => {});
+      }
+
       logger.info('Viagem atualizada', { tripId: id });
       return res.json({ trip: rows[0], locationRefresh });
     } catch (err: any) {
       logger.error('Erro ao atualizar viagem:', { error: err.message });
       return res.status(500).json({ error: 'Erro ao atualizar viagem' });
+    }
+  },
+
+  // 4b. Sync trip status explicitly from timeline
+  async syncStatus(req: Request, res: Response) {
+    const { id } = req.params;
+    try {
+      const health = await tripTimelineHealthService.syncTripStatus(id);
+      return res.json({ status: health.status, health });
+    } catch (err: any) {
+      logger.error('Erro ao sincronizar status da viagem:', { error: err.message, tripId: id });
+      return res.status(500).json({ error: 'Erro ao sincronizar status da viagem' });
     }
   },
 

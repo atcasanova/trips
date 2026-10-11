@@ -5,6 +5,7 @@ import { aggregateHotels, extractPassengers } from '../utils/aggregation.js';
 import { tripBookPdfService } from '../services/tripBookPdfService.js';
 import { resolveMissingHotelLocations } from '../services/itineraryLocationService.js';
 import { tripDaySyncService } from '../services/tripDaySyncService.js';
+import { tripTimelineHealthService } from '../services/tripTimelineHealthService.js';
 
 export const reservationController = {
   // === TRANSPORTS ===
@@ -157,6 +158,7 @@ export const reservationController = {
       }
 
       tripBookPdfService.queuePreGeneration(tripId);
+      tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
 
       return res.status(201).json({
         transport: {
@@ -213,6 +215,7 @@ export const reservationController = {
       }
 
       tripBookPdfService.queuePreGeneration(tripId);
+      tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
       return res.json({
         message: 'Transporte excluído com sucesso',
         deletedDocument: deleteDocument && Boolean(docId),
@@ -449,6 +452,7 @@ export const reservationController = {
       );
 
       tripBookPdfService.queuePreGeneration(tripId);
+      tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
 
       if (!resolvedLat || !resolvedLng) {
         resolveMissingHotelLocations(tripId).catch((err: any) =>
@@ -555,6 +559,7 @@ export const reservationController = {
       );
 
       tripBookPdfService.queuePreGeneration(tripId);
+      tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
 
       if (!updatedLatitude || !updatedLongitude) {
         resolveMissingHotelLocations(tripId).catch((err: any) =>
@@ -605,6 +610,7 @@ export const reservationController = {
       }
 
       tripBookPdfService.queuePreGeneration(tripId);
+      tripTimelineHealthService.syncTripStatus(tripId).catch(() => {});
       return res.json({
         message: 'Hospedagem removida com sucesso',
         deletedDocument: deleteDocument && Boolean(docId),

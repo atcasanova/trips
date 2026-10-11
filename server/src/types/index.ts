@@ -14,7 +14,7 @@ export interface User {
 }
 
 export type TripRole = 'OWNER' | 'EDITOR' | 'VIEWER';
-export type TripStatus = 'PLANNING' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'ARCHIVED';
+export type TripStatus = 'PLANNING' | 'PLANNED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'ARCHIVED';
 
 export interface TripTheme {
   preset: string; // 'sakura' | 'ocean' | 'sunset' | 'forest' | 'midnight' | 'cyber' | 'minimal'

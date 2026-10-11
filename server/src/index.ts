@@ -5,6 +5,7 @@ import { runMigrations } from './db/migrate.js';
 import { seedDemoData } from './db/seed.js';
 import { pool } from './db/pool.js';
 import { tripBookPdfService } from './services/tripBookPdfService.js';
+import { tripTimelineHealthService } from './services/tripTimelineHealthService.js';
 
 async function startServer() {
   try {
@@ -29,6 +30,11 @@ async function startServer() {
       // Trigger background pre-generation of pending TripBook PDFs
       tripBookPdfService.preGenerateAllPendingTrips().catch((err: any) => {
         logger.warn('Falha na pré-geração em lote na inicialização:', { error: err.message });
+      });
+
+      // Synchronize all trip statuses according to timeline health
+      tripTimelineHealthService.syncAllTrips().catch((err: any) => {
+        logger.warn('Falha na sincronização de status de viagens na inicialização:', { error: err.message });
       });
     });
 

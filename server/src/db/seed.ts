@@ -263,7 +263,7 @@ export async function seedDemoData() {
         'Estados Unidos',
         JSON.stringify(['Brasília', 'Houston', 'Las Vegas']),
         'America/Los_Angeles',
-        'CONFIRMED',
+        'PLANNING',
         JSON.stringify({
           preset: 'cyber',
           primary: '#0284c7',

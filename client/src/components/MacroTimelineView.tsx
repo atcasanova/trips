@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   MapPin,
@@ -38,6 +38,7 @@ import {
 import { formatDateBr, formatDateRange, parseSafeDate } from '../utils/date.js';
 import { getAirportByCode } from '../utils/airportLocations.js';
 import { extractPassengers, normalizeText } from '../utils/aggregation.js';
+import { api } from '../api/client.js';
 
 interface MacroTimelineViewProps {
   trip: Trip;
@@ -47,6 +48,7 @@ interface MacroTimelineViewProps {
   onRefresh?: () => void;
   canEdit?: boolean;
   onNavigateTab?: (tab: string) => void;
+  onStatusChange?: (newStatus: string) => void;
 }
 
 // Normalized YYYY-MM-DD helper
@@ -213,6 +215,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
   onRefresh,
   canEdit = false,
   onNavigateTab,
+  onStatusChange,
 }) => {
   const [filterMode, setFilterMode] = useState<'ALL' | 'ALERTS' | 'TRANSPORTS' | 'HOTELS'>('ALL');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -770,6 +773,21 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
     };
   }, [timelineDays, allSegmentsWithParent, hotels]);
 
+  // Auto-sync trip status based on timeline alerts (0 alerts -> 'PLANNED', >0 alerts -> 'PLANNING')
+  useEffect(() => {
+    if (!trip.id) return;
+    const expectedStatus = stats.totalAlerts > 0 ? 'PLANNING' : 'PLANNED';
+    if (trip.status !== 'ARCHIVED' && trip.status !== 'IN_PROGRESS' && trip.status !== 'COMPLETED') {
+      if (trip.status !== expectedStatus) {
+        api.trips.syncStatus(trip.id).then((res) => {
+          if (res.status && res.status !== trip.status && onStatusChange) {
+            onStatusChange(res.status);
+          }
+        }).catch(() => {});
+      }
+    }
+  }, [stats.totalAlerts, trip.id, trip.status, onStatusChange]);
+
   // Filtered timeline days
   const filteredDays = useMemo(() => {
     switch (filterMode) {
@@ -968,7 +986,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
               <AlertCircle className={`w-3.5 h-3.5 ${stats.totalAlerts > 0 ? 'text-amber-600' : 'text-emerald-600'}`} />
               Inconsistências
             </span>
-            <div className="mt-2 flex items-baseline justify-between">
+            <div className="mt-2 flex items-baseline justify-between gap-2">
               <span
                 className={`text-base sm:text-lg font-bold ${
                   stats.totalAlerts > 0 ? 'text-amber-700' : 'text-emerald-700'
@@ -976,9 +994,13 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
               >
                 {stats.totalAlerts === 0 ? 'Nenhuma' : `${stats.totalAlerts} alerta${stats.totalAlerts > 1 ? 's' : ''}`}
               </span>
-              {stats.totalAlerts > 0 && (
-                <span className="text-[10px] uppercase font-bold text-amber-600 bg-amber-100/80 px-1.5 py-0.5 rounded">
-                  Revisar
+              {stats.totalAlerts > 0 ? (
+                <span className="text-[10px] uppercase font-bold text-amber-700 bg-amber-100/90 px-1.5 py-0.5 rounded">
+                  Em Planejamento
+                </span>
+              ) : (
+                <span className="text-[10px] uppercase font-bold text-emerald-700 bg-emerald-100/90 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Planejada
                 </span>
               )}
             </div>

@@ -4,6 +4,7 @@ import { refreshItineraryLocations, resolveMissingHotelLocations } from './itine
 import { logger } from '../utils/logger.js';
 import { tripBookPdfService } from './tripBookPdfService.js';
 import { tripDaySyncService } from './tripDaySyncService.js';
+import { tripTimelineHealthService } from './tripTimelineHealthService.js';
 import {
   areFlightsMatching,
   areHotelsMatching,
@@ -835,6 +836,11 @@ export async function applyConfirmedExtraction(params: ConfirmExtractionParams):
 
   // Queue pre-generation of TripBook PDFs
   tripBookPdfService.queuePreGeneration(tripId);
+
+  // Sync trip timeline health status
+  tripTimelineHealthService.syncTripStatus(tripId).catch((err: any) =>
+    logger.warn('Aviso: falha ao sincronizar status da viagem após confirmação de documento:', { error: err.message, tripId })
+  );
 }
 
 async function upsertDocumentExpense(params: {

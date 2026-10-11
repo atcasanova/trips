@@ -10,6 +10,7 @@ import { pdfService } from './pdfService.js';
 import { pexelsService } from './pexelsService.js';
 import { emailService } from './emailService.js';
 import { applyConfirmedExtraction } from './documentConfirmationService.js';
+import { tripTimelineHealthService } from './tripTimelineHealthService.js';
 import { normalizeText } from '../utils/aggregation.js';
 
 interface UserRecord {
@@ -1050,7 +1051,7 @@ export const inboundEmailService = {
         title, destination_summary, start_date, end_date, primary_country,
         cities, timezone, status, theme, cover_image_url, cover_image_thumb,
         cover_image_attribution, default_currency, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'UTC', 'CONFIRMED', $7, $8, $9, $10, $11, $12)
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'UTC', 'PLANNING', $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
         tripTitle,
@@ -1099,6 +1100,9 @@ export const inboundEmailService = {
         }),
       ]
     );
+
+    // Sync trip status based on timeline health
+    tripTimelineHealthService.syncTripStatus(newTrip.id).catch(() => {});
 
     logger.info('Nova viagem criada automaticamente com sucesso', {
       tripId: newTrip.id,

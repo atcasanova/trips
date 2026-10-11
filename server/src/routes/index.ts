@@ -57,6 +57,7 @@ router.get('/trips', requireAuth, tripController.listTrips);
 router.post('/trips', requireAuth, tripController.createTrip);
 router.get('/trips/:id', requireAuth, requireTripRole('VIEWER'), tripController.getTrip);
 router.put('/trips/:id', requireAuth, requireTripRole('EDITOR'), tripController.updateTrip);
+router.post('/trips/:id/sync-status', requireAuth, requireTripRole('EDITOR'), tripController.syncStatus);
 router.delete('/trips/:id', requireAuth, requireTripRole('OWNER'), tripController.deleteTrip);
 
 // Trip Members

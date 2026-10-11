@@ -11,8 +11,9 @@ interface TripCardProps {
 }
 
 const statusMap: Record<string, { label: string; bg: string; text: string }> = {
-  PLANNING: { label: 'Planejamento', bg: 'bg-amber-100', text: 'text-amber-800' },
-  CONFIRMED: { label: 'Confirmada', bg: 'bg-emerald-100', text: 'text-emerald-800' },
+  PLANNING: { label: 'Em Planejamento', bg: 'bg-amber-100', text: 'text-amber-800' },
+  PLANNED: { label: 'Planejada', bg: 'bg-emerald-100', text: 'text-emerald-800' },
+  CONFIRMED: { label: 'Planejada', bg: 'bg-emerald-100', text: 'text-emerald-800' },
   IN_PROGRESS: { label: 'Em Andamento', bg: 'bg-blue-100', text: 'text-blue-800' },
   COMPLETED: { label: 'Concluída', bg: 'bg-slate-100', text: 'text-slate-700' },
   ARCHIVED: { label: 'Arquivada', bg: 'bg-zinc-100', text: 'text-zinc-600' },

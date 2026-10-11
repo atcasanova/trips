@@ -130,6 +130,8 @@ export const api = {
         body: JSON.stringify(data),
       }),
     delete: (id: string) => request<{ message: string }>(`/trips/${id}`, { method: 'DELETE' }),
+    syncStatus: (id: string) =>
+      request<{ status: string; health: any }>(`/trips/${id}/sync-status`, { method: 'POST' }),
 
     // Members
     addMember: (tripId: string, data: { email: string; role: string }) =>

@@ -1232,8 +1232,16 @@ export const AdminDashboardPage: React.FC = () => {
                       <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/20 backdrop-blur border border-white/20 text-white">
                         {trip.isGroupTrip ? '👥 Viagem em Grupo' : '👤 Viagem Solo'}
                       </span>
-                      <span className="text-[11px] font-mono bg-black/40 px-2 py-0.5 rounded backdrop-blur">
-                        {trip.status}
+                      <span className="text-[11px] font-medium bg-black/40 px-2 py-0.5 rounded backdrop-blur">
+                        {trip.status === 'PLANNING'
+                          ? 'Em Planejamento'
+                          : trip.status === 'PLANNED' || trip.status === 'CONFIRMED'
+                          ? 'Planejada'
+                          : trip.status === 'IN_PROGRESS'
+                          ? 'Em Andamento'
+                          : trip.status === 'COMPLETED'
+                          ? 'Concluída'
+                          : trip.status}
                       </span>
                     </div>
 

@@ -316,12 +316,47 @@ export const TripDetailPage: React.FC = () => {
         {/* Hero Title & Context */}
         <div className="relative z-10 w-full max-w-7xl mx-auto pt-6">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span
-              className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-sm"
-              style={{ backgroundColor: primaryColor }}
-            >
-              {trip.status}
-            </span>
+            {(() => {
+              if (trip.status === 'PLANNING') {
+                return (
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/25 text-amber-200 border border-amber-500/40 backdrop-blur-md flex items-center gap-1.5 shadow-sm">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                    Em Planejamento
+                  </span>
+                );
+              }
+              if (trip.status === 'PLANNED' || trip.status === 'CONFIRMED') {
+                return (
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 backdrop-blur-md flex items-center gap-1.5 shadow-sm">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Planejada
+                  </span>
+                );
+              }
+              if (trip.status === 'IN_PROGRESS') {
+                return (
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/25 text-blue-200 border border-blue-500/40 backdrop-blur-md flex items-center gap-1.5 shadow-sm">
+                    <Clock className="w-3.5 h-3.5 text-blue-300" />
+                    Em Andamento
+                  </span>
+                );
+              }
+              if (trip.status === 'COMPLETED') {
+                return (
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-500/30 text-slate-200 border border-slate-500/40 backdrop-blur-md flex items-center gap-1.5 shadow-sm">
+                    Concluída
+                  </span>
+                );
+              }
+              return (
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-sm"
+                  style={{ backgroundColor: primaryColor }}
+                >
+                  {trip.status}
+                </span>
+              );
+            })()}
 
             {trip.primary_country && (
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/20 backdrop-blur">
@@ -667,6 +702,7 @@ export const TripDetailPage: React.FC = () => {
             onRefresh={loadAllTripData}
             canEdit={canEdit}
             onNavigateTab={(tabName) => handleTabChange(tabName as TabType)}
+            onStatusChange={(newStatus) => setTrip((prev) => (prev ? { ...prev, status: newStatus as any } : prev))}
           />
         )}
 

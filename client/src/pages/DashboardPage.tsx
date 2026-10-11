@@ -38,7 +38,10 @@ export const DashboardPage: React.FC = () => {
       (t.destination_summary && t.destination_summary.toLowerCase().includes(search.toLowerCase())) ||
       (t.primary_country && t.primary_country.toLowerCase().includes(search.toLowerCase()));
 
-    const matchesStatus = statusFilter === 'ALL' || t.status === statusFilter;
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      t.status === statusFilter ||
+      (statusFilter === 'PLANNED' && (t.status === 'PLANNED' || t.status === 'CONFIRMED'));
     return matchesSearch && matchesStatus;
   });
 
@@ -89,8 +92,8 @@ export const DashboardPage: React.FC = () => {
         <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
           {[
             { id: 'ALL', label: 'Todas' },
-            { id: 'PLANNING', label: 'Planejamento' },
-            { id: 'CONFIRMED', label: 'Confirmadas' },
+            { id: 'PLANNING', label: 'Em Planejamento' },
+            { id: 'PLANNED', label: 'Planejadas' },
             { id: 'IN_PROGRESS', label: 'Em Andamento' },
             { id: 'COMPLETED', label: 'Concluídas' },
           ].map((tab) => (
