@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trips-cache-v1';
+const CACHE_NAME = 'trips-cache-v2';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -38,7 +38,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // 1. Bypass Service Worker for non-GET requests or cross-origin requests that are not assets
+  // 1. Bypass Service Worker for non-GET requests
   if (event.request.method !== 'GET') {
     return;
   }
@@ -48,7 +48,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Navigation requests (HTML page): Network-first with cache fallback
+  // 3. Bypass cross-origin requests completely (Pexels, Cloudflare Turnstile/Insights, Google Fonts, OpenStreetMap tiles)
+  // Permite que o navegador trate recursos externos diretamente sem restrições do CSP connect-src do Service Worker
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // 4. Navigation requests (HTML page): Network-first with cache fallback
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
@@ -73,12 +79,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 4. Static assets (Vite hashed bundles, images, icons, fonts): Stale-While-Revalidate
+  // 5. Static assets (Vite hashed bundles, images, icons, manifest): Stale-While-Revalidate
   if (
     url.pathname.startsWith('/assets/') ||
     url.pathname.startsWith('/icons/') ||
-    url.origin.includes('fonts.googleapis.com') ||
-    url.origin.includes('fonts.gstatic.com')
+    url.pathname === '/manifest.json' ||
+    url.pathname === '/favicon.ico'
   ) {
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
@@ -101,7 +107,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 5. Default: Network with Cache Fallback
+  // 6. Default para mesma origem: Network com fallback para Cache
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -113,6 +119,9 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(async () => {
+        const match = await caches.match(event.request);
+        return match || new Response('', { status: 404, statusText: 'Not Found' });
+      })
   );
 });

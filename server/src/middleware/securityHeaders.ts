@@ -7,7 +7,7 @@ export const CSP_DIRECTIVES = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com https://*.tile.openstreetmap.de https://*.tile.openstreetmap.org https://tile.openstreetmap.org",
+  "connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com https://static.cloudflareinsights.com https://images.pexels.com https://fonts.googleapis.com https://fonts.gstatic.com https://*.tile.openstreetmap.de https://*.tile.openstreetmap.org https://tile.openstreetmap.org",
   "frame-src 'self' https://challenges.cloudflare.com",
   "frame-ancestors 'self'",
   "object-src 'none'",

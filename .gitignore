@@ -44,6 +44,7 @@ logs/
 .cache/
 .tmp/
 tmp/
+*.har
 
 # Credentials, certificates, and private keys
 *.pem
