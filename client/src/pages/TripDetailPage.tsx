@@ -742,7 +742,14 @@ export const TripDetailPage: React.FC = () => {
         )}
 
         {activeTab === 'expenses' && (
-          <ExpensesView tripId={trip.id} canEdit={canEdit} currentUserId={user?.id} />
+          <ExpensesView
+            tripId={trip.id}
+            canEdit={canEdit}
+            currentUserId={user?.id}
+            trip={trip}
+            transports={transports}
+            hotels={hotels}
+          />
         )}
 
         {activeTab === 'report' && <ReportEditorView trip={trip} canEdit={canEdit} />}

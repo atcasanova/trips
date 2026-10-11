@@ -352,6 +352,34 @@ export const expenseController = {
         settlementsByCurrency[curr] = calculateSettlements(currBalances);
       }
 
+      // 6. Moedas que apareceram em reservas desta viagem e no sistema em geral
+      const { rows: tripCurrsRows } = await query(
+        `SELECT DISTINCT UPPER(TRIM(currency)) as currency
+         FROM (
+           SELECT currency FROM hotel_reservations WHERE trip_id = $1 AND currency IS NOT NULL AND currency != ''
+           UNION
+           SELECT currency FROM transport_reservations WHERE trip_id = $1 AND currency IS NOT NULL AND currency != ''
+           UNION
+           SELECT default_currency as currency FROM trips WHERE id = $1 AND default_currency IS NOT NULL AND default_currency != ''
+         ) c
+         ORDER BY currency`,
+        [tripId]
+      );
+      const tripReservationCurrencies = tripCurrsRows.map((r: any) => r.currency);
+
+      const { rows: sysCurrsRows } = await query(
+        `SELECT DISTINCT UPPER(TRIM(currency)) as currency
+         FROM (
+           SELECT currency FROM hotel_reservations WHERE currency IS NOT NULL AND currency != ''
+           UNION
+           SELECT currency FROM transport_reservations WHERE currency IS NOT NULL AND currency != ''
+           UNION
+           SELECT default_currency as currency FROM trips WHERE default_currency IS NOT NULL AND default_currency != ''
+         ) c
+         ORDER BY currency`
+      );
+      const systemReservationCurrencies = sysCurrsRows.map((r: any) => r.currency);
+
       return res.json({
         expenses,
         transfers,
@@ -362,6 +390,8 @@ export const expenseController = {
         balancesByCurrency,
         settlementsByCurrency,
         categoryBreakdown,
+        tripReservationCurrencies,
+        systemReservationCurrencies,
       });
     } catch (err: any) {
       logger.error('Erro ao listar despesas:', { error: err.message });

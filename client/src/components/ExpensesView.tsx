@@ -40,7 +40,17 @@ import {
   FileText,
   Loader2,
 } from 'lucide-react';
-import { ExpenseItem, ExpenseTransfer, TripTraveler, TravelerBalance, Settlement, ExpensesResponse } from '../types/index.js';
+import {
+  ExpenseItem,
+  ExpenseTransfer,
+  TripTraveler,
+  TravelerBalance,
+  Settlement,
+  ExpensesResponse,
+  Trip,
+  TransportReservation,
+  HotelReservation,
+} from '../types/index.js';
 import { api } from '../api/client.js';
 import { formatDateBr } from '../utils/date.js';
 import { ExpensesDoughnutChart } from './ExpensesDoughnutChart.js';
@@ -49,7 +59,58 @@ interface ExpensesViewProps {
   tripId: string;
   canEdit: boolean;
   currentUserId?: string;
+  trip?: Trip;
+  transports?: TransportReservation[];
+  hotels?: HotelReservation[];
 }
+
+export const CURRENCY_METADATA: Record<string, { symbol: string; name: string }> = {
+  BRL: { symbol: 'R$', name: 'Real Brasileiro' },
+  USD: { symbol: '$', name: 'Dólar Americano' },
+  EUR: { symbol: '€', name: 'Euro' },
+  JPY: { symbol: '¥', name: 'Iene Japonês' },
+  IDR: { symbol: 'Rp', name: 'Rupia Indonésia' },
+  GBP: { symbol: '£', name: 'Libra Esterlina' },
+  CHF: { symbol: 'CHF', name: 'Franco Suíço' },
+  CAD: { symbol: 'C$', name: 'Dólar Canadense' },
+  AUD: { symbol: 'A$', name: 'Dólar Australiano' },
+  CLP: { symbol: 'CLP$', name: 'Peso Chileno' },
+  ARS: { symbol: 'ARS$', name: 'Peso Argentino' },
+  PEN: { symbol: 'S/', name: 'Sol Peruano' },
+  UYU: { symbol: '$U', name: 'Peso Uruguaio' },
+  COP: { symbol: 'COL$', name: 'Peso Colombiano' },
+  MXN: { symbol: 'Mex$', name: 'Peso Mexicano' },
+  CNY: { symbol: '¥', name: 'Yuan Chinês' },
+  KRW: { symbol: '₩', name: 'Won Sul-Coreano' },
+  THB: { symbol: '฿', name: 'Baht Tailandês' },
+  AED: { symbol: 'AED', name: 'Dirham dos Emirados' },
+  TRY: { symbol: '₺', name: 'Lira Turca' },
+  SGD: { symbol: 'S$', name: 'Dólar de Cingapura' },
+  NZD: { symbol: 'NZ$', name: 'Dólar Neozelandês' },
+  ZAR: { symbol: 'R', name: 'Rand Sul-Africano' },
+  EGP: { symbol: 'E£', name: 'Libra Egípcia' },
+  MAD: { symbol: 'MAD', name: 'Dirham Marroquino' },
+  INR: { symbol: '₹', name: 'Rúpia Indiana' },
+  VND: { symbol: '₫', name: 'Dong Vietnamita' },
+  PHP: { symbol: '₱', name: 'Peso Filipino' },
+  MYR: { symbol: 'RM', name: 'Ringgit Malaio' },
+  SEK: { symbol: 'kr', name: 'Coroa Sueca' },
+  NOK: { symbol: 'kr', name: 'Coroa Norueguesa' },
+  DKK: { symbol: 'kr', name: 'Coroa Dinamarquesa' },
+  PLN: { symbol: 'zł', name: 'Złoty Polonês' },
+  CZK: { symbol: 'Kč', name: 'Coroa Checa' },
+  HUF: { symbol: 'Ft', name: 'Forint Húngaro' },
+  ILS: { symbol: '₪', name: 'Novo Shekel Israelense' },
+};
+
+export const formatCurrencyOption = (code: string): string => {
+  const upper = (code || '').toUpperCase().trim();
+  const meta = CURRENCY_METADATA[upper];
+  if (meta) {
+    return `${upper} (${meta.symbol}) — ${meta.name}`;
+  }
+  return upper;
+};
 
 const CATEGORY_CONFIG: Record<string, { label: string; icon: any; color: string; bg: string }> = {
   FOOD: { label: 'Alimentação & Restaurantes', icon: Utensils, color: '#f59e0b', bg: 'bg-amber-100 text-amber-800' },
@@ -62,7 +123,14 @@ const CATEGORY_CONFIG: Record<string, { label: string; icon: any; color: string;
 
 type SplitMode = 'PARTS' | 'EXACT';
 
-export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, currentUserId }) => {
+export const ExpensesView: React.FC<ExpensesViewProps> = ({
+  tripId,
+  canEdit,
+  currentUserId,
+  trip,
+  transports,
+  hotels,
+}) => {
   const [data, setData] = useState<ExpensesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -155,6 +223,51 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     if (selectedCurrency !== 'ALL') return selectedCurrency;
     return availableCurrencies[0] || 'BRL';
   }, [selectedCurrency, availableCurrencies]);
+
+  // Moedas disponíveis para cadastro/edição de despesas e transferências:
+  // Fixas obrigatórias: BRL, USD, EUR
+  // + Moedas específicas desta viagem (reservas de hotel/transporte, default_currency, despesas existentes)
+  // + Moedas que já apareceram no sistema em outras reservas (ex: JPY no Japão, IDR na Indonésia)
+  const availableInputCurrencies = useMemo(() => {
+    const base = ['BRL', 'USD', 'EUR'];
+    const tripCurrs = new Set<string>();
+
+    if (trip?.default_currency) tripCurrs.add(trip.default_currency.toUpperCase().trim());
+    hotels?.forEach((h) => {
+      if (h.currency) tripCurrs.add(h.currency.toUpperCase().trim());
+    });
+    transports?.forEach((t) => {
+      if ((t as any).currency) tripCurrs.add(String((t as any).currency).toUpperCase().trim());
+    });
+    data?.tripReservationCurrencies?.forEach((c) => {
+      if (c) tripCurrs.add(c.toUpperCase().trim());
+    });
+    data?.expenses?.forEach((e) => {
+      if (e.currency) tripCurrs.add(e.currency.toUpperCase().trim());
+    });
+    data?.transfers?.forEach((tr) => {
+      if (tr.currency) tripCurrs.add(tr.currency.toUpperCase().trim());
+    });
+    if (data?.totalsByCurrency) {
+      Object.keys(data.totalsByCurrency).forEach((c) => {
+        if (c) tripCurrs.add(c.toUpperCase().trim());
+      });
+    }
+
+    const systemCurrs = new Set<string>();
+    data?.systemReservationCurrencies?.forEach((c) => {
+      if (c) systemCurrs.add(c.toUpperCase().trim());
+    });
+
+    // Moedas específicas desta viagem que não estão no base
+    const tripOnly = Array.from(tripCurrs).filter((c) => c && !base.includes(c)).sort();
+    // Moedas de outras reservas do sistema que não estão no base nem no tripCurrs
+    const systemOnly = Array.from(systemCurrs)
+      .filter((c) => c && !base.includes(c) && !tripCurrs.has(c))
+      .sort();
+
+    return [...base, ...tripOnly, ...systemOnly];
+  }, [trip, hotels, transports, data]);
 
   // Custo total da viagem do usuário logado: despesas pessoais + cotas devidas nas despesas divididas
   const userTotalsByCurrency = useMemo(() => {
@@ -630,6 +743,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
     setIsShared(true);
     setNotes('');
     setExpenseFormError(null);
+
+    // Seleciona a moeda padrão mais contextualizada
+    const getDefaultCurrencyForNew = () => {
+      if (selectedCurrency && selectedCurrency !== 'ALL') return selectedCurrency;
+      if (trip?.default_currency) return trip.default_currency.toUpperCase().trim();
+      const hotelCurr = hotels?.find((h) => h.currency)?.currency;
+      if (hotelCurr) return hotelCurr.toUpperCase().trim();
+      if (data?.tripReservationCurrencies && data.tripReservationCurrencies.length > 0) {
+        return data.tripReservationCurrencies[0];
+      }
+      return 'BRL';
+    };
+    setCurrency(getDefaultCurrencyForNew());
 
     const allTravelerIds = (data?.travelers || []).map((t) => t.id);
     setSelectedTravelers(allTravelerIds);
@@ -1657,12 +1783,18 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                   <select
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-medium"
                   >
-                    <option value="BRL">BRL (R$)</option>
-                    <option value="JPY">JPY (¥)</option>
-                    <option value="USD">USD ($)</option>
-                    <option value="EUR">EUR (€)</option>
+                    {availableInputCurrencies.map((c) => (
+                      <option key={c} value={c}>
+                        {formatCurrencyOption(c)}
+                      </option>
+                    ))}
+                    {currency && !availableInputCurrencies.includes(currency.toUpperCase()) && (
+                      <option value={currency}>
+                        {formatCurrencyOption(currency)}
+                      </option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -2141,15 +2273,18 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ tripId, canEdit, cur
                   <select
                     value={transferCurrency}
                     onChange={(e) => setTransferCurrency(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white font-mono"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white font-medium"
                   >
-                    {availableCurrencies.map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                    {availableInputCurrencies.map((c) => (
+                      <option key={c} value={c}>
+                        {formatCurrencyOption(c)}
+                      </option>
                     ))}
-                    {!availableCurrencies.includes('BRL') && <option value="BRL">BRL</option>}
-                    {!availableCurrencies.includes('USD') && <option value="USD">USD</option>}
-                    {!availableCurrencies.includes('EUR') && <option value="EUR">EUR</option>}
-                    {!availableCurrencies.includes('JPY') && <option value="JPY">JPY</option>}
+                    {transferCurrency && !availableInputCurrencies.includes(transferCurrency.toUpperCase()) && (
+                      <option value={transferCurrency}>
+                        {formatCurrencyOption(transferCurrency)}
+                      </option>
+                    )}
                   </select>
                 </div>
               </div>

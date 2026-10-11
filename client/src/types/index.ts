@@ -413,6 +413,8 @@ export interface ExpensesResponse {
       byTraveler: Record<string, Record<string, number>>;
     }
   >;
+  tripReservationCurrencies?: string[];
+  systemReservationCurrencies?: string[];
 }
 
 export interface ExpenseItem {
