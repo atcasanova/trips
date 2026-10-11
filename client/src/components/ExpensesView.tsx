@@ -337,6 +337,17 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     return totals;
   }, [data, currentUserId, availableCurrencies]);
 
+  // Determina quem realmente pagou a despesa (paid_by_traveler_id > traveler_id > fallback user_id)
+  const getExpensePayerId = (exp: ExpenseItem): string | null => {
+    if (exp.paid_by_traveler_id) return exp.paid_by_traveler_id;
+    if (exp.traveler_id) return exp.traveler_id;
+    if (exp.paid_by_user_id && data?.travelers) {
+      const match = data.travelers.find((t) => t.user_id === exp.paid_by_user_id);
+      if (match) return match.id;
+    }
+    return null;
+  };
+
   // Filtered expenses
   const filteredExpenses = useMemo(() => {
     if (!data) return [];
@@ -349,15 +360,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       // 3. Filtro por Quem Pagou
       if (payerFilter !== 'ALL') {
-        const expPayerId = exp.paid_by_traveler_id || exp.traveler_id;
-        if (expPayerId !== payerFilter) {
-          if (exp.paid_by_user_id) {
-            const mappedTr = data.travelers.find((t) => t.user_id === exp.paid_by_user_id);
-            if (mappedTr?.id !== payerFilter) return false;
-          } else {
-            return false;
-          }
-        }
+        const payerId = getExpensePayerId(exp);
+        if (payerId !== payerFilter) return false;
       }
 
       // 4. Filtro por Participante / Beneficiário
@@ -535,15 +539,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     const baseList = data.expenses.filter((exp) => {
       if (selectedCurrency !== 'ALL' && exp.currency !== selectedCurrency) return false;
       if (payerFilter !== 'ALL') {
-        const expPayerId = exp.paid_by_traveler_id || exp.traveler_id;
-        if (expPayerId !== payerFilter) {
-          if (exp.paid_by_user_id) {
-            const mappedTr = data.travelers.find((t) => t.user_id === exp.paid_by_user_id);
-            if (mappedTr?.id !== payerFilter) return false;
-          } else {
-            return false;
-          }
-        }
+        const payerId = getExpensePayerId(exp);
+        if (payerId !== payerFilter) return false;
       }
       if (participantFilter !== 'ALL') {
         if (!exp.is_shared) {
