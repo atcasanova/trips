@@ -410,10 +410,10 @@ export const TripDetailPage: React.FC = () => {
               { id: 'overview', label: 'Visão Geral', icon: Sparkles },
               { id: 'timeline', label: 'Timeline', icon: Route },
               { id: 'itinerary', label: 'Roteiro', icon: Calendar, count: days.length },
-              { id: 'transports', label: 'Voos & Transportes', icon: Plane, count: transports.length },
+              { id: 'transports', label: 'Locomoção', icon: Plane, count: transports.length },
               { id: 'hotels', label: 'Hospedagens', icon: Building, count: hotels.length },
               { id: 'documents', label: 'Documentos & IA', icon: FileText, count: documents.length },
-              { id: 'expenses', label: 'Despesas & Acertos', icon: DollarSign },
+              { id: 'expenses', label: 'Despesas', icon: DollarSign },
               { id: 'links', label: 'Links', icon: Link2 },
               { id: 'report', label: 'Trip Book', icon: BookOpen },
             ].map((tItem) => {
