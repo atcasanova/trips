@@ -1,0 +1,1036 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Link2,
+  Plus,
+  Search,
+  Filter,
+  ExternalLink,
+  Copy,
+  Check,
+  Trash2,
+  Edit2,
+  Sparkles,
+  MapPin,
+  Tag,
+  Hash,
+  Globe,
+  Loader2,
+  X,
+  Share2,
+  Compass,
+  Utensils,
+  Camera,
+  Moon,
+  Coffee,
+  ShoppingBag,
+  Hotel,
+  Bus,
+  Theater,
+  Trees,
+} from 'lucide-react';
+import { Trip, TripLink, LinkPreviewResponse } from '../types/index.js';
+import { api } from '../api/client.js';
+
+interface LinksViewProps {
+  trip: Trip;
+  canEdit: boolean;
+  primaryColor?: string;
+}
+
+// Popular themes with icons and colors
+const THEMES = [
+  { id: 'Restaurantes', label: 'Restaurantes', icon: Utensils, color: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { id: 'Atrações', label: 'Atrações', icon: Camera, color: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { id: 'Sightseeing', label: 'Sightseeing', icon: Compass, color: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { id: 'Nightlife', label: 'Nightlife', icon: Moon, color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { id: 'Cafés & Bares', label: 'Cafés & Bares', icon: Coffee, color: 'bg-amber-100 text-amber-800 border-amber-300' },
+  { id: 'Compras', label: 'Compras', icon: ShoppingBag, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { id: 'Hospedagem', label: 'Hospedagem', icon: Hotel, color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { id: 'Transporte & Dicas', label: 'Transporte & Dicas', icon: Bus, color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { id: 'Cultura & Museus', label: 'Cultura & Museus', icon: Theater, color: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { id: 'Natureza & Parques', label: 'Natureza & Parques', icon: Trees, color: 'bg-green-50 text-green-700 border-green-200' },
+  { id: 'Outros', label: 'Outros', icon: Tag, color: 'bg-slate-50 text-slate-700 border-slate-200' },
+];
+
+export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColor = '#0f766e' }) => {
+  const [links, setLinks] = useState<TripLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Available filters from backend
+  const [availableFilters, setAvailableFilters] = useState<{
+    countries: string[];
+    cities: string[];
+    themes: string[];
+    hashtags: string[];
+  }>({
+    countries: [],
+    cities: [],
+    themes: [],
+    hashtags: [],
+  });
+
+  // Filter states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState('ALL');
+  const [selectedCity, setSelectedCity] = useState('ALL');
+  const [selectedTheme, setSelectedTheme] = useState('ALL');
+  const [selectedHashtag, setSelectedHashtag] = useState('ALL');
+
+  // New link form states
+  const [inputUrl, setInputUrl] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewData, setPreviewData] = useState<LinkPreviewResponse | null>(null);
+  const [savingLink, setSavingLink] = useState(false);
+
+  // Form edit fields
+  const [formCountry, setFormCountry] = useState('');
+  const [formCity, setFormCity] = useState('');
+  const [formTheme, setFormTheme] = useState('Sightseeing');
+  const [formNotes, setFormNotes] = useState('');
+  const [formTitle, setFormTitle] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+  const [formHashtags, setFormHashtags] = useState<string[]>([]);
+  const [newCityInput, setNewCityInput] = useState('');
+  const [showAddCityInput, setShowAddCityInput] = useState(false);
+
+  // Modal for editing an existing link
+  const [editingLink, setEditingLink] = useState<TripLink | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Detect trip cities from trip object
+  const tripCities = useMemo(() => {
+    let cities: string[] = [];
+    if (Array.isArray(trip.cities)) {
+      cities = trip.cities;
+    } else if (typeof trip.cities === 'string') {
+      try {
+        cities = JSON.parse(trip.cities);
+      } catch {}
+    }
+    if (cities.length === 0 && trip.destination_summary) {
+      cities = trip.destination_summary.split(/[,•|]/).map((c) => c.trim()).filter(Boolean);
+    }
+    // Merge with available cities from saved links
+    const merged = Array.from(new Set([...cities, ...availableFilters.cities]));
+    return merged.filter(Boolean);
+  }, [trip, availableFilters.cities]);
+
+  // Load links with current filters
+  const loadLinks = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await api.links.list(trip.id, {
+        q: searchQuery,
+        country: selectedCountry,
+        city: selectedCity,
+        theme: selectedTheme,
+        hashtag: selectedHashtag,
+      });
+      setLinks(res.links);
+      setAvailableFilters(res.available_filters);
+    } catch (err: any) {
+      setError(err.message || 'Erro ao carregar links');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLinks();
+  }, [trip.id, selectedCountry, selectedCity, selectedTheme, selectedHashtag]);
+
+  // Debounced search query
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      loadLinks();
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  // Preview link when user enters URL
+  const handlePreviewLink = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputUrl.trim()) return;
+
+    try {
+      setPreviewLoading(true);
+      setError(null);
+      const data = await api.links.preview(trip.id, inputUrl.trim());
+      setPreviewData(data);
+
+      // Pre-fill fields
+      setFormTitle(data.og.title || '');
+      setFormDescription(data.og.description || '');
+      setFormHashtags(data.og.hashtags || []);
+
+      // Pre-select country (if only one destination country in trip, pre-mark it!)
+      if (data.trip_destinations.primary_country) {
+        setFormCountry(data.trip_destinations.primary_country);
+      } else if (trip.primary_country) {
+        setFormCountry(trip.primary_country);
+      }
+
+      // Default city to first detected city if available
+      if (data.trip_destinations.cities.length > 0 && !formCity) {
+        setFormCity(data.trip_destinations.cities[0]);
+      } else if (tripCities.length > 0 && !formCity) {
+        setFormCity(tripCities[0]);
+      }
+
+      // Set default theme
+      setFormTheme('Sightseeing');
+      setFormNotes('');
+    } catch (err: any) {
+      setError(err.message || 'Erro ao analisar link');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  // Save new link
+  const handleSaveLink = async () => {
+    if (!previewData && !inputUrl.trim()) return;
+    try {
+      setSavingLink(true);
+      setError(null);
+
+      await api.links.create(trip.id, {
+        url: previewData?.url || inputUrl.trim(),
+        country: formCountry || trip.primary_country || undefined,
+        city: formCity || undefined,
+        theme: formTheme || 'Sightseeing',
+        notes: formNotes || undefined,
+        custom_title: formTitle || undefined,
+        custom_description: formDescription || undefined,
+        hashtags: formHashtags,
+      });
+
+      // Reset form
+      setInputUrl('');
+      setPreviewData(null);
+      setFormNotes('');
+      setFormCity('');
+      setNewCityInput('');
+      setShowAddCityInput(false);
+
+      // Reload links
+      await loadLinks();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao salvar link');
+    } finally {
+      setSavingLink(false);
+    }
+  };
+
+  // Cancel preview
+  const handleCancelPreview = () => {
+    setPreviewData(null);
+    setInputUrl('');
+    setFormNotes('');
+    setFormCity('');
+    setShowAddCityInput(false);
+  };
+
+  // Copy cleaned link to clipboard
+  const handleCopyCleanUrl = (linkId: string, url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedId(linkId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Delete link
+  const handleDeleteLink = async (linkId: string) => {
+    if (!confirm('Tem certeza que deseja excluir este link?')) return;
+    try {
+      await api.links.delete(trip.id, linkId);
+      setLinks((prev) => prev.filter((l) => l.id !== linkId));
+    } catch (err: any) {
+      alert(err.message || 'Erro ao excluir link');
+    }
+  };
+
+  // Open edit modal
+  const handleOpenEdit = (l: TripLink) => {
+    setEditingLink(l);
+    setFormTitle(l.title || '');
+    setFormDescription(l.description || '');
+    setFormCountry(l.country || '');
+    setFormCity(l.city || '');
+    setFormTheme(l.theme || 'Sightseeing');
+    setFormNotes(l.notes || '');
+    setFormHashtags(l.hashtags || []);
+  };
+
+  // Save edited link
+  const handleSaveEdit = async () => {
+    if (!editingLink) return;
+    try {
+      const res = await api.links.update(trip.id, editingLink.id, {
+        title: formTitle,
+        description: formDescription,
+        country: formCountry,
+        city: formCity,
+        theme: formTheme,
+        notes: formNotes,
+        hashtags: formHashtags,
+      });
+
+      setLinks((prev) => prev.map((l) => (l.id === editingLink.id ? res.link : l)));
+      setEditingLink(null);
+    } catch (err: any) {
+      alert(err.message || 'Erro ao atualizar link');
+    }
+  };
+
+  // Substring client-side filter helper for ultra-smooth responsiveness
+  const filteredLinks = useMemo(() => {
+    if (!searchQuery.trim()) return links;
+    const q = searchQuery.toLowerCase().trim();
+    return links.filter((l) => {
+      const textMatch =
+        (l.title && l.title.toLowerCase().includes(q)) ||
+        (l.description && l.description.toLowerCase().includes(q)) ||
+        (l.url && l.url.toLowerCase().includes(q)) ||
+        (l.notes && l.notes.toLowerCase().includes(q)) ||
+        (l.site_name && l.site_name.toLowerCase().includes(q)) ||
+        (l.country && l.country.toLowerCase().includes(q)) ||
+        (l.city && l.city.toLowerCase().includes(q)) ||
+        (l.theme && l.theme.toLowerCase().includes(q)) ||
+        (l.hashtags && l.hashtags.some((h) => h.toLowerCase().includes(q)));
+      return textMatch;
+    });
+  }, [links, searchQuery]);
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* 1. Header & Quick Link Ingestion */}
+      <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-slate-200 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm"
+                style={{ backgroundColor: primaryColor }}
+              >
+                <Link2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                  Links & Inspirações
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                    {links.length} {links.length === 1 ? 'salvo' : 'salvos'}
+                  </span>
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+                  Catálogo inteligente de posts do Instagram, TikTok, YouTube e mapas com limpeza de URLs e tags
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Input bar to paste link */}
+        {canEdit && (
+          <div className="space-y-4">
+            <form onSubmit={handlePreviewLink} className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <input
+                  type="url"
+                  placeholder="Cole aqui um link (Instagram, TikTok, YouTube, Maps, blog, etc.)..."
+                  value={inputUrl}
+                  onChange={(e) => setInputUrl(e.target.value)}
+                  className="w-full pl-11 pr-4 py-3 bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 text-sm rounded-xl border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all outline-none"
+                  required
+                />
+                <Link2 className="w-5 h-5 text-slate-400 absolute left-3.5 top-3.5 pointer-events-none" />
+              </div>
+
+              <button
+                type="submit"
+                disabled={previewLoading || !inputUrl.trim()}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
+                style={{ backgroundColor: primaryColor }}
+              >
+                {previewLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Analisando link...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>Adicionar Link</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+            {error && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center justify-between">
+                <span>{error}</span>
+                <button onClick={() => setError(null)} className="text-rose-500 hover:text-rose-700">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Preview & Categorization Card */}
+            {previewData && (
+              <div className="bg-slate-50/80 rounded-2xl p-5 border border-slate-200 space-y-5 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-brand-600" />
+                    Pré-visualização do Link & Metadados
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-medium text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      URL limpa (sem rastreadores)
+                    </span>
+                    <button onClick={handleCancelPreview} className="text-slate-400 hover:text-slate-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Thumbnail / Image preview */}
+                  <div className="relative rounded-xl overflow-hidden bg-slate-200 aspect-video md:aspect-[4/3] flex items-center justify-center border border-slate-200 shadow-inner">
+                    {previewData.og.image_url ? (
+                      <img
+                        src={previewData.og.image_url}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="text-center p-4 text-slate-400">
+                        <Camera className="w-8 h-8 mx-auto mb-1 opacity-50" />
+                        <span className="text-xs">Sem miniatura detectada</span>
+                      </div>
+                    )}
+                    {previewData.og.site_name && (
+                      <span className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
+                        {previewData.og.site_name}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Form Details */}
+                  <div className="md:col-span-2 space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Título</label>
+                      <input
+                        type="text"
+                        value={formTitle}
+                        onChange={(e) => setFormTitle(e.target.value)}
+                        className="w-full px-3 py-2 bg-white text-slate-900 text-sm font-medium rounded-lg border border-slate-200 focus:ring-1 focus:ring-brand-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Descrição</label>
+                      <textarea
+                        rows={2}
+                        value={formDescription}
+                        onChange={(e) => setFormDescription(e.target.value)}
+                        className="w-full px-3 py-2 bg-white text-slate-700 text-xs rounded-lg border border-slate-200 focus:ring-1 focus:ring-brand-500 outline-none resize-none"
+                      />
+                    </div>
+
+                    {/* Tagging: País, Cidade e Tema */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Cidade Badges */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-slate-700">
+                          Cidade do Destino <span className="text-slate-400 font-normal">(detectadas na viagem)</span>
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {tripCities.map((c) => {
+                            const isSelected = formCity === c;
+                            return (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => setFormCity(isSelected ? '' : c)}
+                                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                                  isSelected
+                                    ? 'bg-slate-900 text-white shadow-sm'
+                                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                                }`}
+                              >
+                                📍 {c}
+                              </button>
+                            );
+                          })}
+
+                          {!showAddCityInput ? (
+                            <button
+                              type="button"
+                              onClick={() => setShowAddCityInput(true)}
+                              className="text-xs px-2 py-1 rounded-lg text-slate-500 hover:text-slate-800 bg-white border border-dashed border-slate-300 hover:border-slate-400"
+                            >
+                              + Outra cidade
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                placeholder="Nome da cidade"
+                                value={newCityInput}
+                                onChange={(e) => setNewCityInput(e.target.value)}
+                                className="text-xs px-2 py-1 rounded-lg bg-white border border-slate-300 outline-none w-28"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (newCityInput.trim()) {
+                                    setFormCity(newCityInput.trim());
+                                    setShowAddCityInput(false);
+                                  }
+                                }}
+                                className="text-xs px-2 py-1 bg-slate-900 text-white rounded-lg"
+                              >
+                                OK
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* País Badge */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-slate-700">
+                          País <span className="text-slate-400 font-normal">(pré-marcado)</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={formCountry}
+                            onChange={(e) => setFormCountry(e.target.value)}
+                            placeholder="País (ex: Japão)"
+                            className="px-3 py-1.5 bg-white text-slate-800 text-xs font-medium rounded-lg border border-slate-200 outline-none w-full max-w-[200px]"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tema Badges */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-semibold text-slate-700">Tema do Conteúdo</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {THEMES.map((t) => {
+                          const isSelected = formTheme === t.id;
+                          const Icon = t.icon;
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => setFormTheme(t.id)}
+                              className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                                isSelected
+                                  ? 'bg-brand-600 text-white shadow-sm'
+                                  : `${t.color} border`
+                              }`}
+                              style={isSelected ? { backgroundColor: primaryColor } : undefined}
+                            >
+                              <Icon className="w-3.5 h-3.5" />
+                              <span>{t.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Hashtags detectadas */}
+                    {formHashtags.length > 0 && (
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-500">
+                          Hashtags Detectadas ({formHashtags.length})
+                        </label>
+                        <div className="flex flex-wrap gap-1">
+                          {formHashtags.map((h) => (
+                            <span
+                              key={h}
+                              className="text-[11px] bg-sky-50 text-sky-700 px-2 py-0.5 rounded-md font-mono border border-sky-200"
+                            >
+                              #{h}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Notas do usuário */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Anotações ou Dicas Pessoais <span className="text-slate-400 font-normal">(opcional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Melhor prato é o wagyu, reservar com 2 semanas de antecedência..."
+                        value={formNotes}
+                        onChange={(e) => setFormNotes(e.target.value)}
+                        className="w-full px-3 py-2 bg-white text-slate-800 text-xs rounded-lg border border-slate-200 focus:ring-1 focus:ring-brand-500 outline-none"
+                      />
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={handleCancelPreview}
+                        className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveLink}
+                        disabled={savingLink}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow hover:opacity-90 transition-all disabled:opacity-50"
+                        style={{ backgroundColor: primaryColor }}
+                      >
+                        {savingLink ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Salvando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Salvar Link no Catálogo</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 2. Barra de Filtros & Pesquisa com Ajax (Substring Search) */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
+        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+          {/* Substring Search Input */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+            <input
+              type="text"
+              placeholder="Buscar por substring (ex: casa localiza casaco, casa e acasalamento)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-10 py-2.5 bg-slate-50 text-slate-900 text-xs sm:text-sm rounded-xl border border-slate-200 focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all outline-none"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Quick Clear Filter Button */}
+          {(searchQuery ||
+            selectedCountry !== 'ALL' ||
+            selectedCity !== 'ALL' ||
+            selectedTheme !== 'ALL' ||
+            selectedHashtag !== 'ALL') && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedCountry('ALL');
+                setSelectedCity('ALL');
+                setSelectedTheme('ALL');
+                setSelectedHashtag('ALL');
+              }}
+              className="text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl border border-rose-200 transition-colors whitespace-nowrap self-start md:self-auto"
+            >
+              Limpar todos os filtros
+            </button>
+          )}
+        </div>
+
+        {/* Filter Pills */}
+        <div className="space-y-3 pt-1 border-t border-slate-100">
+          {/* Tema Pills */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+              <Tag className="w-3 h-3" />
+              Tema:
+            </span>
+            <button
+              onClick={() => setSelectedTheme('ALL')}
+              className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                selectedTheme === 'ALL'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Todos ({links.length})
+            </button>
+            {THEMES.map((t) => {
+              const isSelected = selectedTheme === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedTheme(isSelected ? 'ALL' : t.id)}
+                  className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                    isSelected
+                      ? 'bg-brand-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                  style={isSelected ? { backgroundColor: primaryColor } : undefined}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Cidades e Países Pills */}
+          {(tripCities.length > 0 || availableFilters.countries.length > 0) && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+                <MapPin className="w-3 h-3" />
+                Cidade:
+              </span>
+              <button
+                onClick={() => setSelectedCity('ALL')}
+                className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                  selectedCity === 'ALL'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Todas
+              </button>
+              {tripCities.map((city) => {
+                const isSelected = selectedCity === city;
+                return (
+                  <button
+                    key={city}
+                    onClick={() => setSelectedCity(isSelected ? 'ALL' : city)}
+                    className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                      isSelected
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    📍 {city}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Hashtags Populares */}
+          {availableFilters.hashtags.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+                <Hash className="w-3 h-3" />
+                Hashtags:
+              </span>
+              <button
+                onClick={() => setSelectedHashtag('ALL')}
+                className={`text-xs px-2.5 py-0.5 rounded-md font-mono whitespace-nowrap transition-all ${
+                  selectedHashtag === 'ALL'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'bg-sky-50 text-sky-700 hover:bg-sky-100'
+                }`}
+              >
+                #todas
+              </button>
+              {availableFilters.hashtags.slice(0, 15).map((h) => {
+                const isSelected = selectedHashtag === h;
+                return (
+                  <button
+                    key={h}
+                    onClick={() => setSelectedHashtag(isSelected ? 'ALL' : h)}
+                    className={`text-xs px-2.5 py-0.5 rounded-md font-mono whitespace-nowrap transition-all ${
+                      isSelected
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200/50'
+                    }`}
+                  >
+                    #{h}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. Grid de Resultados */}
+      {loading ? (
+        <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto text-slate-400" />
+          <p className="text-sm text-slate-500">Carregando catálogo de links...</p>
+        </div>
+      ) : filteredLinks.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
+          <Link2 className="w-12 h-12 text-slate-300 mx-auto" />
+          <h3 className="text-base font-bold text-slate-800">Nenhum link encontrado</h3>
+          <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+            {searchQuery || selectedCity !== 'ALL' || selectedTheme !== 'ALL' || selectedHashtag !== 'ALL'
+              ? 'Nenhum resultado corresponde aos filtros aplicados. Tente limpar os filtros para ver todos os itens.'
+              : 'Comece colando links de reels do Instagram, vídeos do TikTok ou dicas no campo acima para salvar no seu roteiro!'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredLinks.map((link) => {
+            const isCopied = copiedId === link.id;
+            const themeConfig = THEMES.find((t) => t.id === link.theme);
+
+            return (
+              <div
+                key={link.id}
+                className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col group"
+              >
+                {/* Media Image / Thumbnail Header */}
+                <div className="relative aspect-video bg-slate-900 overflow-hidden flex items-center justify-center">
+                  {link.image_url ? (
+                    <img
+                      src={link.image_url}
+                      alt={link.title || 'Imagem do link'}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="text-slate-500 flex flex-col items-center gap-1">
+                      <Compass className="w-8 h-8 opacity-40" />
+                      <span className="text-[11px] font-medium">Link Web</span>
+                    </div>
+                  )}
+
+                  {/* Badges on top of media */}
+                  <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap">
+                    {link.site_name && (
+                      <span className="bg-slate-900/85 backdrop-blur text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow">
+                        {link.site_name}
+                      </span>
+                    )}
+                    {link.city && (
+                      <span className="bg-white/90 backdrop-blur text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-md shadow flex items-center gap-1">
+                        📍 {link.city}
+                      </span>
+                    )}
+                  </div>
+
+                  {link.theme && (
+                    <div className="absolute top-3 right-3">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md shadow ${
+                          themeConfig ? themeConfig.color : 'bg-slate-800 text-white'
+                        }`}
+                      >
+                        {link.theme}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Content Body */}
+                <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="space-y-2">
+                    {/* Title */}
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-bold text-slate-900 hover:text-brand-600 line-clamp-2 transition-colors flex items-start justify-between gap-1 group/title"
+                    >
+                      <span>{link.title || link.url}</span>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover/title:text-brand-600 shrink-0 mt-0.5" />
+                    </a>
+
+                    {/* Description */}
+                    {link.description && (
+                      <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                        {link.description}
+                      </p>
+                    )}
+
+                    {/* User Notes */}
+                    {link.notes && (
+                      <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200/60 text-xs text-amber-900 italic">
+                        💡 {link.notes}
+                      </div>
+                    )}
+
+                    {/* Hashtags */}
+                    {Array.isArray(link.hashtags) && link.hashtags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {link.hashtags.slice(0, 6).map((h) => (
+                          <button
+                            key={h}
+                            onClick={() => setSelectedHashtag(h)}
+                            className="text-[10px] bg-slate-100 hover:bg-sky-50 text-slate-600 hover:text-sky-700 px-1.5 py-0.5 rounded font-mono transition-colors"
+                          >
+                            #{h}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card Footer: Metadata and Actions */}
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                    <span className="truncate max-w-[120px]" title={link.url}>
+                      {new URL(link.url).hostname.replace('www.', '')}
+                    </span>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleCopyCleanUrl(link.id, link.url)}
+                        title="Copiar URL limpa"
+                        className={`p-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
+                          isCopied
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {isCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {isCopied && <span className="text-[10px]">Copiado</span>}
+                      </button>
+
+                      {canEdit && (
+                        <>
+                          <button
+                            onClick={() => handleOpenEdit(link)}
+                            title="Editar informações"
+                            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLink(link.id)}
+                            title="Excluir link"
+                            className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 4. Modal de Edição de Link */}
+      {editingLink && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">Editar Detalhes do Link</h3>
+              <button onClick={() => setEditingLink(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Título</label>
+                <input
+                  type="text"
+                  value={formTitle}
+                  onChange={(e) => setFormTitle(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Descrição</label>
+                <textarea
+                  rows={2}
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Cidade</label>
+                  <input
+                    type="text"
+                    value={formCity}
+                    onChange={(e) => setFormCity(e.target.value)}
+                    placeholder="Ex: Tokyo"
+                    className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">País</label>
+                  <input
+                    type="text"
+                    value={formCountry}
+                    onChange={(e) => setFormCountry(e.target.value)}
+                    placeholder="Ex: Japão"
+                    className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Tema</label>
+                <select
+                  value={formTheme}
+                  onChange={(e) => setFormTheme(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
+                >
+                  {THEMES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Dica / Anotação Pessoal</label>
+                <input
+                  type="text"
+                  value={formNotes}
+                  onChange={(e) => setFormNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingLink(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow hover:opacity-90 transition-all"
+                style={{ backgroundColor: primaryColor }}
+              >
+                Salvar Alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

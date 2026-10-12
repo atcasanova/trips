@@ -13,6 +13,7 @@ import { reportController } from '../controllers/reportController.js';
 import { expenseController } from '../controllers/expenseController.js';
 import { inviteController } from '../controllers/inviteController.js';
 import { inboundEmailController } from '../controllers/inboundEmailController.js';
+import { linkController } from '../controllers/linkController.js';
 
 import { requireAuth, requireAdmin, requireTripRole } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimit.js';
@@ -150,5 +151,12 @@ router.post(
   express.raw({ type: () => true, limit: '50mb' }),
   inboundEmailController.handleInboundEmail
 );
+
+// 13. Links & Social Media Bookmarks
+router.post('/trips/:tripId/links/preview', requireAuth, requireTripRole('VIEWER'), linkController.previewLink);
+router.get('/trips/:tripId/links', requireAuth, requireTripRole('VIEWER'), linkController.getTripLinks);
+router.post('/trips/:tripId/links', requireAuth, requireTripRole('EDITOR'), linkController.createLink);
+router.put('/trips/:tripId/links/:linkId', requireAuth, requireTripRole('EDITOR'), linkController.updateLink);
+router.delete('/trips/:tripId/links/:linkId', requireAuth, requireTripRole('EDITOR'), linkController.deleteLink);
 
 export default router;

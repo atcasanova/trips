@@ -479,3 +479,54 @@ export interface PdfStatusResponse {
   needsRegeneration: boolean;
   isGenerating: boolean;
 }
+
+export interface TripLink {
+  id: string;
+  trip_id: string;
+  user_id?: string | null;
+  url: string;
+  original_url?: string | null;
+  title?: string | null;
+  description?: string | null;
+  site_name?: string | null;
+  image_url?: string | null;
+  video_url?: string | null;
+  country?: string | null;
+  city?: string | null;
+  theme?: string | null;
+  hashtags?: string[];
+  metadata?: Record<string, string>;
+  notes?: string | null;
+  added_by_name?: string | null;
+  added_by_avatar?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LinkPreviewResponse {
+  url: string;
+  original_url: string;
+  og: {
+    title: string | null;
+    description: string | null;
+    site_name: string | null;
+    image_url: string | null;
+    video_url: string | null;
+    hashtags: string[];
+    metadata: Record<string, string>;
+  };
+  trip_destinations: {
+    primary_country: string | null;
+    cities: string[];
+  };
+}
+
+export interface LinksResponse {
+  links: TripLink[];
+  available_filters: {
+    countries: string[];
+    cities: string[];
+    themes: string[];
+    hashtags: string[];
+  };
+}

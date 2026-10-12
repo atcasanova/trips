@@ -16,6 +16,9 @@ import {
   UserInvitation,
   InviteDetails,
   PdfStatusResponse,
+  TripLink,
+  LinkPreviewResponse,
+  LinksResponse,
 } from '../types/index.js';
 
 const API_BASE = '/api';
@@ -537,5 +540,71 @@ export const api = {
       return request<{ trips: any[] }>(`/admin/group-trips${qs}`);
     },
     getDestinations: () => request<{ cities: any[]; countries: any[] }>('/admin/destinations'),
+  },
+
+  // === LINKS & SOCIAL BOOKMARKS ===
+  links: {
+    preview: (tripId: string, url: string) =>
+      request<LinkPreviewResponse>(`/trips/${tripId}/links/preview`, {
+        method: 'POST',
+        body: JSON.stringify({ url }),
+      }),
+    list: (
+      tripId: string,
+      params?: {
+        q?: string;
+        country?: string;
+        city?: string;
+        theme?: string;
+        hashtag?: string;
+      }
+    ) => {
+      const q = new URLSearchParams();
+      if (params?.q) q.set('q', params.q);
+      if (params?.country && params.country !== 'ALL') q.set('country', params.country);
+      if (params?.city && params.city !== 'ALL') q.set('city', params.city);
+      if (params?.theme && params.theme !== 'ALL') q.set('theme', params.theme);
+      if (params?.hashtag && params.hashtag !== 'ALL') q.set('hashtag', params.hashtag);
+      const qs = q.toString();
+      return request<LinksResponse>(`/trips/${tripId}/links${qs ? `?${qs}` : ''}`);
+    },
+    create: (
+      tripId: string,
+      data: {
+        url: string;
+        country?: string;
+        city?: string;
+        theme?: string;
+        notes?: string;
+        custom_title?: string;
+        custom_description?: string;
+        hashtags?: string[];
+      }
+    ) =>
+      request<{ link: TripLink }>(`/trips/${tripId}/links`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (
+      tripId: string,
+      linkId: string,
+      data: {
+        title?: string;
+        description?: string;
+        country?: string;
+        city?: string;
+        theme?: string;
+        notes?: string;
+        hashtags?: string[];
+      }
+    ) =>
+      request<{ link: TripLink }>(`/trips/${tripId}/links/${linkId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    delete: (tripId: string, linkId: string) =>
+      request<{ success: boolean; message: string }>(`/trips/${tripId}/links/${linkId}`, {
+        method: 'DELETE',
+      }),
   },
 };

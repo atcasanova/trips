@@ -26,6 +26,7 @@ import {
   Info,
   AlertCircle,
   X,
+  Link2,
 } from 'lucide-react';
 import {
   Trip,
@@ -45,6 +46,7 @@ import { TransportsView } from '../components/TransportsView.js';
 import { HotelsView } from '../components/HotelsView.js';
 import { DocumentsView } from '../components/DocumentsView.js';
 import { ExpensesView } from '../components/ExpensesView.js';
+import { LinksView } from '../components/LinksView.js';
 import { ReportEditorView } from '../components/ReportEditorView.js';
 import { ThemePicker } from '../components/ThemePicker.js';
 import { PexelsModal } from '../components/PexelsModal.js';
@@ -60,6 +62,7 @@ const VALID_TABS = [
   'hotels',
   'documents',
   'expenses',
+  'links',
   'report',
 ] as const;
 type TabType = (typeof VALID_TABS)[number];
@@ -411,6 +414,7 @@ export const TripDetailPage: React.FC = () => {
               { id: 'hotels', label: 'Hospedagens', icon: Building, count: hotels.length },
               { id: 'documents', label: 'Documentos & IA', icon: FileText, count: documents.length },
               { id: 'expenses', label: 'Despesas & Acertos', icon: DollarSign },
+              { id: 'links', label: 'Links', icon: Link2 },
               { id: 'report', label: 'Trip Book', icon: BookOpen },
             ].map((tItem) => {
               const Icon = tItem.icon;
@@ -810,6 +814,10 @@ export const TripDetailPage: React.FC = () => {
             transports={transports}
             hotels={hotels}
           />
+        )}
+
+        {activeTab === 'links' && (
+          <LinksView trip={trip} canEdit={canEdit} primaryColor={primaryColor} />
         )}
 
         {activeTab === 'report' && <ReportEditorView trip={trip} canEdit={canEdit} />}
