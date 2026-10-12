@@ -89,6 +89,53 @@ function decodeHtmlEntities(str: string): string {
   return decoded;
 }
 
+const EMOJI_AND_SYMBOLS_REGEX =
+  /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
+
+/**
+ * Truncate text to a maximum number of words, excluding emojis from the word count.
+ * Emojis that appear within the text are preserved in their natural positions.
+ */
+function truncateTextByWords(
+  text: string,
+  maxWords: number = 60
+): { text: string; isTruncated: boolean; wordCount: number } {
+  if (!text) return { text: '', isTruncated: false, wordCount: 0 };
+
+  const tokens = text.split(/(\s+)/);
+  let wordCount = 0;
+  const result: string[] = [];
+  let isTruncated = false;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (/^\s+$/.test(token)) {
+      result.push(token);
+      continue;
+    }
+
+    const withoutEmojis = token.replace(EMOJI_AND_SYMBOLS_REGEX, '');
+    const hasWordChars = /[\p{L}\p{N}]/u.test(withoutEmojis);
+
+    if (hasWordChars) {
+      if (wordCount >= maxWords) {
+        isTruncated = true;
+        break;
+      }
+      wordCount++;
+    }
+
+    result.push(token);
+  }
+
+  let output = result.join('').trimEnd();
+  if (isTruncated) {
+    output = output.replace(/[,;:\s.]+$/, '') + '...';
+  }
+
+  return { text: output, isTruncated, wordCount };
+}
+
 export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColor = '#0f766e' }) => {
   const [links, setLinks] = useState<TripLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -366,11 +413,18 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
       const linkCitiesStr = Array.isArray(l.cities) ? l.cities.join(' ') : (l.city || '');
       const linkThemesStr = Array.isArray(l.themes) ? l.themes.join(' ') : (l.theme || '');
 
+      const fullTitle = decodeHtmlEntities(l.title || '').toLowerCase();
+      const fullDesc = decodeHtmlEntities(l.description || '').toLowerCase();
+      const fullNotes = decodeHtmlEntities(l.notes || '').toLowerCase();
+
       return (
+        fullTitle.includes(q) ||
         (l.title && l.title.toLowerCase().includes(q)) ||
+        fullDesc.includes(q) ||
         (l.description && l.description.toLowerCase().includes(q)) ||
-        (l.url && l.url.toLowerCase().includes(q)) ||
+        fullNotes.includes(q) ||
         (l.notes && l.notes.toLowerCase().includes(q)) ||
+        (l.url && l.url.toLowerCase().includes(q)) ||
         (l.site_name && l.site_name.toLowerCase().includes(q)) ||
         (l.country && l.country.toLowerCase().includes(q)) ||
         linkCitiesStr.toLowerCase().includes(q) ||
@@ -915,18 +969,36 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
               ? link.themes
               : (link.theme ? [link.theme] : []);
 
+            const rawDecodedTitle = decodeHtmlEntities(link.title || link.url);
+            const rawDecodedDesc = decodeHtmlEntities(link.description || '');
+
+            // Truncate displayed text to max 60 words without counting emojis
+            const { text: displayTitle, wordCount: titleWords } = truncateTextByWords(rawDecodedTitle, 60);
+            const descWordLimit = Math.max(0, 60 - titleWords);
+            const { text: displayDescription } = truncateTextByWords(
+              rawDecodedDesc,
+              descWordLimit > 0 ? descWordLimit : 15
+            );
+
             return (
               <div
                 key={link.id}
                 className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col group"
               >
-                {/* Media Image / Thumbnail Header */}
-                <div className="relative aspect-video bg-slate-900 overflow-hidden flex items-center justify-center">
+                {/* Media Image / Thumbnail Header (Clickable to post) */}
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="relative aspect-video bg-slate-900 overflow-hidden flex items-center justify-center cursor-pointer block group/thumb"
+                  title="Abrir post em nova aba"
+                  aria-label={`Abrir post: ${rawDecodedTitle}`}
+                >
                   {link.image_url ? (
                     <img
                       src={link.image_url}
-                      alt={decodeHtmlEntities(link.title || 'Imagem do link')}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      alt={rawDecodedTitle}
+                      className="w-full h-full object-cover group-hover:scale-105 group-hover/thumb:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
                     />
                   ) : (
@@ -936,8 +1008,8 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                     </div>
                   )}
 
-                  {/* Badges on top of media */}
-                  <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap max-w-[70%]">
+                  {/* Badges on top of media (pointer-events-none so click passes through to <a>) */}
+                  <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap max-w-[70%] pointer-events-none">
                     {link.site_name && (
                       <span className="bg-slate-900/85 backdrop-blur text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow">
                         {link.site_name}
@@ -954,7 +1026,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                   </div>
 
                   {cardThemes.length > 0 && (
-                    <div className="absolute top-3 right-3 flex items-center gap-1 flex-wrap justify-end max-w-[45%]">
+                    <div className="absolute top-3 right-3 flex items-center gap-1 flex-wrap justify-end max-w-[45%] pointer-events-none">
                       {cardThemes.map((t) => {
                         const themeConfig = THEMES.find((th) => th.id === t);
                         return (
@@ -970,7 +1042,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       })}
                     </div>
                   )}
-                </div>
+                </a>
 
                 {/* Content Body */}
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
@@ -980,23 +1052,24 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       href={link.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm font-bold text-slate-900 hover:text-brand-600 line-clamp-2 transition-colors flex items-start justify-between gap-1 group/title"
+                      className="text-sm font-bold text-slate-900 hover:text-brand-600 transition-colors flex items-start justify-between gap-1 group/title"
+                      title={rawDecodedTitle}
                     >
-                      <span>{decodeHtmlEntities(link.title || link.url)}</span>
+                      <span className="leading-snug">{displayTitle}</span>
                       <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover/title:text-brand-600 shrink-0 mt-0.5" />
                     </a>
 
                     {/* Description */}
-                    {link.description && (
-                      <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                        {decodeHtmlEntities(link.description)}
+                    {displayDescription && (
+                      <p className="text-xs text-slate-600 leading-relaxed" title={rawDecodedDesc}>
+                        {displayDescription}
                       </p>
                     )}
 
                     {/* User Notes */}
                     {link.notes && (
                       <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200/60 text-xs text-amber-900 italic">
-                        💡 {decodeHtmlEntities(link.notes)}
+                        💡 {truncateTextByWords(decodeHtmlEntities(link.notes), 60).text}
                       </div>
                     )}
 

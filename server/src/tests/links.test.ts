@@ -6,7 +6,7 @@ import {
   isInstagramHost,
   isInstagramMediaRoute,
 } from '../utils/urlCleaner.js';
-import { extractHashtags, decodeHtmlEntities } from '../services/openGraphService.js';
+import { extractHashtags, decodeHtmlEntities, truncateTextByWords } from '../services/openGraphService.js';
 
 describe('1. Validador de Tokens Opostos do Instagram', () => {
   test('Deve validar tokens Base64 que decodificam para exatamente 10 hex minúsculos', () => {
@@ -253,5 +253,58 @@ describe('6. Suporte a Múltiplos Temas e Múltiplas Cidades', () => {
     assert.ok(filteredByCities.some((l) => l.id === '2'));
   });
 });
+
+describe('7. Truncamento de Texto em até 60 Palavras (Sem Contar Emojis)', () => {
+  test('Deve manter texto intacto se contiver 60 ou menos palavras', () => {
+    const shortText = 'Templo Fushimi Inari com belos portais 🇯🇵⛩️ e trilhas incríveis.';
+    const result = truncateTextByWords(shortText, 60);
+    assert.strictEqual(result.isTruncated, false);
+    assert.strictEqual(result.text, shortText);
+    assert.ok(result.wordCount <= 60);
+  });
+
+  test('Deve truncar texto em 60 palavras exatas sem contar emojis como palavras', () => {
+    // 70 palavras com vários emojis inseridos
+    const samplePost =
+      'Anachristie B. no Instagram: "Save this ultimate Kanazawa itinerary for your next Japan trip! ' +
+      'The Perfect Kanazawa Guide: 🏯 Walk through history at Nomura-ke Samurai House, Kazuemachi Chaya District, and Higashi Chaya District. ' +
+      '☕ Grab latte and unique treats at Yae, Hakuji, and Mamezara Chaya. 🌲 Experience the beauty of Kenrokuen Garden & Kanazawa Castle. ' +
+      '🦀 Feast on fresh seafood at Omicho Market. 🛍️ Shop and dine at Kanazawa Station & Kanazawa Forus Mall. ' +
+      '🏨 Check-in to SOKI KANAZAWA for a relaxing stay. 🚄 Getting there: Just a 2.5-hour direct bullet train ride from Tokyo via the Hokuriku Shinkansen! ' +
+      '📍 Kanazawa, Ishikawa, Japan Which spot is going on your Japan bucket list first? 👇 #JapanTravel #KanazawaGuide #VisitJapan"';
+
+    const result = truncateTextByWords(samplePost, 60);
+    assert.strictEqual(result.isTruncated, true);
+    assert.strictEqual(result.wordCount, 60);
+    assert.ok(result.text.endsWith('...'));
+
+    // Verifica que os emojis foram preservados na parte truncada
+    assert.ok(result.text.includes('🏯'));
+    assert.ok(result.text.includes('☕'));
+    assert.ok(result.text.includes('🌲'));
+    assert.ok(result.text.includes('🦀'));
+    assert.ok(result.text.includes('🛍️'));
+
+    // Emojis não devem contar como palavras
+    // Se emojis tivessem sido contados como palavras, o texto teria sido cortado antes de '🛍️ Shop and...'
+    assert.ok(result.text.includes('Shop and'));
+  });
+
+  test('Não deve contar símbolos isolados e emojis como palavras', () => {
+    const emojisOnly = '🏯 ☕ 🌲 🦀 🛍️ 🏨 🚄 📍 👇';
+    const result = truncateTextByWords(emojisOnly, 5);
+    assert.strictEqual(result.isTruncated, false);
+    assert.strictEqual(result.wordCount, 0);
+    assert.strictEqual(result.text, emojisOnly);
+  });
+
+  test('Deve lidar com pontuação final sem duplicar pontos antes do ellipsis', () => {
+    const textWithPeriod = 'one two three four five.';
+    const result = truncateTextByWords(textWithPeriod, 3);
+    assert.strictEqual(result.isTruncated, true);
+    assert.strictEqual(result.text, 'one two three...');
+  });
+});
+
 
 

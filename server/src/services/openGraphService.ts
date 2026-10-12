@@ -58,6 +58,53 @@ export function decodeHtmlEntities(str: string): string {
   return decoded;
 }
 
+const EMOJI_AND_SYMBOLS_REGEX =
+  /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
+
+/**
+ * Truncate text to a maximum number of words, excluding emojis from the word count.
+ * Emojis that appear within the text are preserved in their natural positions.
+ */
+export function truncateTextByWords(
+  text: string,
+  maxWords: number = 60
+): { text: string; isTruncated: boolean; wordCount: number } {
+  if (!text) return { text: '', isTruncated: false, wordCount: 0 };
+
+  const tokens = text.split(/(\s+)/);
+  let wordCount = 0;
+  const result: string[] = [];
+  let isTruncated = false;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (/^\s+$/.test(token)) {
+      result.push(token);
+      continue;
+    }
+
+    const withoutEmojis = token.replace(EMOJI_AND_SYMBOLS_REGEX, '');
+    const hasWordChars = /[\p{L}\p{N}]/u.test(withoutEmojis);
+
+    if (hasWordChars) {
+      if (wordCount >= maxWords) {
+        isTruncated = true;
+        break;
+      }
+      wordCount++;
+    }
+
+    result.push(token);
+  }
+
+  let output = result.join('').trimEnd();
+  if (isTruncated) {
+    output = output.replace(/[,;:\s.]+$/, '') + '...';
+  }
+
+  return { text: output, isTruncated, wordCount };
+}
+
 // Extract hashtags from text (supports unicode accents, ignores entity remainders like x2615, 064, etc.)
 export function extractHashtags(text: string): string[] {
   if (!text) return [];
