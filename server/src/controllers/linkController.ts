@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
 import { cleanUrl } from '../utils/urlCleaner.js';
-import { scrapeOpenGraph } from '../services/openGraphService.js';
+import { scrapeOpenGraph, decodeHtmlEntities } from '../services/openGraphService.js';
 
 export const linkController = {
   /**
@@ -72,7 +72,7 @@ export const linkController = {
    */
   async getTripLinks(req: Request, res: Response) {
     const { tripId } = req.params;
-    const { q, country, city, theme, hashtag } = req.query;
+    const { q, country, city, cities, theme, themes, hashtag } = req.query;
 
     try {
       // 1. Verify trip exists
@@ -101,7 +101,9 @@ export const linkController = {
           tl.site_name ILIKE $${pIdx} OR
           tl.country ILIKE $${pIdx} OR
           tl.city ILIKE $${pIdx} OR
+          tl.cities::text ILIKE $${pIdx} OR
           tl.theme ILIKE $${pIdx} OR
+          tl.themes::text ILIKE $${pIdx} OR
           tl.hashtags::text ILIKE $${pIdx}
         )`);
       }
@@ -111,14 +113,54 @@ export const linkController = {
         conditions.push(`tl.country = $${params.length}`);
       }
 
-      if (city && typeof city === 'string' && city !== 'ALL') {
-        params.push(city.trim());
-        conditions.push(`tl.city = $${params.length}`);
+      // Multi-city filter
+      const requestedCities: string[] = [];
+      if (typeof cities === 'string' && cities !== 'ALL') {
+        cities.split(',').map((c: string) => c.trim()).filter(Boolean).forEach((c: string) => {
+          if (!requestedCities.includes(c)) requestedCities.push(c);
+        });
+      }
+      if (typeof city === 'string' && city !== 'ALL') {
+        city.split(',').map((c: string) => c.trim()).filter(Boolean).forEach((c: string) => {
+          if (!requestedCities.includes(c)) requestedCities.push(c);
+        });
       }
 
-      if (theme && typeof theme === 'string' && theme !== 'ALL') {
-        params.push(theme.trim());
-        conditions.push(`tl.theme = $${params.length}`);
+      if (requestedCities.length > 0) {
+        const cityClauses: string[] = [];
+        for (const c of requestedCities) {
+          params.push(c);
+          const pSingle = params.length;
+          params.push(JSON.stringify([c]));
+          const pArr = params.length;
+          cityClauses.push(`(tl.city = $${pSingle} OR tl.cities @> $${pArr}::jsonb)`);
+        }
+        conditions.push(`(${cityClauses.join(' OR ')})`);
+      }
+
+      // Multi-theme filter
+      const requestedThemes: string[] = [];
+      if (typeof themes === 'string' && themes !== 'ALL') {
+        themes.split(',').map((t: string) => t.trim()).filter(Boolean).forEach((t: string) => {
+          if (!requestedThemes.includes(t)) requestedThemes.push(t);
+        });
+      }
+      if (typeof theme === 'string' && theme !== 'ALL') {
+        theme.split(',').map((t: string) => t.trim()).filter(Boolean).forEach((t: string) => {
+          if (!requestedThemes.includes(t)) requestedThemes.push(t);
+        });
+      }
+
+      if (requestedThemes.length > 0) {
+        const themeClauses: string[] = [];
+        for (const t of requestedThemes) {
+          params.push(t);
+          const pSingle = params.length;
+          params.push(JSON.stringify([t]));
+          const pArr = params.length;
+          themeClauses.push(`(tl.theme = $${pSingle} OR tl.themes @> $${pArr}::jsonb)`);
+        }
+        conditions.push(`(${themeClauses.join(' OR ')})`);
       }
 
       if (hashtag && typeof hashtag === 'string' && hashtag.trim() && hashtag !== 'ALL') {
@@ -139,7 +181,7 @@ export const linkController = {
 
       // 3. Compute available filter options across all active links of this trip
       const { rows: allLinks } = await query(
-        'SELECT country, city, theme, hashtags FROM trip_links WHERE trip_id = $1 AND deleted_at IS NULL',
+        'SELECT country, city, cities, theme, themes, hashtags FROM trip_links WHERE trip_id = $1 AND deleted_at IS NULL',
         [tripId]
       );
 
@@ -160,9 +202,19 @@ export const linkController = {
       for (const l of allLinks) {
         if (l.country) availableCountries.add(l.country);
         if (l.city) availableCities.add(l.city);
+        if (Array.isArray(l.cities)) {
+          l.cities.forEach((c: string) => { if (c) availableCities.add(c); });
+        }
         if (l.theme) availableThemes.add(l.theme);
+        if (Array.isArray(l.themes)) {
+          l.themes.forEach((t: string) => { if (t) availableThemes.add(t); });
+        }
         if (Array.isArray(l.hashtags)) {
-          l.hashtags.forEach((h: string) => availableHashtags.add(h));
+          l.hashtags.forEach((h: string) => {
+            if (h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h)) {
+              availableHashtags.add(h);
+            }
+          });
         }
       }
 
@@ -185,8 +237,21 @@ export const linkController = {
    * Create a new link
    */
   async createLink(req: Request, res: Response) {
-    const { tripId } = req.params;
-    const { url, country, city, theme, notes, custom_title, custom_description, hashtags } = req.body;
+    const {
+      tripId,
+    } = req.params;
+    const {
+      url,
+      country,
+      city,
+      cities,
+      theme,
+      themes,
+      notes,
+      custom_title,
+      custom_description,
+      hashtags,
+    } = req.body;
 
     if (!url || typeof url !== 'string' || !url.trim()) {
       return res.status(400).json({ error: 'URL é obrigatória' });
@@ -209,26 +274,57 @@ export const linkController = {
       // 3. Scrape OpenGraph if needed
       const og = await scrapeOpenGraph(cleanedUrl);
 
-      const finalTitle = custom_title?.trim() || og.title || cleanedUrl;
-      const finalDescription = custom_description?.trim() || og.description || null;
+      const finalTitle = decodeHtmlEntities(custom_title?.trim() || og.title || cleanedUrl);
+      const finalDescription = decodeHtmlEntities(custom_description?.trim() || og.description || '') || null;
       const finalCountry = country?.trim() || trip.primary_country || null;
-      const finalCity = city?.trim() || null;
-      const finalTheme = theme?.trim() || 'Sightseeing';
+      const finalNotes = decodeHtmlEntities(notes?.trim() || '') || null;
+
+      // Handle multiple cities
+      let finalCities: string[] = [];
+      if (Array.isArray(cities)) {
+        finalCities = cities.map((c: any) => String(c).trim()).filter(Boolean);
+      } else if (city && typeof city === 'string' && city.trim()) {
+        finalCities = [city.trim()];
+      }
+      finalCities = Array.from(new Set(finalCities));
+      const finalCity = finalCities[0] || null;
+
+      // Handle multiple themes
+      let finalThemes: string[] = [];
+      if (Array.isArray(themes)) {
+        finalThemes = themes.map((t: any) => String(t).trim()).filter(Boolean);
+      } else if (theme && typeof theme === 'string' && theme.trim()) {
+        finalThemes = [theme.trim()];
+      }
+      if (finalThemes.length === 0) {
+        finalThemes = ['Sightseeing'];
+      }
+      finalThemes = Array.from(new Set(finalThemes));
+      const finalTheme = finalThemes[0] || 'Sightseeing';
 
       let finalHashtags: string[] = og.hashtags || [];
       if (Array.isArray(hashtags) && hashtags.length > 0) {
-        finalHashtags = Array.from(new Set([...finalHashtags, ...hashtags.map((h: string) => h.replace(/^#/, '').toLowerCase())]));
+        finalHashtags = Array.from(
+          new Set([
+            ...finalHashtags,
+            ...hashtags.map((h: string) => decodeHtmlEntities(String(h)).replace(/^#/, '').toLowerCase().trim()),
+          ])
+        );
       }
+      // Filter out entity remainders and numeric tags
+      finalHashtags = finalHashtags.filter(
+        (h) => h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h)
+      );
 
       const insertSql = `
         INSERT INTO trip_links (
           trip_id, user_id, url, original_url, title, description,
           site_name, image_url, video_url, country, city, theme,
-          hashtags, metadata, notes
+          hashtags, metadata, notes, cities, themes
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
           $7, $8, $9, $10, $11, $12,
-          $13, $14, $15
+          $13, $14, $15, $16, $17
         )
         RETURNING *
       `;
@@ -248,7 +344,9 @@ export const linkController = {
         finalTheme,
         JSON.stringify(finalHashtags),
         JSON.stringify(og.metadata || {}),
-        notes?.trim() || null,
+        finalNotes,
+        JSON.stringify(finalCities),
+        JSON.stringify(finalThemes),
       ]);
 
       return res.status(201).json({ link: created[0] });
@@ -263,7 +361,17 @@ export const linkController = {
    */
   async updateLink(req: Request, res: Response) {
     const { tripId, linkId } = req.params;
-    const { title, description, country, city, theme, notes, hashtags } = req.body;
+    const {
+      title,
+      description,
+      country,
+      city,
+      cities,
+      theme,
+      themes,
+      notes,
+      hashtags,
+    } = req.body;
 
     try {
       const { rows: existing } = await query(
@@ -276,19 +384,55 @@ export const linkController = {
       }
 
       const prev = existing[0];
-      const newTitle = title !== undefined ? title : prev.title;
-      const newDescription = description !== undefined ? description : prev.description;
+      const newTitle = title !== undefined ? decodeHtmlEntities(title) : prev.title;
+      const newDescription = description !== undefined ? decodeHtmlEntities(description) : prev.description;
       const newCountry = country !== undefined ? country : prev.country;
-      const newCity = city !== undefined ? city : prev.city;
-      const newTheme = theme !== undefined ? theme : prev.theme;
-      const newNotes = notes !== undefined ? notes : prev.notes;
-      const newHashtags = hashtags !== undefined ? JSON.stringify(hashtags) : prev.hashtags;
+      const newNotes = notes !== undefined ? decodeHtmlEntities(notes) : prev.notes;
+
+      // Handle cities
+      let newCities = prev.cities;
+      let newCity = prev.city;
+      if (cities !== undefined) {
+        const arr = Array.isArray(cities)
+          ? Array.from(new Set(cities.map((c: any) => String(c).trim()).filter(Boolean)))
+          : [];
+        newCities = JSON.stringify(arr);
+        newCity = arr[0] || null;
+      } else if (city !== undefined) {
+        newCity = city ? String(city).trim() : null;
+        newCities = JSON.stringify(newCity ? [newCity] : []);
+      }
+
+      // Handle themes
+      let newThemes = prev.themes;
+      let newTheme = prev.theme;
+      if (themes !== undefined) {
+        const arr = Array.isArray(themes)
+          ? Array.from(new Set(themes.map((t: any) => String(t).trim()).filter(Boolean)))
+          : [];
+        newThemes = JSON.stringify(arr);
+        newTheme = arr[0] || 'Sightseeing';
+      } else if (theme !== undefined) {
+        newTheme = theme ? String(theme).trim() : 'Sightseeing';
+        newThemes = JSON.stringify(newTheme ? [newTheme] : ['Sightseeing']);
+      }
+
+      let newHashtags = prev.hashtags;
+      if (hashtags !== undefined) {
+        const cleaned = Array.isArray(hashtags)
+          ? hashtags
+              .map((h: string) => decodeHtmlEntities(String(h)).replace(/^#/, '').toLowerCase().trim())
+              .filter((h) => h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h))
+          : [];
+        newHashtags = JSON.stringify(Array.from(new Set(cleaned)));
+      }
 
       const updateSql = `
         UPDATE trip_links
         SET title = $1, description = $2, country = $3, city = $4,
-            theme = $5, notes = $6, hashtags = $7, updated_at = now()
-        WHERE id = $8 AND trip_id = $9
+            theme = $5, notes = $6, hashtags = $7, cities = $8, themes = $9,
+            updated_at = now()
+        WHERE id = $10 AND trip_id = $11
         RETURNING *
       `;
 
@@ -300,6 +444,8 @@ export const linkController = {
         newTheme,
         newNotes,
         newHashtags,
+        newCities,
+        newThemes,
         linkId,
         tripId,
       ]);

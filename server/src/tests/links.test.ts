@@ -6,7 +6,7 @@ import {
   isInstagramHost,
   isInstagramMediaRoute,
 } from '../utils/urlCleaner.js';
-import { extractHashtags } from '../services/openGraphService.js';
+import { extractHashtags, decodeHtmlEntities } from '../services/openGraphService.js';
 
 describe('1. Validador de Tokens Opostos do Instagram', () => {
   test('Deve validar tokens Base64 que decodificam para exatamente 10 hex minúsculos', () => {
@@ -177,4 +177,81 @@ describe('4. Extração de Hashtags e Busca por Substring', () => {
     assert.ok(!matches.some(m => m.id === 4), 'Não deve conter castelo');
   });
 });
+
+describe('5. Decodificação de HTML Entities e Prevenção de Falsos Hashtags', () => {
+  test('Deve decodificar entidades decimais e hexadecimais para os respectivos caracteres Unicode', () => {
+    // Hexadecimal
+    assert.strictEqual(decodeHtmlEntities('&#x2615; Coffee'), '☕ Coffee');
+    assert.strictEqual(decodeHtmlEntities('&#x1f3ef; Samurai house'), '🏯 Samurai house');
+    assert.strictEqual(decodeHtmlEntities('Tokyo Experiences &#x1f1ef;&#x1f1f5;'), 'Tokyo Experiences 🇯🇵');
+
+    // Decimal
+    assert.strictEqual(decodeHtmlEntities('Downloading &#064;tripist.app'), 'Downloading @tripist.app');
+    assert.strictEqual(decodeHtmlEntities('&#9749;'), '☕');
+
+    // Named entities e entidades duplamente escapadas
+    assert.strictEqual(decodeHtmlEntities('&amp;#x2615;'), '☕');
+    assert.strictEqual(decodeHtmlEntities('&quot;Japan&quot; &amp; &lt;Tokyo&gt;'), '"Japan" & <Tokyo>');
+  });
+
+  test('Não deve extrair entidades HTML (como &#x2615; ou &#064;) como hashtags (#x2615, 064)', () => {
+    const textWithEntities = `
+      Anachristie B. no Instagram: "Save this ultimate Kanazawa itinerary!
+      &#x1f3ef; Walk through history at Nomura-ke Samurai House
+      &#x2615; Grab latte and unique treats
+      &#x1f332; Kenrokuen Garden
+      &#064;tripist.app
+      #JapanTravel #KanazawaGuide #VisitJapan
+    `;
+
+    const hashtags = extractHashtags(textWithEntities);
+
+    // Deve conter apenas as hashtags reais
+    assert.ok(hashtags.includes('japantravel'), 'Deve incluir japantravel');
+    assert.ok(hashtags.includes('kanazawaguide'), 'Deve incluir kanazawaguide');
+    assert.ok(hashtags.includes('visitjapan'), 'Deve incluir visitjapan');
+
+    // NÃO deve conter nenhum resquício de entidade HTML
+    assert.strictEqual(hashtags.includes('x2615'), false, 'Não deve conter x2615');
+    assert.strictEqual(hashtags.includes('x1f3ef'), false, 'Não deve conter x1f3ef');
+    assert.strictEqual(hashtags.includes('x1f332'), false, 'Não deve conter x1f332');
+    assert.strictEqual(hashtags.includes('064'), false, 'Não deve conter 064');
+  });
+
+  test('Deve rejeitar tags que correspondam ao padrão de resíduos hexadecimais ou numéricos puros', () => {
+    const rawText = '#x2615 #x1f3ef #xfe0f #1234 #japan';
+    const hashtags = extractHashtags(rawText);
+
+    assert.deepStrictEqual(hashtags, ['japan']);
+  });
+});
+
+describe('6. Suporte a Múltiplos Temas e Múltiplas Cidades', () => {
+  test('Deve filtrar itens que contenham qualquer um dos temas ou cidades selecionados', () => {
+    const mockLinks = [
+      { id: '1', cities: ['Tokyo'], themes: ['Restaurantes', 'Cafés & Bares'] },
+      { id: '2', cities: ['Kyoto', 'Osaka'], themes: ['Cultura & Museus'] },
+      { id: '3', cities: ['Kanazawa'], themes: ['Sightseeing', 'Cultura & Museus'] },
+    ];
+
+    // Filtro por múltiplos temas: 'Cafés & Bares' OU 'Sightseeing'
+    const selectedThemes = ['Cafés & Bares', 'Sightseeing'];
+    const filteredByThemes = mockLinks.filter((l) =>
+      selectedThemes.some((t) => l.themes.includes(t))
+    );
+    assert.strictEqual(filteredByThemes.length, 2);
+    assert.ok(filteredByThemes.some((l) => l.id === '1'));
+    assert.ok(filteredByThemes.some((l) => l.id === '3'));
+
+    // Filtro por múltiplas cidades: 'Kyoto' OU 'Tokyo'
+    const selectedCities = ['Kyoto', 'Tokyo'];
+    const filteredByCities = mockLinks.filter((l) =>
+      selectedCities.some((c) => l.cities.includes(c))
+    );
+    assert.strictEqual(filteredByCities.length, 2);
+    assert.ok(filteredByCities.some((l) => l.id === '1'));
+    assert.ok(filteredByCities.some((l) => l.id === '2'));
+  });
+});
+
 

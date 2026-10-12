@@ -52,6 +52,43 @@ const THEMES = [
   { id: 'Outros', label: 'Outros', icon: Tag, color: 'bg-slate-50 text-slate-700 border-slate-200' },
 ];
 
+function decodeHtmlEntities(str: string): string {
+  if (!str) return '';
+  let decoded = str
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&copy;/g, '©')
+    .replace(/&reg;/g, '®')
+    .replace(/&trade;/g, '™')
+    .replace(/&amp;/g, '&');
+
+  decoded = decoded.replace(/&#x([0-9a-fA-F]+);?/gi, (_, hex) => {
+    try {
+      const code = parseInt(hex, 16);
+      return !isNaN(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+    } catch {
+      return '';
+    }
+  });
+
+  decoded = decoded.replace(/&#([0-9]+);?/g, (_, dec) => {
+    try {
+      const code = parseInt(dec, 10);
+      return !isNaN(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+    } catch {
+      return '';
+    }
+  });
+
+  return decoded;
+}
+
 export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColor = '#0f766e' }) => {
   const [links, setLinks] = useState<TripLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,11 +107,11 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
     hashtags: [],
   });
 
-  // Filter states
+  // Filter states (support multi-select for cities and themes)
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCountry, setSelectedCountry] = useState('ALL');
-  const [selectedCity, setSelectedCity] = useState('ALL');
-  const [selectedTheme, setSelectedTheme] = useState('ALL');
+  const [selectedCities, setSelectedCities] = useState<string[]>([]);
+  const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
   const [selectedHashtag, setSelectedHashtag] = useState('ALL');
 
   // New link form states
@@ -83,10 +120,10 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
   const [previewData, setPreviewData] = useState<LinkPreviewResponse | null>(null);
   const [savingLink, setSavingLink] = useState(false);
 
-  // Form edit fields
+  // Form edit fields (multi-select for cities and themes)
   const [formCountry, setFormCountry] = useState('');
-  const [formCity, setFormCity] = useState('');
-  const [formTheme, setFormTheme] = useState('Sightseeing');
+  const [formCities, setFormCities] = useState<string[]>([]);
+  const [formThemes, setFormThemes] = useState<string[]>(['Sightseeing']);
   const [formNotes, setFormNotes] = useState('');
   const [formTitle, setFormTitle] = useState('');
   const [formDescription, setFormDescription] = useState('');
@@ -124,8 +161,8 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
       const res = await api.links.list(trip.id, {
         q: searchQuery,
         country: selectedCountry,
-        city: selectedCity,
-        theme: selectedTheme,
+        cities: selectedCities,
+        themes: selectedThemes,
         hashtag: selectedHashtag,
       });
       setLinks(res.links);
@@ -139,7 +176,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
 
   useEffect(() => {
     loadLinks();
-  }, [trip.id, selectedCountry, selectedCity, selectedTheme, selectedHashtag]);
+  }, [trip.id, selectedCountry, selectedCities, selectedThemes, selectedHashtag]);
 
   // Debounced search query
   useEffect(() => {
@@ -160,27 +197,29 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
       const data = await api.links.preview(trip.id, inputUrl.trim());
       setPreviewData(data);
 
-      // Pre-fill fields
-      setFormTitle(data.og.title || '');
-      setFormDescription(data.og.description || '');
+      // Pre-fill fields with decoded HTML entities
+      setFormTitle(decodeHtmlEntities(data.og.title || ''));
+      setFormDescription(decodeHtmlEntities(data.og.description || ''));
       setFormHashtags(data.og.hashtags || []);
 
-      // Pre-select country (if only one destination country in trip, pre-mark it!)
+      // Pre-select country
       if (data.trip_destinations.primary_country) {
         setFormCountry(data.trip_destinations.primary_country);
       } else if (trip.primary_country) {
         setFormCountry(trip.primary_country);
       }
 
-      // Default city to first detected city if available
-      if (data.trip_destinations.cities.length > 0 && !formCity) {
-        setFormCity(data.trip_destinations.cities[0]);
-      } else if (tripCities.length > 0 && !formCity) {
-        setFormCity(tripCities[0]);
+      // Default city to first detected city if available and not yet set
+      if (data.trip_destinations.cities.length > 0) {
+        setFormCities([data.trip_destinations.cities[0]]);
+      } else if (tripCities.length > 0) {
+        setFormCities([tripCities[0]]);
+      } else {
+        setFormCities([]);
       }
 
-      // Set default theme
-      setFormTheme('Sightseeing');
+      // Default theme
+      setFormThemes(['Sightseeing']);
       setFormNotes('');
     } catch (err: any) {
       setError(err.message || 'Erro ao analisar link');
@@ -199,8 +238,10 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
       await api.links.create(trip.id, {
         url: previewData?.url || inputUrl.trim(),
         country: formCountry || trip.primary_country || undefined,
-        city: formCity || undefined,
-        theme: formTheme || 'Sightseeing',
+        cities: formCities,
+        city: formCities[0] || undefined,
+        themes: formThemes.length > 0 ? formThemes : ['Sightseeing'],
+        theme: formThemes[0] || 'Sightseeing',
         notes: formNotes || undefined,
         custom_title: formTitle || undefined,
         custom_description: formDescription || undefined,
@@ -211,7 +252,8 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
       setInputUrl('');
       setPreviewData(null);
       setFormNotes('');
-      setFormCity('');
+      setFormCities([]);
+      setFormThemes(['Sightseeing']);
       setNewCityInput('');
       setShowAddCityInput(false);
 
@@ -229,7 +271,8 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
     setPreviewData(null);
     setInputUrl('');
     setFormNotes('');
-    setFormCity('');
+    setFormCities([]);
+    setFormThemes(['Sightseeing']);
     setShowAddCityInput(false);
   };
 
@@ -254,13 +297,24 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
   // Open edit modal
   const handleOpenEdit = (l: TripLink) => {
     setEditingLink(l);
-    setFormTitle(l.title || '');
-    setFormDescription(l.description || '');
+    setFormTitle(decodeHtmlEntities(l.title || ''));
+    setFormDescription(decodeHtmlEntities(l.description || ''));
     setFormCountry(l.country || '');
-    setFormCity(l.city || '');
-    setFormTheme(l.theme || 'Sightseeing');
-    setFormNotes(l.notes || '');
+
+    const existingCities = Array.isArray(l.cities) && l.cities.length > 0
+      ? l.cities
+      : (l.city ? [l.city] : []);
+    setFormCities(existingCities);
+
+    const existingThemes = Array.isArray(l.themes) && l.themes.length > 0
+      ? l.themes
+      : (l.theme ? [l.theme] : ['Sightseeing']);
+    setFormThemes(existingThemes);
+
+    setFormNotes(decodeHtmlEntities(l.notes || ''));
     setFormHashtags(l.hashtags || []);
+    setNewCityInput('');
+    setShowAddCityInput(false);
   };
 
   // Save edited link
@@ -271,8 +325,10 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
         title: formTitle,
         description: formDescription,
         country: formCountry,
-        city: formCity,
-        theme: formTheme,
+        cities: formCities,
+        city: formCities[0] || undefined,
+        themes: formThemes.length > 0 ? formThemes : ['Sightseeing'],
+        theme: formThemes[0] || 'Sightseeing',
         notes: formNotes,
         hashtags: formHashtags,
       });
@@ -286,22 +342,43 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
 
   // Substring client-side filter helper for ultra-smooth responsiveness
   const filteredLinks = useMemo(() => {
-    if (!searchQuery.trim()) return links;
-    const q = searchQuery.toLowerCase().trim();
     return links.filter((l) => {
-      const textMatch =
+      // Multi-city filter
+      if (selectedCities.length > 0) {
+        const linkCities = Array.isArray(l.cities) && l.cities.length > 0
+          ? l.cities
+          : (l.city ? [l.city] : []);
+        const matchesAnyCity = selectedCities.some((sc) => linkCities.includes(sc));
+        if (!matchesAnyCity) return false;
+      }
+
+      // Multi-theme filter
+      if (selectedThemes.length > 0) {
+        const linkThemes = Array.isArray(l.themes) && l.themes.length > 0
+          ? l.themes
+          : (l.theme ? [l.theme] : []);
+        const matchesAnyTheme = selectedThemes.some((st) => linkThemes.includes(st));
+        if (!matchesAnyTheme) return false;
+      }
+
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
+      const linkCitiesStr = Array.isArray(l.cities) ? l.cities.join(' ') : (l.city || '');
+      const linkThemesStr = Array.isArray(l.themes) ? l.themes.join(' ') : (l.theme || '');
+
+      return (
         (l.title && l.title.toLowerCase().includes(q)) ||
         (l.description && l.description.toLowerCase().includes(q)) ||
         (l.url && l.url.toLowerCase().includes(q)) ||
         (l.notes && l.notes.toLowerCase().includes(q)) ||
         (l.site_name && l.site_name.toLowerCase().includes(q)) ||
         (l.country && l.country.toLowerCase().includes(q)) ||
-        (l.city && l.city.toLowerCase().includes(q)) ||
-        (l.theme && l.theme.toLowerCase().includes(q)) ||
-        (l.hashtags && l.hashtags.some((h) => h.toLowerCase().includes(q)));
-      return textMatch;
+        linkCitiesStr.toLowerCase().includes(q) ||
+        linkThemesStr.toLowerCase().includes(q) ||
+        (l.hashtags && l.hashtags.some((h) => h.toLowerCase().includes(q)))
+      );
     });
-  }, [links, searchQuery]);
+  }, [links, searchQuery, selectedCities, selectedThemes]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -440,28 +517,33 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       />
                     </div>
 
-                    {/* Tagging: País, Cidade e Tema */}
+                    {/* Tagging: País, Cidade e Tema (Múltipla Seleção) */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Cidade Badges */}
+                      {/* Cidade Badges (multi-select) */}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-semibold text-slate-700">
-                          Cidade do Destino <span className="text-slate-400 font-normal">(detectadas na viagem)</span>
+                          Cidades do Destino <span className="text-slate-400 font-normal">(selecione uma ou mais)</span>
                         </label>
                         <div className="flex flex-wrap gap-1.5">
                           {tripCities.map((c) => {
-                            const isSelected = formCity === c;
+                            const isSelected = formCities.includes(c);
                             return (
                               <button
                                 key={c}
                                 type="button"
-                                onClick={() => setFormCity(isSelected ? '' : c)}
-                                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                                onClick={() => {
+                                  setFormCities((prev) =>
+                                    prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+                                  );
+                                }}
+                                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1 ${
                                   isSelected
-                                    ? 'bg-slate-900 text-white shadow-sm'
+                                    ? 'bg-slate-900 text-white shadow-sm ring-2 ring-slate-900/20'
                                     : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                                 }`}
                               >
-                                📍 {c}
+                                <span>📍 {c}</span>
+                                {isSelected && <Check className="w-3 h-3 ml-0.5" />}
                               </button>
                             );
                           })}
@@ -482,12 +564,29 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                                 value={newCityInput}
                                 onChange={(e) => setNewCityInput(e.target.value)}
                                 className="text-xs px-2 py-1 rounded-lg bg-white border border-slate-300 outline-none w-28"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const trimmed = newCityInput.trim();
+                                    if (trimmed) {
+                                      if (!formCities.includes(trimmed)) {
+                                        setFormCities((prev) => [...prev, trimmed]);
+                                      }
+                                      setNewCityInput('');
+                                      setShowAddCityInput(false);
+                                    }
+                                  }
+                                }}
                               />
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (newCityInput.trim()) {
-                                    setFormCity(newCityInput.trim());
+                                  const trimmed = newCityInput.trim();
+                                  if (trimmed) {
+                                    if (!formCities.includes(trimmed)) {
+                                      setFormCities((prev) => [...prev, trimmed]);
+                                    }
+                                    setNewCityInput('');
                                     setShowAddCityInput(false);
                                   }
                                 }}
@@ -517,27 +616,37 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       </div>
                     </div>
 
-                    {/* Tema Badges */}
+                    {/* Tema Badges (multi-select) */}
                     <div className="space-y-1.5">
-                      <label className="block text-xs font-semibold text-slate-700">Tema do Conteúdo</label>
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Temas do Conteúdo <span className="text-slate-400 font-normal">(selecione um ou mais)</span>
+                      </label>
                       <div className="flex flex-wrap gap-1.5">
                         {THEMES.map((t) => {
-                          const isSelected = formTheme === t.id;
+                          const isSelected = formThemes.includes(t.id);
                           const Icon = t.icon;
                           return (
                             <button
                               key={t.id}
                               type="button"
-                              onClick={() => setFormTheme(t.id)}
+                              onClick={() => {
+                                setFormThemes((prev) => {
+                                  if (prev.includes(t.id)) {
+                                    return prev.length > 1 ? prev.filter((x) => x !== t.id) : prev;
+                                  }
+                                  return [...prev, t.id];
+                                });
+                              }}
                               className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
                                 isSelected
-                                  ? 'bg-brand-600 text-white shadow-sm'
-                                  : `${t.color} border`
+                                  ? 'bg-brand-600 text-white shadow-sm ring-2 ring-brand-600/20'
+                                  : `${t.color} border opacity-75 hover:opacity-100`
                               }`}
                               style={isSelected ? { backgroundColor: primaryColor } : undefined}
                             >
                               <Icon className="w-3.5 h-3.5" />
                               <span>{t.label}</span>
+                              {isSelected && <Check className="w-3 h-3 ml-0.5" />}
                             </button>
                           );
                         })}
@@ -640,15 +749,15 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
           {/* Quick Clear Filter Button */}
           {(searchQuery ||
             selectedCountry !== 'ALL' ||
-            selectedCity !== 'ALL' ||
-            selectedTheme !== 'ALL' ||
+            selectedCities.length > 0 ||
+            selectedThemes.length > 0 ||
             selectedHashtag !== 'ALL') && (
             <button
               onClick={() => {
                 setSearchQuery('');
                 setSelectedCountry('ALL');
-                setSelectedCity('ALL');
-                setSelectedTheme('ALL');
+                setSelectedCities([]);
+                setSelectedThemes([]);
                 setSelectedHashtag('ALL');
               }}
               className="text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl border border-rose-200 transition-colors whitespace-nowrap self-start md:self-auto"
@@ -660,16 +769,16 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
 
         {/* Filter Pills */}
         <div className="space-y-3 pt-1 border-t border-slate-100">
-          {/* Tema Pills */}
+          {/* Tema Pills (multi-select) */}
           <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
               <Tag className="w-3 h-3" />
-              Tema:
+              Temas:
             </span>
             <button
-              onClick={() => setSelectedTheme('ALL')}
+              onClick={() => setSelectedThemes([])}
               className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
-                selectedTheme === 'ALL'
+                selectedThemes.length === 0
                   ? 'bg-slate-900 text-white shadow-sm'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
@@ -677,35 +786,40 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
               Todos ({links.length})
             </button>
             {THEMES.map((t) => {
-              const isSelected = selectedTheme === t.id;
+              const isSelected = selectedThemes.includes(t.id);
               return (
                 <button
                   key={t.id}
-                  onClick={() => setSelectedTheme(isSelected ? 'ALL' : t.id)}
-                  className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                  onClick={() => {
+                    setSelectedThemes((prev) =>
+                      prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id]
+                    );
+                  }}
+                  className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
                     isSelected
-                      ? 'bg-brand-600 text-white shadow-sm'
+                      ? 'bg-brand-600 text-white shadow-sm ring-2 ring-brand-600/20'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                   style={isSelected ? { backgroundColor: primaryColor } : undefined}
                 >
-                  {t.label}
+                  <span>{t.label}</span>
+                  {isSelected && <Check className="w-3 h-3" />}
                 </button>
               );
             })}
           </div>
 
-          {/* Cidades e Países Pills */}
+          {/* Cidades e Países Pills (multi-select) */}
           {(tripCities.length > 0 || availableFilters.countries.length > 0) && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
                 <MapPin className="w-3 h-3" />
-                Cidade:
+                Cidades:
               </span>
               <button
-                onClick={() => setSelectedCity('ALL')}
+                onClick={() => setSelectedCities([])}
                 className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
-                  selectedCity === 'ALL'
+                  selectedCities.length === 0
                     ? 'bg-slate-900 text-white shadow-sm'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
@@ -713,18 +827,23 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                 Todas
               </button>
               {tripCities.map((city) => {
-                const isSelected = selectedCity === city;
+                const isSelected = selectedCities.includes(city);
                 return (
                   <button
                     key={city}
-                    onClick={() => setSelectedCity(isSelected ? 'ALL' : city)}
-                    className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                    onClick={() => {
+                      setSelectedCities((prev) =>
+                        prev.includes(city) ? prev.filter((x) => x !== city) : [...prev, city]
+                      );
+                    }}
+                    className={`text-xs px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
                       isSelected
-                        ? 'bg-slate-900 text-white shadow-sm'
+                        ? 'bg-slate-900 text-white shadow-sm ring-2 ring-slate-900/20'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
-                    📍 {city}
+                    <span>📍 {city}</span>
+                    {isSelected && <Check className="w-3 h-3" />}
                   </button>
                 );
               })}
@@ -780,7 +899,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
           <Link2 className="w-12 h-12 text-slate-300 mx-auto" />
           <h3 className="text-base font-bold text-slate-800">Nenhum link encontrado</h3>
           <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-            {searchQuery || selectedCity !== 'ALL' || selectedTheme !== 'ALL' || selectedHashtag !== 'ALL'
+            {searchQuery || selectedCities.length > 0 || selectedThemes.length > 0 || selectedHashtag !== 'ALL'
               ? 'Nenhum resultado corresponde aos filtros aplicados. Tente limpar os filtros para ver todos os itens.'
               : 'Comece colando links de reels do Instagram, vídeos do TikTok ou dicas no campo acima para salvar no seu roteiro!'}
           </p>
@@ -789,7 +908,12 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredLinks.map((link) => {
             const isCopied = copiedId === link.id;
-            const themeConfig = THEMES.find((t) => t.id === link.theme);
+            const cardCities = Array.isArray(link.cities) && link.cities.length > 0
+              ? link.cities
+              : (link.city ? [link.city] : []);
+            const cardThemes = Array.isArray(link.themes) && link.themes.length > 0
+              ? link.themes
+              : (link.theme ? [link.theme] : []);
 
             return (
               <div
@@ -801,7 +925,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                   {link.image_url ? (
                     <img
                       src={link.image_url}
-                      alt={link.title || 'Imagem do link'}
+                      alt={decodeHtmlEntities(link.title || 'Imagem do link')}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
                     />
@@ -813,28 +937,37 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                   )}
 
                   {/* Badges on top of media */}
-                  <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap">
+                  <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap max-w-[70%]">
                     {link.site_name && (
                       <span className="bg-slate-900/85 backdrop-blur text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow">
                         {link.site_name}
                       </span>
                     )}
-                    {link.city && (
-                      <span className="bg-white/90 backdrop-blur text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-md shadow flex items-center gap-1">
-                        📍 {link.city}
+                    {cardCities.map((c) => (
+                      <span
+                        key={c}
+                        className="bg-white/90 backdrop-blur text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-md shadow flex items-center gap-1"
+                      >
+                        📍 {c}
                       </span>
-                    )}
+                    ))}
                   </div>
 
-                  {link.theme && (
-                    <div className="absolute top-3 right-3">
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md shadow ${
-                          themeConfig ? themeConfig.color : 'bg-slate-800 text-white'
-                        }`}
-                      >
-                        {link.theme}
-                      </span>
+                  {cardThemes.length > 0 && (
+                    <div className="absolute top-3 right-3 flex items-center gap-1 flex-wrap justify-end max-w-[45%]">
+                      {cardThemes.map((t) => {
+                        const themeConfig = THEMES.find((th) => th.id === t);
+                        return (
+                          <span
+                            key={t}
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md shadow ${
+                              themeConfig ? themeConfig.color : 'bg-slate-800 text-white'
+                            }`}
+                          >
+                            {t}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -849,21 +982,21 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       rel="noopener noreferrer"
                       className="text-sm font-bold text-slate-900 hover:text-brand-600 line-clamp-2 transition-colors flex items-start justify-between gap-1 group/title"
                     >
-                      <span>{link.title || link.url}</span>
+                      <span>{decodeHtmlEntities(link.title || link.url)}</span>
                       <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover/title:text-brand-600 shrink-0 mt-0.5" />
                     </a>
 
                     {/* Description */}
                     {link.description && (
                       <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                        {link.description}
+                        {decodeHtmlEntities(link.description)}
                       </p>
                     )}
 
                     {/* User Notes */}
                     {link.notes && (
                       <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200/60 text-xs text-amber-900 italic">
-                        💡 {link.notes}
+                        💡 {decodeHtmlEntities(link.notes)}
                       </div>
                     )}
 
@@ -962,42 +1095,132 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Cidade</label>
-                  <input
-                    type="text"
-                    value={formCity}
-                    onChange={(e) => setFormCity(e.target.value)}
-                    placeholder="Ex: Tokyo"
-                    className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">País</label>
-                  <input
-                    type="text"
-                    value={formCountry}
-                    onChange={(e) => setFormCountry(e.target.value)}
-                    placeholder="Ex: Japão"
-                    className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
-                  />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">País</label>
+                <input
+                  type="text"
+                  value={formCountry}
+                  onChange={(e) => setFormCountry(e.target.value)}
+                  placeholder="Ex: Japão"
+                  className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
+                />
+              </div>
+
+              {/* Cidades (Multi-select) */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Cidades do Destino <span className="text-slate-400 font-normal">(selecione uma ou mais)</span>
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {Array.from(new Set([...tripCities, ...formCities])).map((c) => {
+                    const isSelected = formCities.includes(c);
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => {
+                          setFormCities((prev) =>
+                            prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+                          );
+                        }}
+                        className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1 ${
+                          isSelected
+                            ? 'bg-slate-900 text-white shadow-sm ring-2 ring-slate-900/20'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+                        }`}
+                      >
+                        <span>📍 {c}</span>
+                        {isSelected && <Check className="w-3 h-3 ml-0.5" />}
+                      </button>
+                    );
+                  })}
+
+                  {!showAddCityInput ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddCityInput(true)}
+                      className="text-xs px-2 py-1 rounded-lg text-slate-500 hover:text-slate-800 bg-slate-50 border border-dashed border-slate-300 hover:border-slate-400"
+                    >
+                      + Outra cidade
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        placeholder="Nome da cidade"
+                        value={newCityInput}
+                        onChange={(e) => setNewCityInput(e.target.value)}
+                        className="text-xs px-2 py-1 rounded-lg bg-white border border-slate-300 outline-none w-28"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const trimmed = newCityInput.trim();
+                            if (trimmed) {
+                              if (!formCities.includes(trimmed)) {
+                                setFormCities((prev) => [...prev, trimmed]);
+                              }
+                              setNewCityInput('');
+                              setShowAddCityInput(false);
+                            }
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const trimmed = newCityInput.trim();
+                          if (trimmed) {
+                            if (!formCities.includes(trimmed)) {
+                              setFormCities((prev) => [...prev, trimmed]);
+                            }
+                            setNewCityInput('');
+                            setShowAddCityInput(false);
+                          }
+                        }}
+                        className="text-xs px-2 py-1 bg-slate-900 text-white rounded-lg"
+                      >
+                        OK
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Tema</label>
-                <select
-                  value={formTheme}
-                  onChange={(e) => setFormTheme(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 text-slate-900 text-xs rounded-lg border border-slate-200 outline-none focus:bg-white"
-                >
-                  {THEMES.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+              {/* Temas (Multi-select) */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Temas do Conteúdo <span className="text-slate-400 font-normal">(selecione um ou mais)</span>
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {THEMES.map((t) => {
+                    const isSelected = formThemes.includes(t.id);
+                    const Icon = t.icon;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => {
+                          setFormThemes((prev) => {
+                            if (prev.includes(t.id)) {
+                              return prev.length > 1 ? prev.filter((x) => x !== t.id) : prev;
+                            }
+                            return [...prev, t.id];
+                          });
+                        }}
+                        className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                          isSelected
+                            ? 'bg-brand-600 text-white shadow-sm ring-2 ring-brand-600/20'
+                            : `${t.color} border opacity-75 hover:opacity-100`
+                        }`}
+                        style={isSelected ? { backgroundColor: primaryColor } : undefined}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{t.label}</span>
+                        {isSelected && <Check className="w-3 h-3 ml-0.5" />}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>

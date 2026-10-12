@@ -493,7 +493,9 @@ export interface TripLink {
   video_url?: string | null;
   country?: string | null;
   city?: string | null;
+  cities?: string[];
   theme?: string | null;
+  themes?: string[];
   hashtags?: string[];
   metadata?: Record<string, string>;
   notes?: string | null;

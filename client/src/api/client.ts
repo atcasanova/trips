@@ -555,15 +555,25 @@ export const api = {
         q?: string;
         country?: string;
         city?: string;
+        cities?: string[];
         theme?: string;
+        themes?: string[];
         hashtag?: string;
       }
     ) => {
       const q = new URLSearchParams();
       if (params?.q) q.set('q', params.q);
       if (params?.country && params.country !== 'ALL') q.set('country', params.country);
-      if (params?.city && params.city !== 'ALL') q.set('city', params.city);
-      if (params?.theme && params.theme !== 'ALL') q.set('theme', params.theme);
+      if (params?.cities && params.cities.length > 0) {
+        q.set('cities', params.cities.join(','));
+      } else if (params?.city && params.city !== 'ALL') {
+        q.set('city', params.city);
+      }
+      if (params?.themes && params.themes.length > 0) {
+        q.set('themes', params.themes.join(','));
+      } else if (params?.theme && params.theme !== 'ALL') {
+        q.set('theme', params.theme);
+      }
       if (params?.hashtag && params.hashtag !== 'ALL') q.set('hashtag', params.hashtag);
       const qs = q.toString();
       return request<LinksResponse>(`/trips/${tripId}/links${qs ? `?${qs}` : ''}`);
@@ -574,7 +584,9 @@ export const api = {
         url: string;
         country?: string;
         city?: string;
+        cities?: string[];
         theme?: string;
+        themes?: string[];
         notes?: string;
         custom_title?: string;
         custom_description?: string;
@@ -593,7 +605,9 @@ export const api = {
         description?: string;
         country?: string;
         city?: string;
+        cities?: string[];
         theme?: string;
+        themes?: string[];
         notes?: string;
         hashtags?: string[];
       }

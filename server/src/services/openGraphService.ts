@@ -10,31 +10,80 @@ export interface OpenGraphData {
   metadata: Record<string, string>;
 }
 
-// Helper to decode basic HTML entities
-function decodeHtmlEntities(str: string): string {
+// Comprehensive HTML entity decoder (handles named, decimal &#...; and hex &#x...;)
+export function decodeHtmlEntities(str: string): string {
   if (!str) return '';
-  return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+
+  // 1. Basic named entities (including decoding &amp; so double-escaped entities like &amp;#x2615; become &#x2615;)
+  let decoded = str
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
     .replace(/&#x27;/g, "'")
     .replace(/&#x2F;/g, '/')
-    .replace(/&nbsp;/g, ' ');
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&copy;/g, '©')
+    .replace(/&reg;/g, '®')
+    .replace(/&trade;/g, '™')
+    .replace(/&amp;/g, '&');
+
+  // 2. Hexadecimal entities: &#x2615; or &#X1F3EF; (with or without trailing semicolon)
+  decoded = decoded.replace(/&#x([0-9a-fA-F]+);?/gi, (_, hex) => {
+    try {
+      const code = parseInt(hex, 16);
+      if (!isNaN(code) && code > 0 && code <= 0x10ffff) {
+        return String.fromCodePoint(code);
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  });
+
+  // 3. Decimal entities: &#9749; or &#064; (with or without trailing semicolon)
+  decoded = decoded.replace(/&#([0-9]+);?/g, (_, dec) => {
+    try {
+      const code = parseInt(dec, 10);
+      if (!isNaN(code) && code > 0 && code <= 0x10ffff) {
+        return String.fromCodePoint(code);
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  });
+
+  return decoded;
 }
 
-// Extract hashtags from text (supports unicode accents)
+// Extract hashtags from text (supports unicode accents, ignores entity remainders like x2615, 064, etc.)
 export function extractHashtags(text: string): string[] {
   if (!text) return [];
-  const regex = /#([a-zA-Z0-9_\u00C0-\u017F]+)/g;
+
+  // Decode entities first so e.g. "&#x2615;" becomes "☕", and doesn't get extracted as "#x2615"
+  const decoded = decodeHtmlEntities(text);
+
+  // Match #tag, ensuring it is NOT preceded by & (which indicates an un-decoded HTML entity)
+  const regex = /(?:^|[^\w&])#([a-zA-Z0-9_\u00C0-\u017F]+)/g;
   const matches = new Set<string>();
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    if (match[1]) {
-      matches.add(match[1].toLowerCase());
+
+  while ((match = regex.exec(decoded)) !== null) {
+    const rawTag = match[1];
+    if (rawTag) {
+      const lower = rawTag.toLowerCase();
+      // Discard entity artifacts:
+      // - Hex entity leftovers (e.g. x2615, x1f3ef, xfe0f)
+      // - Pure numeric tags (e.g. 064 from &#064;, or 1234)
+      if (/^x[0-9a-f]{2,6}$/i.test(lower) || /^[0-9]+$/.test(lower)) {
+        continue;
+      }
+      matches.add(lower);
     }
   }
+
   return Array.from(matches);
 }
 
@@ -169,8 +218,13 @@ export async function scrapeOpenGraph(targetUrl: string): Promise<OpenGraphData>
           } else if (key === 'og:site_name') {
             result.site_name = content;
           } else if (key === 'article:tag' || key === 'video:tag') {
-            const tag = content.replace(/^#/, '').toLowerCase();
-            if (tag && !result.hashtags.includes(tag)) {
+            const tag = decodeHtmlEntities(content).replace(/^#/, '').toLowerCase().trim();
+            if (
+              tag &&
+              !/^x[0-9a-f]{2,6}$/i.test(tag) &&
+              !/^[0-9]+$/.test(tag) &&
+              !result.hashtags.includes(tag)
+            ) {
               result.hashtags.push(tag);
             }
           }
