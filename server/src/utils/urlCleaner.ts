@@ -21,8 +21,9 @@ const KNOWN_TRACKING_KEYS = new Set([
 ]);
 
 /**
- * Checks if a string is a valid Base64 string that decodes to exactly
- * 10 lowercase hexadecimal characters (0-9a-f).
+ * Checks if a string is a valid Base64 string that decodes to
+ * 10 to 20 lowercase alphanumeric characters (0-9a-z).
+ * This covers both 10-hex synthetic tokens and real Instagram tokens (e.g. rpxt=MTljdGd0d2Qydmo5Nw== -> 19ctgtwd2vj97).
  */
 export function isValidInstagramOpaqueToken(val: string): boolean {
   if (!val || typeof val !== 'string') return false;
@@ -36,13 +37,13 @@ export function isValidInstagramOpaqueToken(val: string): boolean {
 
   try {
     const buf = Buffer.from(normalized, 'base64');
-    // 10 hex characters in UTF-8 / ASCII = exactly 10 bytes
-    if (buf.length !== 10) {
+    // Instagram share tokens decode to 10 to 20 characters
+    if (buf.length < 10 || buf.length > 20) {
       return false;
     }
     const decodedStr = buf.toString('utf-8');
-    // Must be exactly 10 lowercase hex characters (0-9a-f)
-    if (!/^[0-9a-f]{10}$/.test(decodedStr)) {
+    // Must be exactly lowercase alphanumeric characters (0-9a-z)
+    if (!/^[0-9a-z]{10,20}$/.test(decodedStr)) {
       return false;
     }
 
@@ -71,6 +72,23 @@ export function isInstagramMediaRoute(pathname: string): boolean {
 }
 
 /**
+ * Checks if the route is an Instagram profile route: /<username> or /<username>/
+ * (usernames: 1-30 chars consisting of letters, digits, dots and underscores).
+ */
+export function isInstagramProfileRoute(pathname: string): boolean {
+  const clean = pathname.replace(/^\/+|\/+$/g, '');
+  if (!clean) return false;
+  const segments = clean.split('/');
+  if (segments.length !== 1) return false;
+  const username = segments[0];
+  const reserved = new Set([
+    'explore', 'direct', 'accounts', 'about', 'legal', 'api',
+    'developer', 'help', 'reels', 'stories', 'p', 'reel', 'tv'
+  ]);
+  return !reserved.has(username.toLowerCase()) && /^[a-zA-Z0-9._]{1,30}$/.test(username);
+}
+
+/**
  * Cleans a URL by removing marketing tracking parameters and Instagram opaque share tokens.
  */
 export function cleanUrl(rawUrl: string): string {
@@ -91,6 +109,7 @@ export function cleanUrl(rawUrl: string): string {
 
   const isInsta = isInstagramHost(parsed.hostname);
   const isMedia = isInstagramMediaRoute(parsed.pathname);
+  const isProfile = isInstagramProfileRoute(parsed.pathname);
 
   // Group parameters by key
   const keysToDelete = new Set<string>();
@@ -116,10 +135,10 @@ export function cleanUrl(rawUrl: string): string {
 
     // 3. Instagram heuristic for opaque share tokens:
     // host is instagram.com (or subdomain)
-    // route is media route (/p/<id> or /reel/<id>)
+    // route is media route (/p/<id> or /reel/<id>) OR profile route (/<username>)
     // key has exactly 4 lowercase letters (/^[a-z]{4}$/)
-    // all values are valid Base64 that decode to exactly 10 lowercase hex characters (0-9a-f)
-    if (isInsta && isMedia && /^[a-z]{4}$/.test(key)) {
+    // all values are valid Base64 that decode to lowercase alphanumeric characters (0-9a-z)
+    if (isInsta && (isMedia || isProfile) && /^[a-z]{4}$/.test(key)) {
       const values = searchParams.getAll(key);
       if (values.length > 0 && values.every((v) => isValidInstagramOpaqueToken(v))) {
         keysToDelete.add(key);

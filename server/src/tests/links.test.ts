@@ -5,11 +5,17 @@ import {
   isValidInstagramOpaqueToken,
   isInstagramHost,
   isInstagramMediaRoute,
+  isInstagramProfileRoute,
 } from '../utils/urlCleaner.js';
-import { extractHashtags, decodeHtmlEntities, truncateTextByWords } from '../services/openGraphService.js';
+import {
+  extractHashtags,
+  decodeHtmlEntities,
+  truncateTextByWords,
+  scrapeOpenGraph,
+} from '../services/openGraphService.js';
 
 describe('1. Validador de Tokens Opostos do Instagram', () => {
-  test('Deve validar tokens Base64 que decodificam para exatamente 10 hex minúsculos', () => {
+  test('Deve validar tokens Base64 que decodificam para 10 a 20 alfanuméricos minúsculos', () => {
     // 10 hex caracteres: '0123456789' e 'abcdef0123'
     const b64_1 = Buffer.from('0123456789').toString('base64');
     const b64_2 = Buffer.from('abcdef0123').toString('base64');
@@ -19,24 +25,28 @@ describe('1. Validador de Tokens Opostos do Instagram', () => {
     // Formato URL-safe sem padding
     const b64_urlsafe = Buffer.from('abcdef0123').toString('base64').replace(/=/g, '');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_urlsafe), true);
+
+    // Token real do Instagram (13 caracteres alfanuméricos minúsculos: '19ctgtwd2vj97')
+    const b64_real = 'MTljdGd0d2Qydmo5Nw==';
+    assert.strictEqual(isValidInstagramOpaqueToken(b64_real), true);
   });
 
-  test('Deve rejeitar valores fora do formato de 10 caracteres hexadecimais minúsculos', () => {
+  test('Deve rejeitar valores fora do formato de 10 a 20 caracteres alfanuméricos minúsculos', () => {
     // Menos de 10 caracteres
     const b64_short = Buffer.from('123456789').toString('base64');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_short), false);
 
-    // Mais de 10 caracteres
-    const b64_long = Buffer.from('12345678901').toString('base64');
+    // Mais de 20 caracteres
+    const b64_long = Buffer.from('123456789012345678901').toString('base64');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_long), false);
 
-    // 10 caracteres porém contendo letras maiúsculas (Hex maiúsculo não é permitido)
+    // Contendo letras maiúsculas
     const b64_upper = Buffer.from('012345678A').toString('base64');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_upper), false);
 
-    // 10 caracteres porém não hexadecimais
-    const b64_nonhex = Buffer.from('helloworld').toString('base64');
-    assert.strictEqual(isValidInstagramOpaqueToken(b64_nonhex), false);
+    // Contendo caracteres especiais (não alfanumérico)
+    const b64_special = Buffer.from('hello_world').toString('base64');
+    assert.strictEqual(isValidInstagramOpaqueToken(b64_special), false);
 
     // Valor não Base64
     assert.strictEqual(isValidInstagramOpaqueToken('!!!notbase64@@@'), false);
@@ -67,6 +77,18 @@ describe('2. Validação de Host e Rota de Mídia do Instagram', () => {
     assert.strictEqual(isInstagramMediaRoute('/stories/user/123/'), false);
     assert.strictEqual(isInstagramMediaRoute('/direct/'), false);
   });
+
+  test('Deve identificar rotas de perfil do Instagram', () => {
+    assert.strictEqual(isInstagramProfileRoute('/bar_centifolia'), true);
+    assert.strictEqual(isInstagramProfileRoute('/bar_centifolia/'), true);
+    assert.strictEqual(isInstagramProfileRoute('/user.name_123'), true);
+
+    // Negativos
+    assert.strictEqual(isInstagramProfileRoute('/explore/'), false);
+    assert.strictEqual(isInstagramProfileRoute('/direct/'), false);
+    assert.strictEqual(isInstagramProfileRoute('/p/C_abc123/'), false);
+    assert.strictEqual(isInstagramProfileRoute('/reel/DA1234XYZ/'), false);
+  });
 });
 
 describe('3. Heurística de Limpeza de URLs do Instagram (Exemplos obrigatórios e casos negativos)', () => {
@@ -94,20 +116,30 @@ describe('3. Heurística de Limpeza de URLs do Instagram (Exemplos obrigatórios
     }
   });
 
+  test('Deve remover token de compartilhamento em rotas de perfis do Instagram (ex: /bar_centifolia?rpxt=MTljdGd0d2Qydmo5Nw%3D%3D)', () => {
+    const rawProfile = 'https://www.instagram.com/bar_centifolia?rpxt=MTljdGd0d2Qydmo5Nw%3D%3D';
+    const cleaned = cleanUrl(rawProfile);
+    assert.strictEqual(cleaned, 'https://www.instagram.com/bar_centifolia');
+
+    const rawProfileSlash = 'https://www.instagram.com/bar_centifolia/?rpxt=MTljdGd0d2Qydmo5Nw%3D%3D';
+    const cleanedSlash = cleanUrl(rawProfileSlash);
+    assert.strictEqual(cleanedSlash, 'https://www.instagram.com/bar_centifolia/');
+  });
+
   test('Deve preservar o parâmetro se estiver FORA do Instagram', () => {
     const urlOtherDomain = `https://www.tiktok.com/p/C-example123/?cplk=${token10Hex}&keep=1`;
     const cleaned = cleanUrl(urlOtherDomain);
     assert.strictEqual(cleaned, urlOtherDomain, 'Domínio fora do Instagram não deve ter cplk removido pela heurística');
   });
 
-  test('Deve preservar o parâmetro se estiver FORA da rota de mídia (/p/ ou /reel/)', () => {
+  test('Deve preservar o parâmetro se estiver FORA de rotas de conteúdo (/explore/, /direct/)', () => {
     const urlExplore = `https://www.instagram.com/explore/?cplk=${token10Hex}`;
     const cleaned = cleanUrl(urlExplore);
-    assert.strictEqual(cleaned, urlExplore, 'Rota fora de mídia (/explore/) deve manter o parâmetro');
+    assert.strictEqual(cleaned, urlExplore, 'Rota do sistema (/explore/) deve manter o parâmetro');
 
-    const urlUser = `https://www.instagram.com/user_profile/?cplk=${token10Hex}`;
-    const cleanedUser = cleanUrl(urlUser);
-    assert.strictEqual(cleanedUser, urlUser, 'Rota de perfil de usuário deve manter o parâmetro');
+    const urlDirect = `https://www.instagram.com/direct/?cplk=${token10Hex}`;
+    const cleanedDirect = cleanUrl(urlDirect);
+    assert.strictEqual(cleanedDirect, urlDirect, 'Rota do sistema (/direct/) deve manter o parâmetro');
   });
 
   test('Deve preservar o parâmetro se a chave NÃO tiver exatamente quatro letras minúsculas', () => {

@@ -1,4 +1,6 @@
 import { logger } from '../utils/logger.js';
+import { isInstagramHost, isInstagramProfileRoute } from '../utils/urlCleaner.js';
+import { pexelsService } from './pexelsService.js';
 
 export interface OpenGraphData {
   title: string | null;
@@ -283,6 +285,49 @@ export async function scrapeOpenGraph(targetUrl: string): Promise<OpenGraphData>
         const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
         if (titleMatch && titleMatch[1]) {
           result.title = decodeHtmlEntities(titleMatch[1].trim());
+        }
+      }
+    }
+
+    // 3. Instagram Profile fallback enhancement
+    if (isInstagramHost(parsed.hostname) && isInstagramProfileRoute(parsed.pathname)) {
+      const username = parsed.pathname.replace(/^\/+|\/+$/g, '');
+      const formattedName = username
+        .split(/[._]+/)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+
+      if (!result.title || result.title === 'Instagram' || result.title.startsWith('Instagram (')) {
+        result.title = `${formattedName} (@${username}) • Instagram`;
+      }
+
+      if (!result.description) {
+        result.description = `Perfil oficial no Instagram: @${username}`;
+      }
+
+      if (result.hashtags.length === 0) {
+        const candidateTags = Array.from(
+          new Set([
+            username.toLowerCase(),
+            ...username.split(/[._]+/).map((w) => w.toLowerCase()),
+          ])
+        ).filter((t) => t.length > 2 && !/^[0-9]+$/.test(t));
+        result.hashtags = candidateTags;
+      }
+
+      if (!result.image_url) {
+        try {
+          const photoSearch = await pexelsService.searchPhotos(`${formattedName} bar tokyo`, 3);
+          if (photoSearch.photos.length > 0) {
+            result.image_url = photoSearch.photos[0].src.large;
+          } else {
+            const genericSearch = await pexelsService.searchPhotos(`${formattedName}`, 3);
+            if (genericSearch.photos.length > 0) {
+              result.image_url = genericSearch.photos[0].src.large;
+            }
+          }
+        } catch (err: any) {
+          logger.warn('Erro ao buscar foto Pexels para perfil do Instagram:', { error: err.message, username });
         }
       }
     }
