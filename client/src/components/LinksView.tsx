@@ -27,6 +27,7 @@ import {
   Bus,
   Theater,
   Trees,
+  AlertTriangle,
 } from 'lucide-react';
 import { Trip, TripLink, LinkPreviewResponse } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -177,6 +178,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
   const [formHashtags, setFormHashtags] = useState<string[]>([]);
   const [newCityInput, setNewCityInput] = useState('');
   const [showAddCityInput, setShowAddCityInput] = useState(false);
+  const [newTagInput, setNewTagInput] = useState('');
 
   // Modal for editing an existing link
   const [editingLink, setEditingLink] = useState<TripLink | null>(null);
@@ -303,6 +305,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
       setFormThemes(['Sightseeing']);
       setNewCityInput('');
       setShowAddCityInput(false);
+      setNewTagInput('');
 
       // Reload links
       await loadLinks();
@@ -321,6 +324,22 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
     setFormCities([]);
     setFormThemes(['Sightseeing']);
     setShowAddCityInput(false);
+    setNewTagInput('');
+  };
+
+  // Tag management helpers
+  const handleAddTag = (tagToAdd: string) => {
+    const tags = tagToAdd
+      .split(/[, ]+/)
+      .map((t) => decodeHtmlEntities(t).trim().replace(/^#/, '').toLowerCase().trim())
+      .filter((t) => t && !/^x[0-9a-f]{2,6}$/i.test(t) && !/^[0-9]+$/.test(t) && /[\p{L}\p{N}]/u.test(t));
+    if (tags.length === 0) return;
+    setFormHashtags((prev) => Array.from(new Set([...prev, ...tags])));
+    setNewTagInput('');
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setFormHashtags((prev) => prev.filter((t) => t !== tagToRemove));
   };
 
   // Copy cleaned link to clipboard
@@ -362,6 +381,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
     setFormHashtags(l.hashtags || []);
     setNewCityInput('');
     setShowAddCityInput(false);
+    setNewTagInput('');
   };
 
   // Save edited link
@@ -382,6 +402,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
 
       setLinks((prev) => prev.map((l) => (l.id === editingLink.id ? res.link : l)));
       setEditingLink(null);
+      setNewTagInput('');
     } catch (err: any) {
       alert(err.message || 'Erro ao atualizar link');
     }
@@ -510,6 +531,25 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
             {/* Preview & Categorization Card */}
             {previewData && (
               <div className="bg-slate-50/80 rounded-2xl p-5 border border-slate-200 space-y-5 animate-in fade-in slide-in-from-top-2 duration-300">
+                {/* Duplicate Link Warning */}
+                {previewData.is_duplicate && (
+                  <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-amber-900 shadow-sm">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-xs space-y-1">
+                      <p className="font-bold text-amber-900 text-sm">Atenção: Este link já está cadastrado nesta viagem!</p>
+                      <p className="text-amber-800">
+                        Link existente: <span className="font-semibold">"{previewData.existing_link?.title || previewData.url}"</span>
+                        {previewData.existing_link?.created_at && (
+                          <> (adicionado em {new Date(previewData.existing_link.created_at).toLocaleDateString('pt-BR')})</>
+                        )}.
+                      </p>
+                      <p className="text-[11px] text-amber-700">
+                        Para evitar itens duplicados, não é necessário cadastrá-lo novamente.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-brand-600" />
@@ -707,24 +747,57 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       </div>
                     </div>
 
-                    {/* Hashtags detectadas */}
-                    {formHashtags.length > 0 && (
-                      <div className="space-y-1">
-                        <label className="block text-[11px] font-semibold text-slate-500">
-                          Hashtags Detectadas ({formHashtags.length})
-                        </label>
-                        <div className="flex flex-wrap gap-1">
-                          {formHashtags.map((h) => (
-                            <span
-                              key={h}
-                              className="text-[11px] bg-sky-50 text-sky-700 px-2 py-0.5 rounded-md font-mono border border-sky-200"
+                    {/* Hashtags e Tags (editável) */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-semibold text-slate-700 flex items-center justify-between">
+                        <span>Hashtags & Tags</span>
+                        <span className="text-[11px] text-slate-400 font-normal">({formHashtags.length} tags)</span>
+                      </label>
+                      <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-white rounded-xl border border-slate-200">
+                        {formHashtags.map((h) => (
+                          <span
+                            key={h}
+                            className="inline-flex items-center gap-1 text-[11px] bg-sky-50 text-sky-700 pl-2 pr-1.5 py-0.5 rounded-md font-mono border border-sky-200"
+                          >
+                            #{h}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTag(h)}
+                              className="text-sky-400 hover:text-sky-700 p-0.5 rounded transition-colors"
+                              title="Remover tag"
                             >
-                              #{h}
-                            </span>
-                          ))}
-                        </div>
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                        {formHashtags.length === 0 && (
+                          <span className="text-xs text-slate-400 italic py-0.5">Nenhuma hashtag detectada</span>
+                        )}
                       </div>
-                    )}
+
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <input
+                          type="text"
+                          placeholder="+ Adicionar tag (ex: ramen, compras)"
+                          value={newTagInput}
+                          onChange={(e) => setNewTagInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddTag(newTagInput);
+                            }
+                          }}
+                          className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 outline-none w-52 focus:border-brand-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddTag(newTagInput)}
+                          className="text-xs px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-lg transition-colors"
+                        >
+                          + Adicionar
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Notas do usuário */}
                     <div>
@@ -752,14 +825,23 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       <button
                         type="button"
                         onClick={handleSaveLink}
-                        disabled={savingLink}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow hover:opacity-90 transition-all disabled:opacity-50"
-                        style={{ backgroundColor: primaryColor }}
+                        disabled={savingLink || previewData.is_duplicate}
+                        className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow transition-all ${
+                          previewData.is_duplicate
+                            ? 'bg-amber-600/70 cursor-not-allowed opacity-75'
+                            : 'hover:opacity-90 active:scale-95'
+                        } disabled:opacity-50`}
+                        style={!previewData.is_duplicate ? { backgroundColor: primaryColor } : undefined}
                       >
                         {savingLink ? (
                           <>
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             <span>Salvando...</span>
+                          </>
+                        ) : previewData.is_duplicate ? (
+                          <>
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            <span>Link Já Cadastrado</span>
                           </>
                         ) : (
                           <>
@@ -1293,6 +1375,58 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
                       </button>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* Hashtags e Tags */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center justify-between">
+                  <span>Tags e Hashtags</span>
+                  <span className="text-[11px] text-slate-400 font-normal">({formHashtags.length} tags)</span>
+                </label>
+                <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-50 rounded-xl border border-slate-200">
+                  {formHashtags.map((h) => (
+                    <span
+                      key={h}
+                      className="inline-flex items-center gap-1 text-[11px] bg-sky-50 text-sky-700 pl-2 pr-1.5 py-0.5 rounded-md font-mono border border-sky-200"
+                    >
+                      #{h}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTag(h)}
+                        className="text-sky-400 hover:text-sky-700 p-0.5 rounded transition-colors"
+                        title="Remover tag"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {formHashtags.length === 0 && (
+                    <span className="text-xs text-slate-400 italic py-0.5">Nenhuma tag cadastrada</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 pt-1">
+                  <input
+                    type="text"
+                    placeholder="+ Adicionar tag (ex: ramen, compras, foto)"
+                    value={newTagInput}
+                    onChange={(e) => setNewTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddTag(newTagInput);
+                      }
+                    }}
+                    className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 outline-none flex-1 focus:bg-white focus:border-brand-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAddTag(newTagInput)}
+                    className="text-xs px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg transition-colors shadow-sm"
+                  >
+                    Adicionar
+                  </button>
                 </div>
               </div>
 

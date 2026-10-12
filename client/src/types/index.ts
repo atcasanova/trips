@@ -508,6 +508,8 @@ export interface TripLink {
 export interface LinkPreviewResponse {
   url: string;
   original_url: string;
+  is_duplicate?: boolean;
+  existing_link?: TripLink | null;
   og: {
     title: string | null;
     description: string | null;

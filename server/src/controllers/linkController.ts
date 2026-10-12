@@ -49,12 +49,26 @@ export const linkController = {
           .filter(Boolean);
       }
 
-      // 3. Scrape OpenGraph metadata
+      // 3. Check for existing duplicate link in this trip
+      const { rows: existingLinks } = await query(
+        `SELECT id, title, url, image_url, created_at, cities, city, themes, theme, hashtags
+         FROM trip_links
+         WHERE trip_id = $1 AND (url = $2 OR original_url = $3) AND deleted_at IS NULL
+         LIMIT 1`,
+        [tripId, cleanedUrl, url.trim()]
+      );
+
+      const isDuplicate = existingLinks.length > 0;
+      const existingLink = isDuplicate ? existingLinks[0] : null;
+
+      // 4. Scrape OpenGraph metadata
       const og = await scrapeOpenGraph(cleanedUrl);
 
       return res.json({
         url: cleanedUrl,
         original_url: url.trim(),
+        is_duplicate: isDuplicate,
+        existing_link: existingLink,
         og,
         trip_destinations: {
           primary_country: trip.primary_country || null,
@@ -271,6 +285,22 @@ export const linkController = {
       }
       const trip = trips[0];
 
+      // 3. Check for active duplicate link
+      const { rows: existingActive } = await query(
+        `SELECT id, title, url, created_at FROM trip_links
+         WHERE trip_id = $1 AND (url = $2 OR original_url = $3) AND deleted_at IS NULL
+         LIMIT 1`,
+        [tripId, cleanedUrl, url.trim()]
+      );
+
+      if (existingActive.length > 0) {
+        return res.status(409).json({
+          error: 'Este link já está cadastrado nesta viagem',
+          is_duplicate: true,
+          existing_link: existingActive[0],
+        });
+      }
+
       // 3. Scrape OpenGraph if needed
       const og = await scrapeOpenGraph(cleanedUrl);
 
@@ -307,13 +337,13 @@ export const linkController = {
         finalHashtags = Array.from(
           new Set([
             ...finalHashtags,
-            ...hashtags.map((h: string) => decodeHtmlEntities(String(h)).replace(/^#/, '').toLowerCase().trim()),
+            ...hashtags.map((h: string) => decodeHtmlEntities(String(h)).trim().replace(/^#/, '').toLowerCase().trim()),
           ])
         );
       }
-      // Filter out entity remainders and numeric tags
+      // Filter out entity remainders, pure numeric tags, and ensure word chars
       finalHashtags = finalHashtags.filter(
-        (h) => h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h)
+        (h) => h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h) && /[\p{L}\p{N}]/u.test(h)
       );
 
       const insertSql = `
@@ -351,6 +381,12 @@ export const linkController = {
 
       return res.status(201).json({ link: created[0] });
     } catch (err: any) {
+      if (err.code === '23505') {
+        return res.status(409).json({
+          error: 'Este link já está cadastrado nesta viagem',
+          is_duplicate: true,
+        });
+      }
       logger.error('Erro ao salvar link:', { error: err.message, tripId, url });
       return res.status(500).json({ error: 'Erro ao salvar link' });
     }
@@ -401,6 +437,8 @@ export const linkController = {
       } else if (city !== undefined) {
         newCity = city ? String(city).trim() : null;
         newCities = JSON.stringify(newCity ? [newCity] : []);
+      } else {
+        newCities = typeof prev.cities === 'string' ? prev.cities : JSON.stringify(prev.cities || []);
       }
 
       // Handle themes
@@ -415,16 +453,20 @@ export const linkController = {
       } else if (theme !== undefined) {
         newTheme = theme ? String(theme).trim() : 'Sightseeing';
         newThemes = JSON.stringify(newTheme ? [newTheme] : ['Sightseeing']);
+      } else {
+        newThemes = typeof prev.themes === 'string' ? prev.themes : JSON.stringify(prev.themes || []);
       }
 
       let newHashtags = prev.hashtags;
       if (hashtags !== undefined) {
         const cleaned = Array.isArray(hashtags)
           ? hashtags
-              .map((h: string) => decodeHtmlEntities(String(h)).replace(/^#/, '').toLowerCase().trim())
-              .filter((h) => h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h))
+              .map((h: string) => decodeHtmlEntities(String(h)).trim().replace(/^#/, '').toLowerCase().trim())
+              .filter((h) => h && !/^x[0-9a-f]{2,6}$/i.test(h) && !/^[0-9]+$/.test(h) && /[\p{L}\p{N}]/u.test(h))
           : [];
         newHashtags = JSON.stringify(Array.from(new Set(cleaned)));
+      } else {
+        newHashtags = typeof prev.hashtags === 'string' ? prev.hashtags : JSON.stringify(prev.hashtags || []);
       }
 
       const updateSql = `

@@ -306,5 +306,72 @@ describe('7. Truncamento de Texto em até 60 Palavras (Sem Contar Emojis)', () =
   });
 });
 
+describe('8. Tratamento de Links Duplicados e Edição de Tags', () => {
+  test('Deve normalizar tags e hashtags removendo #, caracteres HTML e deduplicando', () => {
+    const rawTags = ['#Tokyo', 'tokyo', ' #RAMEN ', '&#x2615;', 'x2615', '1234', '#Kyoto_Trip'];
+    const cleaned = Array.from(
+      new Set(
+        rawTags
+          .map((t) => decodeHtmlEntities(t).trim().replace(/^#/, '').toLowerCase().trim())
+          .filter((t) => t && !/^x[0-9a-f]{2,6}$/i.test(t) && !/^[0-9]+$/.test(t) && /[\p{L}\p{N}]/u.test(t))
+      )
+    );
+
+    assert.deepStrictEqual(cleaned, ['tokyo', 'ramen', 'kyoto_trip']);
+  });
+
+  test('Deve identificar link duplicado quando a URL limpa coincide com link ativo existente', () => {
+    const existingLinks = [
+      {
+        id: 'link-1',
+        trip_id: 'trip-1',
+        url: 'https://www.instagram.com/reel/DE_test123/',
+        original_url: 'https://www.instagram.com/reel/DE_test123/?utm_source=ig_web_copy_link',
+        title: 'Guia de Tóquio',
+        deleted_at: null,
+      },
+    ];
+
+    const inputUrl = 'https://www.instagram.com/reel/DE_test123/?igsh=abcxyz';
+    const cleanedUrl = cleanUrl(inputUrl);
+
+    // Verificação de duplicata
+    const duplicateMatch = existingLinks.find(
+      (l) => l.deleted_at === null && (l.url === cleanedUrl || l.original_url === inputUrl.trim())
+    );
+
+    assert.ok(duplicateMatch, 'Deveria encontrar duplicata');
+    assert.strictEqual(duplicateMatch?.id, 'link-1');
+  });
+
+  test('Não deve considerar duplicata se a URL for diferente ou se o link anterior estiver excluído', () => {
+    const existingLinks = [
+      {
+        id: 'link-1',
+        trip_id: 'trip-1',
+        url: 'https://www.instagram.com/reel/DE_test123/',
+        original_url: 'https://www.instagram.com/reel/DE_test123/',
+        deleted_at: new Date(), // soft deleted
+      },
+      {
+        id: 'link-2',
+        trip_id: 'trip-1',
+        url: 'https://www.instagram.com/reel/OTHER_POST/',
+        original_url: 'https://www.instagram.com/reel/OTHER_POST/',
+        deleted_at: null,
+      },
+    ];
+
+    const inputUrl = 'https://www.instagram.com/reel/DE_test123/';
+    const cleanedUrl = cleanUrl(inputUrl);
+
+    const activeDuplicate = existingLinks.find(
+      (l) => l.deleted_at === null && (l.url === cleanedUrl || l.original_url === inputUrl.trim())
+    );
+
+    assert.strictEqual(activeDuplicate, undefined);
+  });
+});
+
 
 
