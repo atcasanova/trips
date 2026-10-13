@@ -470,13 +470,13 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
               </div>
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                  Links & Inspirações
+                  Links
                   <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
                     {links.length} {links.length === 1 ? 'salvo' : 'salvos'}
                   </span>
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                  Catálogo inteligente de posts do Instagram, TikTok, YouTube e mapas com limpeza de URLs e tags
+                  Salve e organize referências do Instagram, TikTok, YouTube e da web por cidade e tema.
                 </p>
               </div>
             </div>
@@ -867,7 +867,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input
               type="text"
-              placeholder="Buscar por substring (ex: casa localiza casaco, casa e acasalamento)..."
+              aria-label="Buscar links"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-10 py-2.5 bg-slate-50 text-slate-900 text-xs sm:text-sm rounded-xl border border-slate-200 focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all outline-none"
