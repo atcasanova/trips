@@ -1227,7 +1227,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                                 </div>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="px-2.5 py-0.5 rounded bg-slate-700 text-white font-extrabold text-[10px] tracking-wider uppercase shadow-sm">
-                                    Apenas Pouso / Desembarque
+                                    Desembarque
                                   </span>
                                   <span className="font-bold text-xs sm:text-sm text-slate-800">
                                     {seg.carrier_name || 'Companhia Aérea'}{' '}
@@ -1361,7 +1361,7 @@ export const MacroTimelineView: React.FC<MacroTimelineViewProps> = ({
                                 )}
                               </div>
                               <span className="px-2 py-0.5 rounded bg-sky-600 text-white font-extrabold text-[10px] tracking-wider uppercase shadow-sm">
-                                Embarque Hoje
+                                Embarque
                               </span>
                               <span className="font-bold text-xs sm:text-sm text-slate-900">
                                 {seg.carrier_name || 'Companhia Aérea'}
