@@ -15,12 +15,20 @@ import {
 } from '../services/openGraphService.js';
 
 describe('1. Validador de Tokens Opostos do Instagram', () => {
-  test('Deve validar tokens Base64 que decodificam para 10 a 20 alfanuméricos minúsculos', () => {
+  test('Deve validar tokens Base64 que decodificam para 8 a 16 alfanuméricos minúsculos', () => {
+    // 8 caracteres (limite inferior)
+    const b64_8 = Buffer.from('01234567').toString('base64');
+    assert.strictEqual(isValidInstagramOpaqueToken(b64_8), true);
+
     // 10 hex caracteres: '0123456789' e 'abcdef0123'
     const b64_1 = Buffer.from('0123456789').toString('base64');
     const b64_2 = Buffer.from('abcdef0123').toString('base64');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_1), true);
     assert.strictEqual(isValidInstagramOpaqueToken(b64_2), true);
+
+    // 16 caracteres (limite superior)
+    const b64_16 = Buffer.from('0123456789abcdef').toString('base64');
+    assert.strictEqual(isValidInstagramOpaqueToken(b64_16), true);
 
     // Formato URL-safe sem padding
     const b64_urlsafe = Buffer.from('abcdef0123').toString('base64').replace(/=/g, '');
@@ -31,13 +39,13 @@ describe('1. Validador de Tokens Opostos do Instagram', () => {
     assert.strictEqual(isValidInstagramOpaqueToken(b64_real), true);
   });
 
-  test('Deve rejeitar valores fora do formato de 10 a 20 caracteres alfanuméricos minúsculos', () => {
-    // Menos de 10 caracteres
-    const b64_short = Buffer.from('123456789').toString('base64');
+  test('Deve rejeitar valores fora do formato de 8 a 16 caracteres alfanuméricos minúsculos', () => {
+    // Menos de 8 caracteres (7 chars)
+    const b64_short = Buffer.from('1234567').toString('base64');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_short), false);
 
-    // Mais de 20 caracteres
-    const b64_long = Buffer.from('123456789012345678901').toString('base64');
+    // Mais de 16 caracteres (17 chars)
+    const b64_long = Buffer.from('12345678901234567').toString('base64');
     assert.strictEqual(isValidInstagramOpaqueToken(b64_long), false);
 
     // Contendo letras maiúsculas
@@ -160,21 +168,36 @@ describe('3. Heurística de Limpeza de URLs do Instagram (Exemplos obrigatórios
     assert.strictEqual(cleanUrl(urlSpecial), urlSpecial);
   });
 
-  test('Deve preservar o parâmetro se o valor Base64 for de formato diferente (não 10 hex minúsculos)', () => {
-    // Decodifica para texto comum
+  test('Deve preservar o parâmetro se o valor Base64 for de formato diferente (não 8 a 16 alfanuméricos minúsculos)', () => {
+    // Decodifica para texto comum com caractere especial
     const nonHexVal = Buffer.from('hello_world').toString('base64');
     const urlNonHex = `https://www.instagram.com/p/C-123/?cplk=${nonHexVal}`;
     assert.strictEqual(cleanUrl(urlNonHex), urlNonHex);
 
-    // Decodifica para 8 hex (comprimento errado)
-    const shortHexVal = Buffer.from('01234567').toString('base64');
-    const urlShort = `https://www.instagram.com/p/C-123/?cplk=${shortHexVal}`;
+    // Decodifica para 7 caracteres (comprimento curto demais, < 8)
+    const shortVal = Buffer.from('1234567').toString('base64');
+    const urlShort = `https://www.instagram.com/p/C-123/?cplk=${shortVal}`;
     assert.strictEqual(cleanUrl(urlShort), urlShort);
 
-    // Decodifica para 10 hex com maiúsculas
+    // Decodifica para 17 caracteres (comprimento longo demais, > 16)
+    const longVal = Buffer.from('12345678901234567').toString('base64');
+    const urlLong = `https://www.instagram.com/p/C-123/?cplk=${longVal}`;
+    assert.strictEqual(cleanUrl(urlLong), urlLong);
+
+    // Decodifica para letras maiúsculas
     const upperHexVal = Buffer.from('012345678A').toString('base64');
     const urlUpper = `https://www.instagram.com/p/C-123/?cplk=${upperHexVal}`;
     assert.strictEqual(cleanUrl(urlUpper), urlUpper);
+
+    // 8 caracteres é removido
+    const valid8 = Buffer.from('01234567').toString('base64');
+    const url8 = `https://www.instagram.com/p/C-123/?cplk=${valid8}`;
+    assert.strictEqual(cleanUrl(url8), 'https://www.instagram.com/p/C-123/');
+
+    // 16 caracteres é removido
+    const valid16 = Buffer.from('0123456789abcdef').toString('base64');
+    const url16 = `https://www.instagram.com/p/C-123/?cplk=${valid16}`;
+    assert.strictEqual(cleanUrl(url16), 'https://www.instagram.com/p/C-123/');
   });
 
   test('Deve preservar parâmetros de consulta legítimos e remover tracking padrão (utm_*, igsh, fbclid)', () => {

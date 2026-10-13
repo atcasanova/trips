@@ -22,8 +22,8 @@ const KNOWN_TRACKING_KEYS = new Set([
 
 /**
  * Checks if a string is a valid Base64 string that decodes to
- * 10 to 20 lowercase alphanumeric characters (0-9a-z).
- * This covers both 10-hex synthetic tokens and real Instagram tokens (e.g. rpxt=MTljdGd0d2Qydmo5Nw== -> 19ctgtwd2vj97).
+ * 8 to 16 lowercase alphanumeric characters (0-9a-z).
+ * This covers both synthetic/legacy tokens and real Instagram tokens (e.g. rpxt=MTljdGd0d2Qydmo5Nw== -> 19ctgtwd2vj97).
  */
 export function isValidInstagramOpaqueToken(val: string): boolean {
   if (!val || typeof val !== 'string') return false;
@@ -37,13 +37,13 @@ export function isValidInstagramOpaqueToken(val: string): boolean {
 
   try {
     const buf = Buffer.from(normalized, 'base64');
-    // Instagram share tokens decode to 10 to 20 characters
-    if (buf.length < 10 || buf.length > 20) {
+    // Instagram share tokens decode to 8 to 16 characters
+    if (buf.length < 8 || buf.length > 16) {
       return false;
     }
     const decodedStr = buf.toString('utf-8');
     // Must be exactly lowercase alphanumeric characters (0-9a-z)
-    if (!/^[0-9a-z]{10,20}$/.test(decodedStr)) {
+    if (!/^[0-9a-z]{8,16}$/.test(decodedStr)) {
       return false;
     }
 
