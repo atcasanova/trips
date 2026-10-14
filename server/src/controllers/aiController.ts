@@ -5,6 +5,12 @@ import { refreshItineraryLocations } from '../services/itineraryLocationService.
 import { logger } from '../utils/logger.js';
 import { reorderTripDaysChronologically } from './itineraryController.js';
 import { tripBookPdfService } from '../services/tripBookPdfService.js';
+import {
+  AIInputValidationError,
+  AIQuotaExceededError,
+  assertBoundedAiText,
+  validateItineraryDays,
+} from '../services/aiGuardrails.js';
 
 export const aiController = {
   // 1. Generate Narrative for a Day
@@ -43,6 +49,9 @@ export const aiController = {
       });
     } catch (err: any) {
       logger.error('Erro ao gerar narrativa para o dia:', { error: err.message });
+      if (err instanceof AIQuotaExceededError) {
+        return res.status(429).json({ error: err.message });
+      }
       return res.status(500).json({ error: 'Erro ao gerar narrativa' });
     }
   },
@@ -61,10 +70,15 @@ export const aiController = {
         title: trip.title,
         destinations: cities.length > 0 ? cities : [trip.destination_summary || trip.title],
         tagline: trip.tagline || undefined,
+        userId: req.user?.id,
+        tripId,
       });
 
       return res.json({ queries });
     } catch (err: any) {
+      if (err instanceof AIQuotaExceededError) {
+        return res.status(429).json({ error: err.message });
+      }
       return res.status(500).json({ error: 'Erro ao sugerir termos de busca' });
     }
   },
@@ -92,11 +106,27 @@ export const aiController = {
   // 4. Parse freeform itinerary notes into days & items with AI
   async parseItinerary(req: Request, res: Response) {
     const { tripId } = req.params;
-    const { text, replaceExisting = false, apply = true, days } = req.body;
+    const { text, days } = req.body;
+    // Persisting an AI proposal must always be an explicit client action. The
+    // frontend already follows preview -> apply; this protects API consumers.
+    const replaceExisting = req.body.replaceExisting === true;
+    const apply = req.body.apply === true;
 
     const hasPreParsedDays = Array.isArray(days) && days.length > 0;
     if (!hasPreParsedDays && (!text || typeof text !== 'string' || text.trim().length === 0)) {
       return res.status(400).json({ error: 'O texto do itinerário ou os dias analisados são obrigatórios' });
+    }
+
+    let boundedText: string | undefined;
+    let submittedDays: any[] | null = null;
+    try {
+      if (hasPreParsedDays) {
+        submittedDays = validateItineraryDays(days);
+      } else {
+        boundedText = assertBoundedAiText(text, 'Texto do roteiro');
+      }
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
     }
 
     try {
@@ -123,7 +153,7 @@ export const aiController = {
         [tripId]
       );
 
-      let parsedDays = hasPreParsedDays ? days : null;
+      let parsedDays = hasPreParsedDays ? submittedDays : null;
       let durationMs = 0;
 
       if (!parsedDays) {
@@ -136,7 +166,7 @@ export const aiController = {
         }));
 
         const parsedResult = await openaiService.parseItineraryFromText({
-          rawText: text.trim(),
+          rawText: boundedText!,
           tripTitle: trip.title,
           tripStartDate: trip.start_date ? (typeof trip.start_date === 'string' ? trip.start_date.split('T')[0] : new Date(trip.start_date).toISOString().split('T')[0]) : null,
           tripEndDate: trip.end_date ? (typeof trip.end_date === 'string' ? trip.end_date.split('T')[0] : new Date(trip.end_date).toISOString().split('T')[0]) : null,
@@ -310,6 +340,12 @@ export const aiController = {
       });
     } catch (err: any) {
       logger.error('Erro ao processar roteiro com IA:', { error: err.message });
+      if (err instanceof AIInputValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
+      if (err instanceof AIQuotaExceededError) {
+        return res.status(429).json({ error: err.message });
+      }
       return res.status(500).json({ error: err.message || 'Erro ao gerar roteiro com IA' });
     }
   },

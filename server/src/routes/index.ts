@@ -16,7 +16,15 @@ import { inboundEmailController } from '../controllers/inboundEmailController.js
 import { linkController } from '../controllers/linkController.js';
 
 import { requireAuth, requireAdmin, requireTripRole } from '../middleware/auth.js';
-import { authLimiter } from '../middleware/rateLimit.js';
+import {
+  aiDocumentReprocessLimiter,
+  aiDocumentUploadLimiter,
+  aiItineraryParseLimiter,
+  aiNarrativeLimiter,
+  aiPexelsSuggestionLimiter,
+  authLimiter,
+  inboundEmailLimiter,
+} from '../middleware/rateLimit.js';
 import { verifyTurnstile } from '../middleware/turnstile.js';
 import { uploadMiddleware } from '../middleware/upload.js';
 
@@ -106,18 +114,19 @@ router.post(
   '/trips/:tripId/documents/upload',
   requireAuth,
   requireTripRole('EDITOR'),
+  aiDocumentUploadLimiter,
   uploadMiddleware.single('file'),
   documentController.uploadDocument
 );
 router.post('/trips/:tripId/documents/:documentId/confirm', requireAuth, requireTripRole('EDITOR'), documentController.confirmExtraction);
-router.post('/trips/:tripId/documents/:documentId/reprocess', requireAuth, requireTripRole('EDITOR'), documentController.reprocessDocument);
+router.post('/trips/:tripId/documents/:documentId/reprocess', requireAuth, requireTripRole('EDITOR'), aiDocumentReprocessLimiter, documentController.reprocessDocument);
 router.delete('/trips/:tripId/documents/:documentId', requireAuth, requireTripRole('EDITOR'), documentController.deleteDocument);
 router.get('/documents/:documentId/file', requireAuth, documentController.viewDocument);
 
 // 8. AI Travel Assistant
-router.post('/trips/:tripId/ai/days/:dayId/narrative', requireAuth, requireTripRole('EDITOR'), aiController.generateDayNarrative);
-router.post('/trips/:tripId/ai/itinerary-parse', requireAuth, requireTripRole('EDITOR'), aiController.parseItinerary);
-router.get('/trips/:tripId/ai/pexels-suggestions', requireAuth, requireTripRole('VIEWER'), aiController.getPexelsSuggestions);
+router.post('/trips/:tripId/ai/days/:dayId/narrative', requireAuth, requireTripRole('EDITOR'), aiNarrativeLimiter, aiController.generateDayNarrative);
+router.post('/trips/:tripId/ai/itinerary-parse', requireAuth, requireTripRole('EDITOR'), aiItineraryParseLimiter, aiController.parseItinerary);
+router.get('/trips/:tripId/ai/pexels-suggestions', requireAuth, requireTripRole('VIEWER'), aiPexelsSuggestionLimiter, aiController.getPexelsSuggestions);
 router.get('/trips/:tripId/ai/logs', requireAuth, requireTripRole('VIEWER'), aiController.listLogs);
 
 // 9. Pexels Integration
@@ -148,6 +157,7 @@ router.delete('/trips/:tripId/expenses/transfers/:transferId', requireAuth, requ
 // 12. Inbound Email Ingestion (Protected by X-Inbound-Secret)
 router.post(
   '/inbound/email',
+  inboundEmailLimiter,
   express.raw({ type: () => true, limit: '50mb' }),
   inboundEmailController.handleInboundEmail
 );

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { logger } from './logger.js';
+import { env } from '../config/env.js';
 
 const require = createRequire(import.meta.url);
 
@@ -12,6 +13,12 @@ export async function extractDocumentContent(
   try {
     if (!fs.existsSync(filePath)) {
       throw new Error(`Arquivo não encontrado no caminho: ${filePath}`);
+    }
+
+    const fileSize = fs.statSync(filePath).size;
+    const maxBytes = env.AI_MAX_DOCUMENT_SIZE_MB * 1024 * 1024;
+    if (fileSize > maxBytes) {
+      throw new Error(`Documento excede o limite de ${env.AI_MAX_DOCUMENT_SIZE_MB} MB para processamento por IA.`);
     }
 
     // 1. Image types -> Base64 data URL for Vision API
@@ -28,11 +35,17 @@ export async function extractDocumentContent(
         const pdfParse = require('pdf-parse');
         const dataBuffer = fs.readFileSync(filePath);
         const data = await pdfParse(dataBuffer);
+        if (Number(data?.numpages || 0) > env.AI_MAX_DOCUMENT_PAGES) {
+          throw new Error(`PDF excede o limite de ${env.AI_MAX_DOCUMENT_PAGES} páginas para processamento por IA.`);
+        }
         if (data && data.text && data.text.trim().length > 0) {
-          extractedText = data.text.trim();
+          extractedText = data.text.trim().slice(0, env.AI_MAX_INPUT_CHARS);
           logger.info(`Texto extraído do PDF com sucesso (${extractedText.length} caracteres)`);
         }
       } catch (err: any) {
+        if (err.message?.includes('excede o limite')) {
+          throw err;
+        }
         logger.warn('pdf-parse falhou ao extrair texto do PDF', { error: err.message });
       }
 
@@ -43,9 +56,13 @@ export async function extractDocumentContent(
 
       // If text is short or empty (scanned ticket, flyer, pure graphic PDF), try extracting strings or render page with Puppeteer
       const buf = fs.readFileSync(filePath);
+      const estimatedPages = (buf.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
+      if (estimatedPages > env.AI_MAX_DOCUMENT_PAGES) {
+        throw new Error(`PDF excede o limite de ${env.AI_MAX_DOCUMENT_PAGES} páginas para processamento por IA.`);
+      }
       const rawStrings = buf.toString('latin1').replace(/[^\x20-\x7E\n\r\t]/g, ' ').replace(/\s+/g, ' ').trim();
       if (rawStrings.length > 250) {
-        return { textContent: rawStrings.slice(0, 15000) };
+        return { textContent: rawStrings.slice(0, env.AI_MAX_INPUT_CHARS) };
       }
 
       // Puppeteer fallback for scanned/graphic PDF tickets
@@ -68,7 +85,7 @@ export async function extractDocumentContent(
         logger.warn('Renderização de PDF para imagem via Puppeteer não disponível:', { error: renderErr.message });
       }
 
-      return { textContent: extractedText || rawStrings.slice(0, 10000) };
+      return { textContent: extractedText || rawStrings.slice(0, env.AI_MAX_INPUT_CHARS) };
     }
 
     // 3. DOCX -> extract text from word/document.xml
@@ -85,7 +102,7 @@ export async function extractDocumentContent(
           const docxText = matches
             .map(m => m.replace(/<[^>]+>/g, ''))
             .join(' ');
-          return { textContent: docxText };
+          return { textContent: docxText.slice(0, env.AI_MAX_INPUT_CHARS) };
         }
       } catch (err: any) {
         logger.warn('Falha na extração de texto do DOCX:', { error: err.message });
@@ -94,7 +111,7 @@ export async function extractDocumentContent(
 
     // 4. Default plain text fallback
     const raw = fs.readFileSync(filePath, 'utf-8');
-    return { textContent: raw.slice(0, 12000) };
+    return { textContent: raw.slice(0, env.AI_MAX_INPUT_CHARS) };
   } catch (err: any) {
     logger.error('Erro na extração de conteúdo do documento:', { error: err.message, filePath });
     return {};

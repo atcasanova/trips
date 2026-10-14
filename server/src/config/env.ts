@@ -39,7 +39,17 @@ export const env = {
   
   UPLOAD_PATH: process.env.UPLOAD_PATH || path.resolve(process.cwd(), 'uploads'),
   MAX_UPLOAD_SIZE_MB: parseInt(process.env.MAX_UPLOAD_SIZE_MB || '25', 10),
+  AI_MAX_DOCUMENT_SIZE_MB: parseInt(process.env.AI_MAX_DOCUMENT_SIZE_MB || '10', 10),
+  AI_MAX_DOCUMENT_PAGES: parseInt(process.env.AI_MAX_DOCUMENT_PAGES || '20', 10),
+  AI_MAX_INPUT_CHARS: parseInt(process.env.AI_MAX_INPUT_CHARS || '100000', 10),
+  AI_DAILY_TOKENS_PER_USER: parseInt(process.env.AI_DAILY_TOKENS_PER_USER || '50000', 10),
+  AI_DAILY_TOKENS_PER_TRIP: parseInt(process.env.AI_DAILY_TOKENS_PER_TRIP || '100000', 10),
+  AI_MONTHLY_TOKENS_PER_USER: parseInt(process.env.AI_MONTHLY_TOKENS_PER_USER || '500000', 10),
+  AI_MONTHLY_TOKENS_PER_TRIP: parseInt(process.env.AI_MONTHLY_TOKENS_PER_TRIP || '1000000', 10),
+  AI_MAX_CONCURRENT_REQUESTS: parseInt(process.env.AI_MAX_CONCURRENT_REQUESTS || '2', 10),
+  AI_QUEUE_TIMEOUT_MS: parseInt(process.env.AI_QUEUE_TIMEOUT_MS || '15000', 10),
   
   SEED_DEMO: process.env.SEED_DEMO === 'true',
   INBOUND_EMAIL_SECRET: process.env.INBOUND_EMAIL_SECRET || 'trips_inbound_secure_email_token_2026',
+  INBOUND_AUTO_CONFIRM: process.env.INBOUND_AUTO_CONFIRM === 'true',
 };

@@ -121,9 +121,14 @@ export const inboundEmailService = {
     }
 
     const processedDocIds: string[] = [];
+    const persistedFilePaths = new Set<string>();
     let finalTrip: any = null;
     let finalIsNewTrip = false;
     let latestExtractedInfo: ExtractedTripInfo | null = null;
+    // Safe default: inbound content is untrusted. It may create a reviewable
+    // extraction on an existing trip, but cannot alter reservations, expenses,
+    // travelers, dates, or cities until an editor confirms it in the UI.
+    const autoConfirm = env.INBOUND_AUTO_CONFIRM;
 
     // 3. Process each document file
     for (let fIdx = 0; fIdx < filesToProcess.length; fIdx++) {
@@ -167,10 +172,13 @@ export const inboundEmailService = {
 
       latestExtractedInfo = tripInfo;
 
-      // Filter 2 & 3: Match with existing trip or auto-create if this is the first file,
-      // or re-use existing matched/created trip for subsequent files in this email
+      // In review mode only attach to an already matching trip; do not let an
+      // AI extraction create or mutate a trip as a side effect of email.
       if (!finalTrip) {
-        const matchResult = await this.matchOrCreateTrip(user, tripInfo);
+        const matchResult = await this.matchOrCreateTrip(user, tripInfo, {
+          allowAutoCreate: autoConfirm,
+          allowMutation: autoConfirm,
+        });
         finalTrip = matchResult.trip;
         finalIsNewTrip = matchResult.isNewTrip;
       }
@@ -204,13 +212,15 @@ export const inboundEmailService = {
 
       const doc = docRows[0];
       processedDocIds.push(doc.id);
+      persistedFilePaths.add(file.filePath);
 
-      // Save extraction record
+      // Save as a draft unless a deployment explicitly opts into the legacy
+      // automation. The normal Documents review flow performs the confirmation.
       await query(
         `INSERT INTO document_ai_extractions (
           document_id, trip_id, detected_type, raw_extraction, normalized_data,
           model_used, duration_ms, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'CONFIRMED')
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *`,
         [
           doc.id,
@@ -220,35 +230,39 @@ export const inboundEmailService = {
           JSON.stringify(aiResult.normalizedData),
           aiResult.modelUsed,
           aiResult.durationMs,
+          autoConfirm ? 'CONFIRMED' : 'DRAFT',
         ]
       );
 
-      // Apply confirmed extraction to database entities (flights, hotels, itinerary items, expenses)
-      await applyConfirmedExtraction({
-        tripId: finalTrip.id,
-        documentId: doc.id,
-        userId: user.id,
-        confirmedType: aiResult.detectedType,
-        normalizedData: aiResult.normalizedData,
-      });
+      if (autoConfirm) {
+        await applyConfirmedExtraction({
+          tripId: finalTrip.id,
+          documentId: doc.id,
+          userId: user.id,
+          confirmedType: aiResult.detectedType,
+          normalizedData: aiResult.normalizedData,
+        });
+      }
 
       // Audit log
       await query(
         `INSERT INTO audit_logs (user_id, trip_id, action, entity_type, entity_id, metadata)
-         VALUES ($1, $2, 'INBOUND_EMAIL_DOCUMENT_PROCESSED', 'DOCUMENT', $3, $4)`,
+         VALUES ($1, $2, $3, 'DOCUMENT', $4, $5)`,
         [
           user.id,
           finalTrip.id,
+          autoConfirm ? 'INBOUND_EMAIL_DOCUMENT_PROCESSED' : 'INBOUND_EMAIL_DOCUMENT_REVIEW_REQUIRED',
           doc.id,
           JSON.stringify({
             detectedType: aiResult.detectedType,
             fileName: file.originalName,
             isNewTrip: finalIsNewTrip,
+            autoConfirmed: autoConfirm,
           }),
         ]
       );
 
-      logger.info('Documento de inbound processado e confirmado com sucesso', {
+      logger.info(autoConfirm ? 'Documento de inbound processado e confirmado com sucesso' : 'Documento de inbound salvo para revisão manual', {
         docId: doc.id,
         tripId: finalTrip.id,
         tripTitle: finalTrip.title,
@@ -256,6 +270,11 @@ export const inboundEmailService = {
     }
 
     if (processedDocIds.length === 0 || !finalTrip) {
+      await Promise.all(
+        filesToProcess
+          .filter((file) => !persistedFilePaths.has(file.filePath))
+          .map((file) => fs.promises.unlink(file.filePath).catch(() => {}))
+      );
       logger.info('Nenhum documento de viagem reconhecido no e-mail recebido. Notificando usuário...');
       await emailService.sendInboundUnrecognizedEmail({
         to: user.email,
@@ -790,8 +809,12 @@ export const inboundEmailService = {
     };
   },
 
-  // Match existing user trip by dates & city, or auto-create a new trip (Filters 2 & 3)
-  async matchOrCreateTrip(user: UserRecord, info: ExtractedTripInfo): Promise<{ trip: any; isNewTrip: boolean }> {
+  // Match an existing trip, optionally enabling the legacy auto-create/mutate behavior.
+  async matchOrCreateTrip(
+    user: UserRecord,
+    info: ExtractedTripInfo,
+    options: { allowAutoCreate?: boolean; allowMutation?: boolean } = {}
+  ): Promise<{ trip: any; isNewTrip: boolean }> {
     // Fetch all active trips where the user is a member
     const { rows: trips } = await query(
       `SELECT t.* FROM trips t
@@ -913,8 +936,8 @@ export const inboundEmailService = {
         score: highestScore,
       });
 
-      // Expand trip dates if reservation extends beyond current trip bounds
-      if (info.startDate && bestTrip.start_date) {
+      // Only an explicitly opted-in automation may mutate an existing trip.
+      if (options.allowMutation && info.startDate && bestTrip.start_date) {
         const tStart = new Date(bestTrip.start_date);
         const rStart = new Date(info.startDate);
         const tEnd = bestTrip.end_date ? new Date(bestTrip.end_date) : tStart;
@@ -946,7 +969,7 @@ export const inboundEmailService = {
       }
 
       // Add city to trip.cities if missing (ignoring home origin city of existing transports)
-      if (info.cities.length > 0) {
+      if (options.allowMutation && info.cities.length > 0) {
         const tripCities: string[] = Array.isArray(bestTrip.cities)
           ? bestTrip.cities
           : typeof bestTrip.cities === 'string'
@@ -982,6 +1005,14 @@ export const inboundEmailService = {
       }
 
       return { trip: bestTrip, isNewTrip: false };
+    }
+
+    if (!options.allowAutoCreate) {
+      logger.info('Inbound sem viagem correspondente foi mantido fora de automação', {
+        userId: user.id,
+        category: info.category,
+      });
+      return { trip: null, isNewTrip: false };
     }
 
     // Filter 3: Check if this document has minimum data to justify creating a new trip

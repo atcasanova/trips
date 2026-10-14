@@ -9,6 +9,7 @@ import { logger } from './utils/logger.js';
 import routes from './routes/index.js';
 import { reportController } from './controllers/reportController.js';
 import { securityHeaders, isAllowedOrigin } from './middleware/securityHeaders.js';
+import { apiLimiter } from './middleware/rateLimit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,7 +61,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 // REST API routes
-app.use('/api', routes);
+app.use('/api', apiLimiter, routes);
 
 // Search engine robots control (private travel app: disallow all indexing)
 app.get('/robots.txt', (_req: Request, res: Response) => {
@@ -75,11 +76,6 @@ app.get('/s/:shareToken/pdf', reportController.exportPublicSharedPdf);
 // Legacy share routes (for backwards compatibility)
 app.get('/share/tripbook/:shareToken', reportController.renderPublicSharedHtml);
 app.get('/share/tripbook/:shareToken/pdf', reportController.exportPublicSharedPdf);
-
-// Static uploads directory
-if (fs.existsSync(env.UPLOAD_PATH)) {
-  app.use('/uploads', express.static(env.UPLOAD_PATH));
-}
 
 // Serve Frontend (React Vite build)
 const publicDir = path.resolve(__dirname, '../public');
@@ -141,8 +137,11 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     method: req.method,
   });
 
-  const statusCode = err.status || 500;
+  const statusCode = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
   return res.status(statusCode).json({
-    error: err.message || 'Erro interno do servidor',
+    error:
+      err.code === 'LIMIT_FILE_SIZE'
+        ? `O documento excede o limite de ${env.AI_MAX_DOCUMENT_SIZE_MB} MB para processamento por IA.`
+        : err.message || 'Erro interno do servidor',
   });
 });

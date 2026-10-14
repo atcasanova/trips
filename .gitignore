@@ -18,13 +18,32 @@ build/
 coverage/
 .nyc_output/
 *.tsbuildinfo
+.eslintcache
+.stylelintcache
+.vite/
+.turbo/
+.parcel-cache/
+.next/
+playwright-report/
+test-results/
+*.lcov
+*.coverage
+
+# Generated security analysis and local diagnostics
+sast/
+.scannerwork/
+*.sarif
+core
+core.*
 
 # Runtime data, uploads, databases, and backups
 uploads/
+server/uploads/
 data/
 storage/
 pgdata/
 postgres-data/
+docker-data/
 backups/
 *.db
 *.sqlite
@@ -39,6 +58,7 @@ backup_*.sql
 # Logs, process files, and caches
 logs/
 *.log
+*.log.*
 *.pid
 *.pid.lock
 .cache/
@@ -54,6 +74,9 @@ tmp/
 *.crt
 credentials.json
 service-account*.json
+secrets/
+*.secret
+*.token
 
 # Editor and operating-system files
 .DS_Store

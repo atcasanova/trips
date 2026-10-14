@@ -32,7 +32,9 @@ const allowedMimes = [
 export const uploadMiddleware = multer({
   storage,
   limits: {
-    fileSize: env.MAX_UPLOAD_SIZE_MB * 1024 * 1024,
+    // Every document upload is sent to AI. Keep a lower hard ceiling for that
+    // cost-bearing path even if the generic storage setting is larger.
+    fileSize: Math.min(env.MAX_UPLOAD_SIZE_MB, env.AI_MAX_DOCUMENT_SIZE_MB) * 1024 * 1024,
   },
   fileFilter: (_req, file, cb) => {
     if (allowedMimes.includes(file.mimetype)) {

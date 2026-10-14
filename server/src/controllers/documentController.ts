@@ -94,6 +94,19 @@ export const documentController = {
       // Compute SHA-256 hash
       const fileHash = await computeFileHash(file.path);
 
+      // A duplicate within the same trip would produce the same extraction and
+      // spend again without adding value. Remove the just-uploaded temp file.
+      const { rows: duplicates } = await query(
+        `SELECT id FROM documents
+         WHERE trip_id = $1 AND file_hash = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [tripId, fileHash]
+      );
+      if (duplicates.length > 0) {
+        await fs.promises.unlink(file.path).catch(() => {});
+        return res.status(409).json({ error: 'Este documento já foi enviado para esta viagem.' });
+      }
+
       // Save document record in DB
       const { rows: docRows } = await query(
         `INSERT INTO documents (
@@ -304,7 +317,22 @@ export const documentController = {
     const { documentId } = req.params;
 
     try {
-      const { rows } = await query('SELECT * FROM documents WHERE id = $1 AND deleted_at IS NULL', [documentId]);
+      if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+
+      const { rows } = await query(
+        `SELECT d.*
+         FROM documents d
+         WHERE d.id = $1
+           AND d.deleted_at IS NULL
+           AND (
+             $2 = 'ADMIN'
+             OR EXISTS (
+               SELECT 1 FROM trip_members tm
+               WHERE tm.trip_id = d.trip_id AND tm.user_id = $3
+             )
+           )`,
+        [documentId, req.user.role, req.user.id]
+      );
       if (rows.length === 0) return res.status(404).json({ error: 'Documento não encontrado' });
 
       const doc = rows[0];
