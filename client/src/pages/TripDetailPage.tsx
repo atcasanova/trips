@@ -410,7 +410,7 @@ export const TripDetailPage: React.FC = () => {
               { id: 'overview', label: 'Visão Geral', icon: Sparkles },
               { id: 'timeline', label: 'Timeline', icon: Route },
               { id: 'itinerary', label: 'Roteiro', icon: Calendar, count: days.length },
-              { id: 'transports', label: 'Locomoção', icon: Plane, count: transports.length },
+              { id: 'transports', label: 'Deslocamento', icon: Plane, count: transports.length },
               { id: 'hotels', label: 'Hospedagens', icon: Building, count: hotels.length },
               { id: 'documents', label: 'Documentos & IA', icon: FileText, count: documents.length },
               { id: 'expenses', label: 'Despesas', icon: DollarSign },
