@@ -21,6 +21,8 @@ import {
   Divide,
   RotateCcw,
   Info,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { HotelReservation, HotelSubReservation, TripTraveler, HotelCluster, HotelSuggestion } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -97,6 +99,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
   const [payerTravelerId, setPayerTravelerId] = useState<string>('');
   const [splitMode, setSplitMode] = useState<'EQUAL' | 'CUSTOM'>('EQUAL');
   const [customSplits, setCustomSplits] = useState<Record<string, string>>({});
+  const [lockedTravelers, setLockedTravelers] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (travelers && travelers.length > 0 && !payerTravelerId) {
@@ -125,40 +128,133 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
     );
   }, [participatingTravelers, customSplits]);
 
+  // Rateio dinâmico no modo personalizado:
+  // Ao digitar o valor para uma pessoa, ela é travada e o saldo restante é automaticamente rateado entre as demais!
+  const rebalanceExactAmounts = (
+    total: number,
+    currentSplits: Record<string, string>,
+    locks: Record<string, boolean>,
+    activeTravelerIds: string[]
+  ) => {
+    const lockedIds = activeTravelerIds.filter((id) => locks[id]);
+    const unlockedIds = activeTravelerIds.filter((id) => !locks[id]);
+
+    const lockedSum = lockedIds.reduce((sum, id) => {
+      const v = parseFloat(String(currentSplits[id])) || 0;
+      return sum + v;
+    }, 0);
+    const remainder = Math.max(0, total - lockedSum);
+
+    const updated: Record<string, string> = { ...currentSplits };
+
+    if (unlockedIds.length > 0) {
+      const share = Math.floor((remainder / unlockedIds.length) * 100) / 100;
+      let distributed = 0;
+
+      unlockedIds.forEach((id, idx) => {
+        if (idx === unlockedIds.length - 1) {
+          const lastVal = Math.max(0, Math.round((remainder - distributed) * 100) / 100);
+          updated[id] = lastVal > 0 ? lastVal.toFixed(2) : '0';
+        } else {
+          updated[id] = share > 0 ? share.toFixed(2) : '0';
+          distributed += share;
+        }
+      });
+    }
+
+    setCustomSplits(updated);
+  };
+
+  const handleAmountChange = (newAmtStr: string) => {
+    let clean = newAmtStr;
+    if (clean.length > 1 && clean.startsWith('0') && !clean.startsWith('0.') && !clean.startsWith('0,')) {
+      clean = clean.replace(/^0+/, '') || '0';
+    }
+    setAmount(clean);
+    const newTotal = parseFloat(clean) || 0;
+
+    if (splitMode === 'CUSTOM' && participatingTravelers.length > 0) {
+      rebalanceExactAmounts(newTotal, customSplits, lockedTravelers, participatingTravelers.map((t) => t.id));
+    }
+  };
+
   const handleSelectSplitMode = (mode: 'EQUAL' | 'CUSTOM') => {
     setSplitMode(mode);
     if (mode === 'CUSTOM') {
-      const numAmount = parseFloat(amount) || 0;
+      const numTotal = parseFloat(amount) || 0;
       const count = participatingTravelers.length;
-      if (count > 0 && numAmount > 0) {
-        const equalShare = (numAmount / count).toFixed(2);
+      if (count > 0 && numTotal > 0) {
+        const share = Math.floor((numTotal / count) * 100) / 100;
+        let distributed = 0;
         const newSplits: Record<string, string> = {};
-        participatingTravelers.forEach((t) => {
-          newSplits[t.id] = customSplits[t.id] || equalShare;
+        const newLocks: Record<string, boolean> = {};
+
+        participatingTravelers.forEach((t, idx) => {
+          if (idx === count - 1) {
+            const lastVal = Math.max(0, Math.round((numTotal - distributed) * 100) / 100);
+            newSplits[t.id] = lastVal > 0 ? lastVal.toFixed(2) : '0';
+          } else {
+            newSplits[t.id] = share > 0 ? share.toFixed(2) : '0';
+            distributed += share;
+          }
+          newLocks[t.id] = false;
         });
+
         setCustomSplits(newSplits);
+        setLockedTravelers(newLocks);
       }
     }
   };
 
-  const handleEditCustomSplit = (travelerId: string, val: string) => {
-    setCustomSplits((prev) => ({
-      ...prev,
-      [travelerId]: val,
-    }));
+  const handleEditTravelerExact = (travelerId: string, valStr: string) => {
+    let cleanVal = valStr;
+    if (cleanVal.length > 1 && cleanVal.startsWith('0') && !cleanVal.startsWith('0.') && !cleanVal.startsWith('0,')) {
+      cleanVal = cleanVal.replace(/^0+/, '') || '0';
+    }
+
+    const total = parseFloat(amount) || 0;
+    const newLocks = { ...lockedTravelers, [travelerId]: true };
+    const newSplits = { ...customSplits, [travelerId]: cleanVal };
+
+    setLockedTravelers(newLocks);
+    rebalanceExactAmounts(total, newSplits, newLocks, participatingTravelers.map((t) => t.id));
+  };
+
+  const handleUnlockTraveler = (travelerId: string) => {
+    const total = parseFloat(amount) || 0;
+    const newLocks = { ...lockedTravelers, [travelerId]: false };
+    setLockedTravelers(newLocks);
+    rebalanceExactAmounts(total, customSplits, newLocks, participatingTravelers.map((t) => t.id));
   };
 
   const handleResetEqualSplits = () => {
-    const numAmount = parseFloat(amount) || 0;
+    const numTotal = parseFloat(amount) || 0;
     const count = participatingTravelers.length;
-    if (count > 0 && numAmount > 0) {
-      const equalShare = (numAmount / count).toFixed(2);
-      const newSplits: Record<string, string> = {};
-      participatingTravelers.forEach((t) => {
-        newSplits[t.id] = equalShare;
+    const newSplits: Record<string, string> = {};
+    const newLocks: Record<string, boolean> = {};
+
+    if (count > 0 && numTotal > 0) {
+      const share = Math.floor((numTotal / count) * 100) / 100;
+      let distributed = 0;
+      participatingTravelers.forEach((t, idx) => {
+        if (idx === count - 1) {
+          const lastVal = Math.max(0, Math.round((numTotal - distributed) * 100) / 100);
+          newSplits[t.id] = lastVal > 0 ? lastVal.toFixed(2) : '0';
+        } else {
+          newSplits[t.id] = share > 0 ? share.toFixed(2) : '0';
+          distributed += share;
+        }
+        newLocks[t.id] = false;
       });
-      setCustomSplits(newSplits);
+    } else {
+      participatingTravelers.forEach((t) => {
+        newSplits[t.id] = '0';
+        newLocks[t.id] = false;
+      });
     }
+
+    setCustomSplits(newSplits);
+    setLockedTravelers(newLocks);
   };
 
   // Autocomplete e sugestões de hotéis do sistema
@@ -417,6 +513,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       setNotes('');
       setModalGuests([]);
       setCustomSplits({});
+      setLockedTravelers({});
       setSplitMode('EQUAL');
       setSelectedSuggestion(null);
       setHotelSuggestions([]);
@@ -1477,8 +1574,14 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => handleAmountChange(e.target.value)}
+                    onFocus={(e) => {
+                      if (e.target.value === '0' || e.target.value === '0.00') {
+                        e.target.select();
+                      }
+                    }}
                     placeholder="0.00"
                     className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
                   />
@@ -1622,7 +1725,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                         {splitMode === 'CUSTOM' && (
                           <div className="space-y-2">
                             <div className="flex items-center justify-between text-[10px]">
-                              <span className="text-slate-500">Defina o valor devido por cada hóspede:</span>
+                              <span className="text-slate-500">Defina o valor de um hóspede e o saldo é rateado automaticamente entre os demais:</span>
                               <button
                                 type="button"
                                 onClick={handleResetEqualSplits}
@@ -1633,13 +1736,20 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                               </button>
                             </div>
 
-                            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
                               {participatingTravelers.map((t) => {
                                 const tColor = getTravelerColor(t.id, travelers);
+                                const numTotal = parseFloat(amount) || 0;
+                                const val = parseFloat(customSplits[t.id] || '0') || 0;
+                                const pct = numTotal > 0 ? (val / numTotal) * 100 : 0;
+                                const isLocked = Boolean(lockedTravelers[t.id]);
+
                                 return (
                                   <div
                                     key={t.id}
-                                    className="p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2"
+                                    className={`p-2 rounded-lg border transition-all flex items-center justify-between gap-2 ${
+                                      isLocked ? 'bg-indigo-50/30 border-indigo-200' : 'bg-slate-50 border-slate-200'
+                                    }`}
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
                                       <span
@@ -1652,18 +1762,53 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                                         {t.display_name}
                                       </span>
                                     </div>
-                                    <div className="relative w-28 shrink-0">
-                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono">
-                                        {currency}
+
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <div className="relative w-28">
+                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">
+                                          {currency}
+                                        </span>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customSplits[t.id] !== undefined ? customSplits[t.id] : ''}
+                                          onChange={(e) => handleEditTravelerExact(t.id, e.target.value)}
+                                          onFocus={(e) => {
+                                            if (e.target.value === '0' || e.target.value === '0.00') {
+                                              e.target.select();
+                                            }
+                                          }}
+                                          placeholder="0.00"
+                                          className={`w-full pl-8 pr-2 py-1 text-xs font-mono font-bold text-right border rounded-lg focus:outline-none ${
+                                            isLocked
+                                              ? 'border-indigo-400 bg-indigo-50/50 text-indigo-950 ring-1 ring-indigo-300'
+                                              : 'border-slate-300 bg-white text-slate-800'
+                                          }`}
+                                        />
+                                      </div>
+
+                                      {isLocked ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUnlockTraveler(t.id)}
+                                          className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded shrink-0 cursor-pointer"
+                                          title="Valor fixado manualmente. Clique para desbloquear e ratear o saldo restante"
+                                        >
+                                          <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                                        </button>
+                                      ) : (
+                                        <span
+                                          className="p-1 text-slate-300 shrink-0"
+                                          title="Calculado automaticamente a partir do saldo restante"
+                                        >
+                                          <Unlock className="w-3.5 h-3.5" />
+                                        </span>
+                                      )}
+
+                                      <span className="text-[10px] text-slate-400 font-mono min-w-[38px] text-right">
+                                        {pct.toFixed(1)}%
                                       </span>
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        value={customSplits[t.id] ?? ''}
-                                        onChange={(e) => handleEditCustomSplit(t.id, e.target.value)}
-                                        placeholder="0.00"
-                                        className="w-full pl-8 pr-2 py-1 text-xs font-mono font-bold text-right border border-slate-300 rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none bg-white"
-                                      />
                                     </div>
                                   </div>
                                 );
