@@ -103,6 +103,13 @@ export const TripDetailPage: React.FC = () => {
     }
   }, [tab]);
 
+  // Recarrega todos os dados da viagem silenciosamente ao trocar de aba (evita necessidade de F5)
+  useEffect(() => {
+    if (tripId && trip) {
+      loadAllTripData({ silent: true });
+    }
+  }, [activeTab]);
+
   const handleTabChange = (newTab: TabType) => {
     setActiveTab(newTab);
     navigate(`/trips/${tripId}/${newTab}`, { replace: false });
@@ -790,6 +797,7 @@ export const TripDetailPage: React.FC = () => {
             tripId={trip.id}
             hotels={hotels}
             travelers={travelers}
+            currentUserId={user?.id}
             onRefresh={loadAllTripData}
             canEdit={canEdit}
           />
@@ -813,6 +821,7 @@ export const TripDetailPage: React.FC = () => {
             trip={trip}
             transports={transports}
             hotels={hotels}
+            onRefresh={loadAllTripData}
           />
         )}
 

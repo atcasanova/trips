@@ -17,25 +17,64 @@ import {
   AlertCircle,
   ExternalLink,
   Sparkles,
+  DollarSign,
+  Divide,
+  RotateCcw,
+  Info,
 } from 'lucide-react';
 import { HotelReservation, HotelSubReservation, TripTraveler, HotelCluster, HotelSuggestion } from '../types/index.js';
 import { api } from '../api/client.js';
 import { formatDateBr } from '../utils/date.js';
 import { detectHotelClusters } from '../utils/aggregation.js';
 
-
 interface HotelsViewProps {
   tripId: string;
   hotels: HotelReservation[];
   travelers?: TripTraveler[];
+  currentUserId?: string;
   onRefresh: () => void;
   canEdit: boolean;
 }
+
+const TRAVELER_HARMONIC_COLORS = [
+  { color: '#4f46e5', bg: 'bg-indigo-50', text: 'text-indigo-700' },
+  { color: '#0d9488', bg: 'bg-teal-50', text: 'text-teal-700' },
+  { color: '#e11d48', bg: 'bg-rose-50', text: 'text-rose-700' },
+  { color: '#d97706', bg: 'bg-amber-50', text: 'text-amber-700' },
+  { color: '#7c3aed', bg: 'bg-purple-50', text: 'text-purple-700' },
+  { color: '#0284c7', bg: 'bg-sky-50', text: 'text-sky-700' },
+  { color: '#16a34a', bg: 'bg-emerald-50', text: 'text-emerald-700' },
+  { color: '#ea580c', bg: 'bg-orange-50', text: 'text-orange-700' },
+  { color: '#db2777', bg: 'bg-pink-50', text: 'text-pink-700' },
+  { color: '#2563eb', bg: 'bg-blue-50', text: 'text-blue-700' },
+];
+
+const getTravelerColor = (travelerId?: string, list?: { id: string }[]) => {
+  if (!travelerId || !list || list.length === 0) {
+    return TRAVELER_HARMONIC_COLORS[0];
+  }
+  const idx = list.findIndex((t) => t.id === travelerId);
+  return TRAVELER_HARMONIC_COLORS[(idx >= 0 ? idx : 0) % TRAVELER_HARMONIC_COLORS.length];
+};
+
+const getFirstAndLastInitials = (name?: string | null): string => {
+  if (!name) return '?';
+  const clean = name.trim();
+  if (!clean) return '?';
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 1).toUpperCase();
+  }
+  const first = parts[0].slice(0, 1).toUpperCase();
+  const last = parts[parts.length - 1].slice(0, 1).toUpperCase();
+  return `${first}${last}`;
+};
 
 export const HotelsView: React.FC<HotelsViewProps> = ({
   tripId,
   hotels,
   travelers = [],
+  currentUserId,
   onRefresh,
   canEdit,
 }) => {
@@ -52,6 +91,75 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
   const [notes, setNotes] = useState('');
   const [modalGuests, setModalGuests] = useState<string[]>([]);
   const [customModalGuest, setCustomModalGuest] = useState('');
+
+  // Despesa associada & Divisão de Gastos
+  const [createExpense, setCreateExpense] = useState(true);
+  const [payerTravelerId, setPayerTravelerId] = useState<string>('');
+  const [splitMode, setSplitMode] = useState<'EQUAL' | 'CUSTOM'>('EQUAL');
+  const [customSplits, setCustomSplits] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (travelers && travelers.length > 0 && !payerTravelerId) {
+      const match = currentUserId ? travelers.find((t) => t.user_id === currentUserId) : null;
+      setPayerTravelerId(match ? match.id : travelers[0].id);
+    }
+  }, [travelers, currentUserId, payerTravelerId]);
+
+  // Hóspedes marcados que correspondem a participantes cadastrados da viagem
+  const participatingTravelers = useMemo(() => {
+    return travelers.filter((t) =>
+      modalGuests.some((g) => {
+        const cleanG = g.trim().toLowerCase();
+        return (
+          cleanG === (t.display_name || '').trim().toLowerCase() ||
+          cleanG === (t.ticket_name || '').trim().toLowerCase()
+        );
+      })
+    );
+  }, [travelers, modalGuests]);
+
+  const totalCustomSplits = useMemo(() => {
+    return participatingTravelers.reduce(
+      (sum, t) => sum + (parseFloat(customSplits[t.id] || '0') || 0),
+      0
+    );
+  }, [participatingTravelers, customSplits]);
+
+  const handleSelectSplitMode = (mode: 'EQUAL' | 'CUSTOM') => {
+    setSplitMode(mode);
+    if (mode === 'CUSTOM') {
+      const numAmount = parseFloat(amount) || 0;
+      const count = participatingTravelers.length;
+      if (count > 0 && numAmount > 0) {
+        const equalShare = (numAmount / count).toFixed(2);
+        const newSplits: Record<string, string> = {};
+        participatingTravelers.forEach((t) => {
+          newSplits[t.id] = customSplits[t.id] || equalShare;
+        });
+        setCustomSplits(newSplits);
+      }
+    }
+  };
+
+  const handleEditCustomSplit = (travelerId: string, val: string) => {
+    setCustomSplits((prev) => ({
+      ...prev,
+      [travelerId]: val,
+    }));
+  };
+
+  const handleResetEqualSplits = () => {
+    const numAmount = parseFloat(amount) || 0;
+    const count = participatingTravelers.length;
+    if (count > 0 && numAmount > 0) {
+      const equalShare = (numAmount / count).toFixed(2);
+      const newSplits: Record<string, string> = {};
+      participatingTravelers.forEach((t) => {
+        newSplits[t.id] = equalShare;
+      });
+      setCustomSplits(newSplits);
+    }
+  };
 
   // Autocomplete e sugestões de hotéis do sistema
   const [hotelSuggestions, setHotelSuggestions] = useState<HotelSuggestion[]>([]);
@@ -199,8 +307,27 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddHotelError(null);
+
+    const numAmount = amount ? parseFloat(amount) : null;
+
+    // Se optou por lançar despesa com divisão personalizada, valida a soma
+    if (
+      createExpense &&
+      numAmount !== null &&
+      numAmount > 0 &&
+      participatingTravelers.length > 1 &&
+      splitMode === 'CUSTOM'
+    ) {
+      if (Math.abs(totalCustomSplits - numAmount) >= 0.05) {
+        setAddHotelError(
+          `A soma das partes (${currency} ${totalCustomSplits.toFixed(2)}) deve ser igual ao valor total da hospedagem (${currency} ${numAmount.toFixed(2)}).`
+        );
+        return;
+      }
+    }
+
     try {
-      await api.reservations.createHotel(tripId, {
+      const hotelRes = await api.reservations.createHotel(tripId, {
         hotel_name: hotelName,
         city,
         address,
@@ -210,11 +337,73 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
         check_out_date: checkOutDate,
         reservation_number: resNumber || null,
         room_type: roomType,
-        total_amount: amount ? parseFloat(amount) : null,
+        total_amount: numAmount,
         currency,
         notes: notes || null,
         guest_names: modalGuests.length > 0 ? modalGuests.join(', ') : null,
       });
+
+      const createdHotel = hotelRes?.hotel;
+
+      // Se marcou para criar a despesa associada e há valor informado
+      if (createExpense && numAmount !== null && numAmount > 0) {
+        const isShared = participatingTravelers.length > 1;
+        let splitsPayload: any[] | undefined = undefined;
+
+        if (isShared) {
+          if (splitMode === 'EQUAL') {
+            const count = participatingTravelers.length;
+            const equalVal = Math.round((numAmount / count) * 100) / 100;
+            let sumAllocated = 0;
+            splitsPayload = participatingTravelers.map((t, idx) => {
+              const isLast = idx === count - 1;
+              const amt = isLast ? Math.round((numAmount - sumAllocated) * 100) / 100 : equalVal;
+              sumAllocated += amt;
+              return {
+                traveler_id: t.id,
+                amount: amt,
+                percentage: Math.round((amt / numAmount) * 10000) / 100,
+              };
+            });
+          } else {
+            // CUSTOM
+            splitsPayload = participatingTravelers.map((t) => {
+              const val = parseFloat(customSplits[t.id] || '0') || 0;
+              return {
+                traveler_id: t.id,
+                amount: val,
+                percentage: Math.round((val / numAmount) * 10000) / 100,
+              };
+            });
+          }
+        } else if (participatingTravelers.length === 1) {
+          splitsPayload = [
+            {
+              traveler_id: participatingTravelers[0].id,
+              amount: numAmount,
+              percentage: 100,
+            },
+          ];
+        }
+
+        const hotelTag = createdHotel?.id ? `hotel_reservation_id:${createdHotel.id}` : '';
+        const expNotes = [notes, hotelTag].filter(Boolean).join('\n');
+        const desc = `Hospedagem: ${hotelName}${resNumber ? ` (${resNumber})` : ''}`;
+
+        await api.expenses.create(tripId, {
+          description: desc,
+          amount: numAmount,
+          currency,
+          category: 'ACCOMMODATION',
+          payment_method: 'CREDIT_CARD',
+          date: checkInDate || new Date().toISOString().split('T')[0],
+          is_shared: isShared,
+          paid_by_traveler_id: payerTravelerId || null,
+          split_type: isShared ? (splitMode === 'EQUAL' ? 'EQUAL' : 'EXACT') : undefined,
+          notes: expNotes,
+          splits: splitsPayload,
+        });
+      }
 
       setShowAddModal(false);
       setHotelName('');
@@ -227,6 +416,8 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       setAmount('');
       setNotes('');
       setModalGuests([]);
+      setCustomSplits({});
+      setSplitMode('EQUAL');
       setSelectedSuggestion(null);
       setHotelSuggestions([]);
       setShowSuggestionsDropdown(false);
@@ -1021,7 +1212,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-slate-200 max-h-[90vh] overflow-y-auto">
             <h3 className="text-base font-bold text-slate-900 mb-4">Cadastrar Hospedagem</h3>
             <form onSubmit={handleCreate} className="space-y-3">
               {addHotelError && (
@@ -1306,6 +1497,216 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                     <option value="GBP">GBP (£)</option>
                   </select>
                 </div>
+              </div>
+
+              {/* DESPESA ASSOCIADA & DIVISÃO DE GASTOS */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={createExpense}
+                      onChange={(e) => setCreateExpense(e.target.checked)}
+                      className="rounded text-brand-600 focus:ring-brand-500 w-4 h-4 border-slate-300 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                      Lançar despesa na aba de Despesas
+                    </span>
+                  </label>
+                  {createExpense && amount && parseFloat(amount) > 0 && (
+                    <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {currency} {parseFloat(amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  )}
+                </div>
+
+                {createExpense && (
+                  <div className="space-y-3 pt-2 border-t border-slate-200/80">
+                    {/* Quem pagou */}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                        Quem pagou a hospedagem? *
+                      </label>
+                      <select
+                        value={payerTravelerId}
+                        onChange={(e) => setPayerTravelerId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none bg-white font-medium text-slate-800"
+                      >
+                        {travelers.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.display_name || t.ticket_name || 'Viajante'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Proposta de divisão de gastos */}
+                    {participatingTravelers.length > 1 ? (
+                      <div className="p-2.5 bg-white border border-slate-200 rounded-xl space-y-2.5 shadow-xs">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                          <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                            <Divide className="w-3.5 h-3.5 text-brand-600" />
+                            Divisão entre os {participatingTravelers.length} hóspedes marcados:
+                          </span>
+
+                          {/* Seletor de modo: Igual vs Personalizada */}
+                          <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-[10px] font-semibold">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectSplitMode('EQUAL')}
+                              className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                                splitMode === 'EQUAL'
+                                  ? 'bg-white text-slate-900 shadow-xs'
+                                  : 'text-slate-500 hover:text-slate-900'
+                              }`}
+                            >
+                              Divisão Igual
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectSplitMode('CUSTOM')}
+                              className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                                splitMode === 'CUSTOM'
+                                  ? 'bg-white text-slate-900 shadow-xs'
+                                  : 'text-slate-500 hover:text-slate-900'
+                              }`}
+                            >
+                              Personalizada
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Modo Divisão Igual */}
+                        {splitMode === 'EQUAL' && (
+                          <div className="space-y-1.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {participatingTravelers.map((t) => {
+                                const tColor = getTravelerColor(t.id, travelers);
+                                const numAmount = parseFloat(amount) || 0;
+                                const equalVal = numAmount / participatingTravelers.length;
+                                return (
+                                  <div
+                                    key={t.id}
+                                    className="p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                                        style={{ backgroundColor: tColor.color }}
+                                      >
+                                        {getFirstAndLastInitials(t.display_name)}
+                                      </span>
+                                      <span className="text-xs font-semibold text-slate-800 truncate">
+                                        {t.display_name}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs font-mono font-bold text-slate-900 shrink-0">
+                                      {currency}{' '}
+                                      {equalVal.toLocaleString('pt-BR', {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                      })}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-[10px] text-slate-400 italic">
+                              Cota igualitária proposta automaticamente para todos os hóspedes selecionados.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Modo Divisão Personalizada */}
+                        {splitMode === 'CUSTOM' && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-500">Defina o valor devido por cada hóspede:</span>
+                              <button
+                                type="button"
+                                onClick={handleResetEqualSplits}
+                                className="text-brand-600 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                Dividir igualmente
+                              </button>
+                            </div>
+
+                            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                              {participatingTravelers.map((t) => {
+                                const tColor = getTravelerColor(t.id, travelers);
+                                return (
+                                  <div
+                                    key={t.id}
+                                    className="p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                                        style={{ backgroundColor: tColor.color }}
+                                      >
+                                        {getFirstAndLastInitials(t.display_name)}
+                                      </span>
+                                      <span className="text-xs font-medium text-slate-800 truncate">
+                                        {t.display_name}
+                                      </span>
+                                    </div>
+                                    <div className="relative w-28 shrink-0">
+                                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono">
+                                        {currency}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        value={customSplits[t.id] ?? ''}
+                                        onChange={(e) => handleEditCustomSplit(t.id, e.target.value)}
+                                        placeholder="0.00"
+                                        className="w-full pl-8 pr-2 py-1 text-xs font-mono font-bold text-right border border-slate-300 rounded-md focus:ring-1 focus:ring-brand-500 focus:outline-none bg-white"
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Validação de soma */}
+                            <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px]">
+                              <span className="text-slate-500 font-medium">
+                                Soma: <strong className="font-mono text-slate-800">{currency} {totalCustomSplits.toFixed(2)}</strong> / {currency} {(parseFloat(amount) || 0).toFixed(2)}
+                              </span>
+                              {Math.abs(totalCustomSplits - (parseFloat(amount) || 0)) < 0.05 ? (
+                                <span className="text-emerald-700 font-bold flex items-center gap-1 text-[11px]">
+                                  <Check className="w-3.5 h-3.5 text-emerald-600" /> 100% Distribuído
+                                </span>
+                              ) : (
+                                <span className="text-rose-600 font-bold flex items-center gap-1 text-[11px]">
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                  Diferença: {currency} {((parseFloat(amount) || 0) - totalCustomSplits).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : participatingTravelers.length === 1 ? (
+                      <div className="p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center gap-2">
+                        <User className="w-4 h-4 text-brand-600 shrink-0" />
+                        <span>
+                          <strong>1 hóspede selecionado:</strong> {participatingTravelers[0].display_name}. Será lançada como despesa individual
+                          {payerTravelerId !== participatingTravelers[0].id ? ' (com acerto devido para quem pagou).' : '.'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-white border border-slate-200 rounded-xl text-[11px] text-slate-500 flex items-center gap-2">
+                        <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span>
+                          Nenhum participante da viagem marcado nos hóspedes. A despesa será lançada integralmente para quem pagou (ou selecione os hóspedes acima para propor a divisão).
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>

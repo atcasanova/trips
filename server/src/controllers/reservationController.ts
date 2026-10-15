@@ -246,6 +246,7 @@ export const reservationController = {
          LEFT JOIN expenses e ON e.trip_id = hr.trip_id AND (
            (hr.document_id IS NOT NULL AND e.document_id = hr.document_id)
            OR (hr.reservation_number IS NOT NULL AND hr.reservation_number <> '' AND e.description ILIKE '%' || hr.reservation_number || '%')
+           OR (e.notes ILIKE '%hotel_reservation_id:' || hr.id || '%')
          )
          WHERE hr.trip_id = $1 
          ORDER BY hr.check_in_date ASC, hr.created_at ASC`,
@@ -613,6 +614,10 @@ export const reservationController = {
             [tripId, resNum]
           );
         }
+        await query(
+          "DELETE FROM expenses WHERE trip_id = $1 AND notes ILIKE '%' || $2 || '%'",
+          [tripId, `hotel_reservation_id:${hotelId}`]
+        );
       }
 
       tripBookPdfService.queuePreGeneration(tripId);

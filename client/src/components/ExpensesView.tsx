@@ -62,6 +62,7 @@ interface ExpensesViewProps {
   trip?: Trip;
   transports?: TransportReservation[];
   hotels?: HotelReservation[];
+  onRefresh?: () => void;
 }
 
 export const CURRENCY_METADATA: Record<string, { symbol: string; name: string }> = {
@@ -164,6 +165,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   trip,
   transports,
   hotels,
+  onRefresh,
 }) => {
   const [data, setData] = useState<ExpensesResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -547,6 +549,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       setShowTransferModal(false);
       await loadExpenses();
+      onRefresh?.();
     } catch (err: any) {
       console.error('Erro ao salvar transferência:', err);
       setTransferFormError(err.message || 'Erro ao salvar transferência.');
@@ -568,6 +571,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       await api.expenses.deleteTransfer(tripId, deleteTransferModalData.id);
       setDeleteTransferModalData(null);
       await loadExpenses();
+      onRefresh?.();
     } catch (err: any) {
       console.error('Erro ao remover transferência:', err);
       setDeleteTransferError(err.message || 'Erro ao remover transferência.');
@@ -1006,6 +1010,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       setShowModal(false);
       loadExpenses();
+      onRefresh?.();
     } catch (err: any) {
       setExpenseFormError(err.message || 'Erro ao salvar despesa');
     }
@@ -1029,6 +1034,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       });
       setDeleteExpenseModalData(null);
       await loadExpenses();
+      onRefresh?.();
     } catch (err: any) {
       setDeleteExpenseError(err.message || 'Erro ao excluir despesa');
     } finally {

@@ -158,6 +158,15 @@ export const expenseController = {
             }
           }
         }
+        if (!linked && exp.notes) {
+          const matchHotelId = exp.notes.match(/hotel_reservation_id:([a-f0-9\-]+)/i);
+          if (matchHotelId && matchHotelId[1]) {
+            const h = hotelsList.find((x: any) => x.id === matchHotelId[1]);
+            if (h) {
+              linked = { type: 'HOTEL', id: h.id, name: h.hotel_name };
+            }
+          }
+        }
         exp.linked_reservation = linked;
       }
 
@@ -639,7 +648,7 @@ export const expenseController = {
 
     try {
       const { rows: expRows } = await query(
-        'SELECT id, document_id, description FROM expenses WHERE id = $1 AND trip_id = $2',
+        'SELECT id, document_id, description, notes FROM expenses WHERE id = $1 AND trip_id = $2',
         [expenseId, tripId]
       );
       if (expRows.length === 0) {
@@ -686,6 +695,13 @@ export const expenseController = {
               await query('DELETE FROM transport_reservations WHERE trip_id = $1 AND booking_code = $2', [tripId, ref]);
               deletedRes = true;
             }
+          }
+        }
+        if (exp.notes) {
+          const matchHotelId = exp.notes.match(/hotel_reservation_id:([a-f0-9\-]+)/i);
+          if (matchHotelId && matchHotelId[1]) {
+            await query('DELETE FROM hotel_reservations WHERE id = $1 AND trip_id = $2', [matchHotelId[1], tripId]);
+            deletedRes = true;
           }
         }
       }
