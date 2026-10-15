@@ -1324,7 +1324,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                   {loadingSuggestions && (
                     <span className="flex items-center gap-1 text-[10px] text-slate-400">
                       <Loader2 className="w-3 h-3 animate-spin text-brand-500" />
-                      <span>Buscando no sistema...</span>
+                      <span>Buscando sugestões...</span>
                     </span>
                   )}
                 </div>
@@ -1348,7 +1348,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                   {selectedSuggestion && (
                     <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-medium pointer-events-none">
                       <Check className="w-3 h-3 text-emerald-600" />
-                      <span>Conhecido</span>
+                      <span>Sugestão aplicada</span>
                     </div>
                   )}
                 </div>
@@ -1359,7 +1359,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                     <div className="px-3 py-1.5 bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
                       <span className="flex items-center gap-1">
                         <Sparkles className="w-3 h-3 text-brand-600" />
-                        Hotéis cadastrados no sistema (preenchimento automático)
+                        Sugestões de hotéis (preenchimento automático)
                       </span>
                       <button
                         type="button"
@@ -1385,7 +1385,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                             {s.hasCoordinates && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-semibold shrink-0">
                                 <MapPin className="w-2.5 h-2.5" />
-                                Coordenadas salvas
+                                Com localização
                               </span>
                             )}
                           </div>
@@ -1405,7 +1405,7 @@ export const HotelsView: React.FC<HotelsViewProps> = ({
                     <div className="flex items-center gap-1.5 truncate">
                       <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span className="truncate">
-                        Endereço e coordenadas carregados do sistema <strong>(economiza busca na IA)</strong>
+                        Endereço e localização preenchidos automaticamente
                       </span>
                     </div>
                     <button

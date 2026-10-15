@@ -1080,7 +1080,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       setAiText('');
       onRefresh();
     } catch (err: any) {
-      setAiError(err.message || 'Erro ao aplicar roteiro no banco de dados');
+      setAiError(err.message || 'Erro ao salvar roteiro');
     } finally {
       setIsAiApplying(false);
     }
@@ -2267,7 +2267,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Assistente de Roteiro com IA</h3>
                   <p className="text-xs text-slate-500">
-                    Processado por GPT-5.6-Luna • Estruturação automática dia a dia
+                    Estruturação automática dia a dia do seu roteiro
                   </p>
                 </div>
               </div>

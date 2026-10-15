@@ -763,7 +763,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       try {
         parsedData = JSON.parse(editDataJson);
       } catch (e) {
-        setReviewError('JSON inválido nos dados editados');
+        setReviewError('Formato inválido nos dados editados');
         setSavingConfirmation(false);
         return;
       }
@@ -1164,10 +1164,10 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
               <div className="py-4 flex flex-col items-center gap-3">
                 <Loader2 className="w-10 h-10 text-brand-600 animate-spin" />
                 <p className="text-sm font-semibold text-slate-800">
-                  Enviando arquivo & interpretando dados com OpenAI...
+                  Enviando e processando documento...
                 </p>
                 <p className="text-xs text-slate-500">
-                  Identificando eventos, shows, jogos, passagens aéreas e hotéis com busca web de coordenadas...
+                  Identificando reservas, passagens, hotéis e ingressos automaticamente...
                 </p>
               </div>
             ) : (
@@ -2155,9 +2155,8 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                        Campos Estruturados Extraídos (JSON Editável)
+                        Dados extraídos do documento (Editável)
                       </label>
-                      <span className="text-[11px] text-slate-400">Modelo: {reviewModalDoc.extraction?.model_used || 'GPT-4o'}</span>
                     </div>
                     <textarea
                       rows={14}
