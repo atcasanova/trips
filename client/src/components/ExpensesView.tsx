@@ -1605,12 +1605,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
                         {/* Ações */}
                         {canEdit && (
-                          <td className="px-4 py-2.5 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                          <td className="w-20 px-3 py-2.5 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-2 opacity-80 group-hover:opacity-100 transition-opacity">
                               <button
                                 type="button"
                                 onClick={() => handleOpenEditTransfer(tr)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200/80 hover:border-indigo-200 rounded-lg transition-colors"
                                 title="Editar transferência"
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
@@ -1618,7 +1618,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleOpenDeleteTransfer(tr)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                className="p-1.5 text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200/70 rounded-lg transition-colors cursor-pointer"
                                 title="Remover transferência"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1979,19 +1979,20 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
                       {/* Ações */}
                       {canEdit && (
-                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-1">
+                        <td className="w-20 px-3 py-2.5 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-2">
                             <button
+                              type="button"
                               onClick={() => handleOpenEditModal(exp)}
-                              className="flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg text-xs font-semibold transition-colors"
+                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200/80 hover:border-indigo-200 rounded-lg transition-colors"
                               title="Editar despesa e divisão"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
-                              <span>Editar</span>
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleOpenDeleteExpense(exp)}
-                              className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer"
+                              className="p-1.5 text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200/70 rounded-lg transition-colors cursor-pointer"
                               title="Remover despesa"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
