@@ -160,8 +160,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   // Splitting UI states
   const [selectedTravelers, setSelectedTravelers] = useState<string[]>([]);
   const [splitMode, setSplitMode] = useState<SplitMode>('PARTS');
-  const [sharesByTraveler, setSharesByTraveler] = useState<Record<string, number>>({});
-  const [exactAmounts, setExactAmounts] = useState<Record<string, number>>({});
+  const [sharesByTraveler, setSharesByTraveler] = useState<Record<string, string | number>>({});
+  const [exactAmounts, setExactAmounts] = useState<Record<string, string | number>>({});
   const [lockedTravelers, setLockedTravelers] = useState<Record<string, boolean>>({});
 
   // Transfer Modal state
@@ -462,6 +462,14 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     setShowTransferModal(true);
   };
 
+  const handleTransferAmountChange = (newAmtStr: string) => {
+    let clean = newAmtStr;
+    if (clean.length > 1 && clean.startsWith('0') && !clean.startsWith('0.') && !clean.startsWith('0,')) {
+      clean = clean.replace(/^0+/, '') || '0';
+    }
+    setTransferAmount(clean);
+  };
+
   const handleSaveTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     setTransferFormError(null);
@@ -648,8 +656,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // Initialize or reset split configuration
   const initSplitsForTravelers = (travelersList: string[], total: number) => {
-    const shares: Record<string, number> = {};
-    const exacts: Record<string, number> = {};
+    const shares: Record<string, string | number> = {};
+    const exacts: Record<string, string | number> = {};
     const locks: Record<string, boolean> = {};
 
     const count = travelersList.length || 1;
@@ -657,7 +665,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
     travelersList.forEach((id) => {
       shares[id] = 1; // default 1 part
-      exacts[id] = equalShare;
+      exacts[id] = equalShare > 0 ? equalShare.toFixed(2) : '0';
       locks[id] = false;
     });
 
@@ -668,8 +676,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // When amount changes in modal, rebalance unlocked exact amounts or shares
   const handleAmountChange = (newAmtStr: string) => {
-    setAmount(newAmtStr);
-    const newTotal = parseFloat(newAmtStr) || 0;
+    let clean = newAmtStr;
+    if (clean.length > 1 && clean.startsWith('0') && !clean.startsWith('0.') && !clean.startsWith('0,')) {
+      clean = clean.replace(/^0+/, '') || '0';
+    }
+    setAmount(clean);
+    const newTotal = parseFloat(clean) || 0;
 
     if (splitMode === 'EXACT' && selectedTravelers.length > 0) {
       rebalanceExactAmounts(newTotal, exactAmounts, lockedTravelers, selectedTravelers);
@@ -680,17 +692,20 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   // When a user edits one or more travelers, unlocked travelers receive equal shares of the remainder!
   const rebalanceExactAmounts = (
     total: number,
-    currentExacts: Record<string, number>,
+    currentExacts: Record<string, string | number>,
     locks: Record<string, boolean>,
     activeTravelers: string[]
   ) => {
     const lockedIds = activeTravelers.filter((id) => locks[id]);
     const unlockedIds = activeTravelers.filter((id) => !locks[id]);
 
-    const lockedSum = lockedIds.reduce((sum, id) => sum + (currentExacts[id] || 0), 0);
+    const lockedSum = lockedIds.reduce((sum, id) => {
+      const v = parseFloat(String(currentExacts[id])) || 0;
+      return sum + v;
+    }, 0);
     const remainder = Math.max(0, total - lockedSum);
 
-    const updated = { ...currentExacts };
+    const updated: Record<string, string | number> = { ...currentExacts };
 
     if (unlockedIds.length > 0) {
       const share = Math.floor((remainder / unlockedIds.length) * 100) / 100;
@@ -698,9 +713,10 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       unlockedIds.forEach((id, idx) => {
         if (idx === unlockedIds.length - 1) {
-          updated[id] = Math.max(0, Math.round((remainder - distributed) * 100) / 100);
+          const lastVal = Math.max(0, Math.round((remainder - distributed) * 100) / 100);
+          updated[id] = lastVal > 0 ? lastVal.toFixed(2) : '0';
         } else {
-          updated[id] = share;
+          updated[id] = share > 0 ? share.toFixed(2) : '0';
           distributed += share;
         }
       });
@@ -711,11 +727,15 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // User edits a specific traveler's exact amount
   const handleEditTravelerExact = (travelerId: string, valStr: string) => {
-    const total = parseFloat(amount) || 0;
-    const val = parseFloat(valStr) || 0;
+    let cleanVal = valStr;
+    // Se o usuário digitou outro dígito tendo '0' (ex: '05'), limpa o '0' inicial
+    if (cleanVal.length > 1 && cleanVal.startsWith('0') && !cleanVal.startsWith('0.') && !cleanVal.startsWith('0,')) {
+      cleanVal = cleanVal.replace(/^0+/, '') || '0';
+    }
 
+    const total = parseFloat(amount) || 0;
     const newLocks = { ...lockedTravelers, [travelerId]: true };
-    const newExacts = { ...exactAmounts, [travelerId]: val };
+    const newExacts = { ...exactAmounts, [travelerId]: cleanVal };
 
     setLockedTravelers(newLocks);
     rebalanceExactAmounts(total, newExacts, newLocks, selectedTravelers);
@@ -736,9 +756,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
 
   // User edits traveler's parts / shares
-  const handleEditTravelerParts = (travelerId: string, partsVal: number) => {
-    const validParts = Math.max(0, partsVal);
-    setSharesByTraveler((prev) => ({ ...prev, [travelerId]: validParts }));
+  const handleEditTravelerParts = (travelerId: string, valStr: string) => {
+    let cleanVal = valStr;
+    if (cleanVal.length > 1 && cleanVal.startsWith('0')) {
+      cleanVal = cleanVal.replace(/^0+/, '') || '0';
+    }
+    setSharesByTraveler((prev) => ({ ...prev, [travelerId]: cleanVal }));
   };
 
   // Compute calculated amounts and percentages for the current mode
@@ -748,13 +771,18 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
     if (splitMode === 'PARTS') {
       const totalShares = selectedTravelers.reduce(
-        (sum, id) => sum + (sharesByTraveler[id] !== undefined ? sharesByTraveler[id] : 1),
+        (sum, id) => {
+          const v = sharesByTraveler[id];
+          const partsNum = v !== undefined && v !== '' ? parseInt(String(v), 10) : 1;
+          return sum + (isNaN(partsNum) ? 0 : partsNum);
+        },
         0
       );
 
       let allocatedSum = 0;
       const items = selectedTravelers.map((id, idx) => {
-        const parts = sharesByTraveler[id] !== undefined ? sharesByTraveler[id] : 1;
+        const v = sharesByTraveler[id];
+        const parts = v !== undefined && v !== '' ? parseInt(String(v), 10) || 0 : 1;
         const pct = totalShares > 0 ? (parts / totalShares) * 100 : 0;
         let itemAmt = totalShares > 0 ? Math.floor(((total * parts) / totalShares) * 100) / 100 : 0;
 
@@ -780,7 +808,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     } else {
       // EXACT Mode
       const items = selectedTravelers.map((id) => {
-        const itemAmt = exactAmounts[id] || 0;
+        const itemAmt = parseFloat(String(exactAmounts[id])) || 0;
         const pct = total > 0 ? (itemAmt / total) * 100 : 0;
         const traveler = data?.travelers.find((t) => t.id === id);
         return {
@@ -855,12 +883,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       setSelectedTravelers(activeIds.length > 0 ? activeIds : allTravelerIds);
 
       // Check if splits match custom exact amounts or parts
-      const exacts: Record<string, number> = {};
+      const exacts: Record<string, string | number> = {};
       const locks: Record<string, boolean> = {};
-      const shares: Record<string, number> = {};
+      const shares: Record<string, string | number> = {};
 
       exp.splits.forEach((s) => {
-        exacts[s.traveler_id] = parseFloat(String(s.amount)) || 0;
+        const splitVal = parseFloat(String(s.amount)) || 0;
+        exacts[s.traveler_id] = splitVal > 0 ? splitVal.toFixed(2) : '0';
         locks[s.traveler_id] = true;
         shares[s.traveler_id] = 1;
       });
@@ -1855,430 +1884,469 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       {/* MODAL UNIFICADO: REGISTRAR / EDITAR DESPESA COM CALCULADORA DE DIVISÃO */}
       {showModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-6 border border-slate-200 max-h-[92vh] overflow-y-auto flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-              <h3 className="text-base font-bold text-slate-900">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-4 sm:p-6 border border-slate-200 max-h-[94vh] sm:max-h-[90vh] flex flex-col my-auto animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3 sm:mb-4 shrink-0">
+              <h3 className="text-sm sm:text-base font-bold text-slate-900">
                 {editingExpenseId ? 'Editar Despesa & Divisão' : 'Registrar Nova Despesa'}
               </h3>
               <button
                 type="button"
                 onClick={() => setShowModal(false)}
-                className="text-slate-400 hover:text-slate-600"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5 sm:w-4 sm:h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveExpense} className="space-y-4 flex-1">
-              {expenseFormError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                  <span>{expenseFormError}</span>
-                </div>
-              )}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Descrição *</label>
-                <input
-                  type="text"
-                  required
-                  value={desc}
-                  onChange={(e) => setDesc(e.target.value)}
-                  placeholder="Ex: Jantar em Ginza, Shinkansen Tóquio → Kyoto"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSaveExpense} className="flex flex-col flex-1 min-h-0">
+              <div className="overflow-y-auto pr-1 -mr-1 space-y-3 sm:space-y-4 flex-1">
+                {expenseFormError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{expenseFormError}</span>
+                  </div>
+                )}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Valor Total *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Descrição *</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
                     required
-                    value={amount}
-                    onChange={(e) => handleAmountChange(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    value={desc}
+                    onChange={(e) => setDesc(e.target.value)}
+                    placeholder="Ex: Jantar em Ginza, Shinkansen Tóquio → Kyoto"
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Moeda</label>
-                  <select
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-medium"
-                  >
-                    {availableInputCurrencies.map((c) => (
-                      <option key={c} value={c}>
-                        {formatCurrencyOption(c)}
-                      </option>
-                    ))}
-                    {currency && !availableInputCurrencies.includes(currency.toUpperCase()) && (
-                      <option value={currency}>
-                        {formatCurrencyOption(currency)}
-                      </option>
-                    )}
-                  </select>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Categoria</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="FOOD">Alimentação & Restaurantes</option>
-                    <option value="TRANSPORT">Transporte & Voos</option>
-                    <option value="ACCOMMODATION">Hospedagem</option>
-                    <option value="TICKETS">Ingressos & Atrações</option>
-                    <option value="SHOPPING">Compras & Souvenirs</option>
-                    <option value="OTHER">Outros / Serviços</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Data</label>
-                  <input
-                    type="date"
-                    required
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Forma de Pagamento</label>
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="CREDIT_CARD">Cartão de Crédito</option>
-                    <option value="CASH">Dinheiro / Espécie</option>
-                    <option value="DEBIT">Cartão de Débito</option>
-                    <option value="PIX">PIX</option>
-                    <option value="OTHER">Outro</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Valor Total *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      value={amount}
+                      onChange={(e) => handleAmountChange(e.target.value)}
+                      onFocus={(e) => {
+                        if (e.target.value === '0' || e.target.value === '0.00') {
+                          e.target.select();
+                        }
+                      }}
+                      placeholder="0.00"
+                      className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Moeda</label>
+                    <select
+                      value={currency}
+                      onChange={(e) => setCurrency(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-medium"
+                    >
+                      {availableInputCurrencies.map((c) => (
+                        <option key={c} value={c}>
+                          {formatCurrencyOption(c)}
+                        </option>
+                      ))}
+                      {currency && !availableInputCurrencies.includes(currency.toUpperCase()) && (
+                        <option value={currency}>
+                          {formatCurrencyOption(currency)}
+                        </option>
+                      )}
+                    </select>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Quem pagou?</label>
-                  <select
-                    value={paidByTravelerId}
-                    onChange={(e) => setPaidByTravelerId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    {data?.travelers.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.display_name} {t.role === 'OWNER' ? '(Organizador)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Categoria</label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="FOOD">Alimentação & Restaurantes</option>
+                      <option value="TRANSPORT">Transporte & Voos</option>
+                      <option value="ACCOMMODATION">Hospedagem</option>
+                      <option value="TICKETS">Ingressos & Atrações</option>
+                      <option value="SHOPPING">Compras & Souvenirs</option>
+                      <option value="OTHER">Outros / Serviços</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Data</label>
+                    <input
+                      type="date"
+                      required
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              {/* Scope Selection: Shared vs Personal */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Tipo de Despesa (Escopo)
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsShared(true);
-                      if (selectedTravelers.length === 0 && data?.travelers) {
-                        setSelectedTravelers(data.travelers.map((t) => t.id));
-                      }
-                    }}
-                    className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-semibold transition-all ${
-                      isShared
-                        ? 'bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-200'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Users className="w-4 h-4 text-indigo-600" />
-                    <span>Compartilhada (Grupo)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsShared(false)}
-                    className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-semibold transition-all ${
-                      !isShared
-                        ? 'bg-slate-100 border-slate-500 text-slate-900 ring-2 ring-slate-200'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <User className="w-4 h-4 text-slate-600" />
-                    <span>Despesa Individual (Pessoal)</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* ADVANCED SPLIT CALCULATOR (ONLY IF SHARED) */}
-              {isShared && (
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
-                    <div>
-                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wide block">
-                        Divisão da Conta entre Viajantes
-                      </span>
-                      <span className="text-[11px] text-slate-500">
-                        Selecione quem participa e ajuste as cotas ou valores
-                      </span>
-                    </div>
-
-                    {/* Quick selection buttons */}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const allIds = (data?.travelers || []).map((t) => t.id);
-                          setSelectedTravelers(allIds);
-                          initSplitsForTravelers(allIds, parseFloat(amount) || 0);
-                        }}
-                        className="text-[11px] font-semibold text-indigo-600 hover:underline"
-                      >
-                        Marcar Grupo Todo
-                      </button>
-                      <span className="text-slate-300">|</span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTravelers([])}
-                        className="text-[11px] font-semibold text-slate-500 hover:underline"
-                      >
-                        Desmarcar
-                      </button>
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Forma de Pagamento</label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="CREDIT_CARD">Cartão de Crédito</option>
+                      <option value="CASH">Dinheiro / Espécie</option>
+                      <option value="DEBIT">Cartão de Débito</option>
+                      <option value="PIX">PIX</option>
+                      <option value="OTHER">Outro</option>
+                    </select>
                   </div>
 
-                  {/* Mode Tabs: Por Cotas / Partes vs Por Valores com Distribuição Automática */}
-                  <div className="flex items-center gap-2 p-1 bg-white border border-slate-200 rounded-xl">
-                    <button
-                      type="button"
-                      onClick={() => setSplitMode('PARTS')}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
-                        splitMode === 'PARTS'
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Quem pagou?</label>
+                    <select
+                      value={paidByTravelerId}
+                      onChange={(e) => setPaidByTravelerId(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
                     >
-                      <Divide className="w-3.5 h-3.5" />
-                      <span>Por Cotas / Partes</span>
-                    </button>
+                      {data?.travelers.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.display_name} {t.role === 'OWNER' ? '(Organizador)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Scope Selection: Shared vs Personal */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Tipo de Despesa (Escopo)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => {
-                        setSplitMode('EXACT');
-                        rebalanceExactAmounts(
-                          parseFloat(amount) || 0,
-                          exactAmounts,
-                          lockedTravelers,
-                          selectedTravelers
-                        );
+                        setIsShared(true);
+                        if (selectedTravelers.length === 0 && data?.travelers) {
+                          setSelectedTravelers(data.travelers.map((t) => t.id));
+                        }
                       }}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
-                        splitMode === 'EXACT'
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-600 hover:text-slate-900'
+                      className={`flex items-center justify-center gap-1.5 sm:gap-2 p-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                        isShared
+                          ? 'bg-indigo-50 border-indigo-500 text-indigo-900 ring-2 ring-indigo-200'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      <DollarSign className="w-3.5 h-3.5" />
-                      <span>Por Valores (Saldo Automático)</span>
+                      <Users className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>Grupo <span className="hidden sm:inline">(Compartilhada)</span></span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsShared(false)}
+                      className={`flex items-center justify-center gap-1.5 sm:gap-2 p-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                        !isShared
+                          ? 'bg-slate-100 border-slate-500 text-slate-900 ring-2 ring-slate-200'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <User className="w-4 h-4 text-slate-600 shrink-0" />
+                      <span>Individual <span className="hidden sm:inline">(Pessoal)</span></span>
                     </button>
                   </div>
+                </div>
 
-                  {/* Mode explanation */}
-                  <div className="text-[11px] text-slate-500 flex items-center justify-between">
-                    {splitMode === 'PARTS' ? (
-                      <span className="flex items-center gap-1.5">
-                        <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                        Defina o número de cotas de cada um (ex: 6 para você e 3 para os demais = 50% e 25%).
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1.5">
-                        <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                        Digite o valor de quem desejar. O saldo restante é rateado igualmente entre os não editados.
-                      </span>
-                    )}
+                {/* ADVANCED SPLIT CALCULATOR (ONLY IF SHARED) */}
+                {isShared && (
+                  <div className="p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-xl sm:rounded-2xl space-y-3 sm:space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 pb-2 border-b border-slate-200">
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 uppercase tracking-wide block">
+                          Divisão da Conta entre Viajantes
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Selecione quem participa e ajuste as cotas ou valores
+                        </span>
+                      </div>
 
-                    {splitMode === 'EXACT' && (
+                      {/* Quick selection buttons */}
+                      <div className="flex items-center gap-2 self-start sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allIds = (data?.travelers || []).map((t) => t.id);
+                            setSelectedTravelers(allIds);
+                            initSplitsForTravelers(allIds, parseFloat(amount) || 0);
+                          }}
+                          className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                        >
+                          Marcar Grupo Todo
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTravelers([])}
+                          className="text-[11px] font-semibold text-slate-500 hover:underline"
+                        >
+                          Desmarcar
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Mode Tabs: Por Cotas / Partes vs Por Valores com Distribuição Automática */}
+                    <div className="flex items-center gap-1.5 sm:gap-2 p-1 bg-white border border-slate-200 rounded-xl">
                       <button
                         type="button"
-                        onClick={handleResetEqualShares}
-                        className="text-indigo-600 hover:underline flex items-center gap-1 font-semibold text-[11px]"
+                        onClick={() => setSplitMode('PARTS')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                          splitMode === 'PARTS'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
                       >
-                        <RotateCcw className="w-3 h-3" />
-                        Redistribuir igualmente
+                        <Divide className="w-3.5 h-3.5 shrink-0" />
+                        <span>Por Cotas<span className="hidden sm:inline"> / Partes</span></span>
                       </button>
-                    )}
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSplitMode('EXACT');
+                          rebalanceExactAmounts(
+                            parseFloat(amount) || 0,
+                            exactAmounts,
+                            lockedTravelers,
+                            selectedTravelers
+                          );
+                        }}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                          splitMode === 'EXACT'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <DollarSign className="w-3.5 h-3.5 shrink-0" />
+                        <span>Por Valores<span className="hidden sm:inline"> (Saldo Automático)</span></span>
+                      </button>
+                    </div>
 
-                  {/* Travelers List */}
-                  <div className="space-y-2">
-                    {data?.travelers.map((t) => {
-                      const isParticipating = selectedTravelers.includes(t.id);
-                      const splitInfo = calculatedSplitsSummary.items.find((it) => it.travelerId === t.id);
+                    {/* Mode explanation */}
+                    <div className="text-[11px] text-slate-500 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      {splitMode === 'PARTS' ? (
+                        <span className="flex items-center gap-1.5">
+                          <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                          Defina o número de cotas de cada um (ex: 6 para você e 3 para os demais = 50% e 25%).
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                          Digite o valor de quem desejar. O saldo restante é rateado igualmente entre os não editados.
+                        </span>
+                      )}
 
-                      return (
-                        <div
-                          key={t.id}
-                          className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                            isParticipating
-                              ? 'bg-white border-slate-200 shadow-sm'
-                              : 'bg-slate-100/60 border-slate-200/60 opacity-60'
-                          }`}
+                      {splitMode === 'EXACT' && (
+                        <button
+                          type="button"
+                          onClick={handleResetEqualShares}
+                          className="text-indigo-600 hover:underline flex items-center gap-1 font-semibold text-[11px] self-start sm:self-auto shrink-0"
                         >
-                          {/* Traveler check */}
-                          <label className="flex items-center gap-2.5 cursor-pointer shrink-0">
-                            <input
-                              type="checkbox"
-                              checked={isParticipating}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  const updated = [...selectedTravelers, t.id];
-                                  setSelectedTravelers(updated);
-                                  initSplitsForTravelers(updated, parseFloat(amount) || 0);
-                                } else {
-                                  const updated = selectedTravelers.filter((id) => id !== t.id);
-                                  setSelectedTravelers(updated);
-                                  initSplitsForTravelers(updated, parseFloat(amount) || 0);
-                                }
-                              }}
-                              className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4"
-                            />
-                            <div>
-                              <span className="font-semibold text-xs text-slate-900 block">
-                                {t.display_name}
-                              </span>
-                              {t.role === 'OWNER' && (
-                                <span className="text-[10px] text-slate-400">Organizador</span>
-                              )}
-                            </div>
-                          </label>
+                          <RotateCcw className="w-3 h-3" />
+                          Redistribuir igualmente
+                        </button>
+                      )}
+                    </div>
 
-                          {/* Inputs based on Split Mode */}
-                          {isParticipating && splitInfo && (
-                            <div className="flex items-center gap-3">
-                              {splitMode === 'PARTS' ? (
-                                /* PARTS / SHARES INPUT */
-                                <div className="flex items-center gap-2">
-                                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-                                    <span className="text-[10px] text-slate-400 uppercase font-bold">Cotas:</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      step="1"
-                                      value={sharesByTraveler[t.id] !== undefined ? sharesByTraveler[t.id] : 1}
-                                      onChange={(e) =>
-                                        handleEditTravelerParts(t.id, parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-12 text-xs font-bold text-center bg-transparent focus:outline-none"
-                                    />
-                                  </div>
+                    {/* Travelers List */}
+                    <div className="space-y-2">
+                      {data?.travelers.map((t) => {
+                        const isParticipating = selectedTravelers.includes(t.id);
+                        const splitInfo = calculatedSplitsSummary.items.find((it) => it.travelerId === t.id);
 
-                                  <div className="text-right min-w-[70px]">
-                                    <span className="text-[10px] text-slate-400 block font-mono">
-                                      {splitInfo.percentage.toFixed(1)}%
-                                    </span>
-                                    <strong className="text-xs font-mono font-bold text-slate-900 block">
-                                      {currency} {splitInfo.amount.toFixed(2)}
-                                    </strong>
-                                  </div>
-                                </div>
-                              ) : (
-                                /* EXACT AMOUNT WITH AUTO REMAINDER */
-                                <div className="flex items-center gap-2">
-                                  <div className="relative">
-                                    <span className="absolute left-2.5 top-1.5 text-[11px] text-slate-400 font-mono">
-                                      {currency}
-                                    </span>
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      value={exactAmounts[t.id] !== undefined ? exactAmounts[t.id] : ''}
-                                      onChange={(e) => handleEditTravelerExact(t.id, e.target.value)}
-                                      className={`w-28 pl-9 pr-2 py-1 text-xs font-mono font-bold border rounded-lg focus:outline-none ${
-                                        lockedTravelers[t.id]
-                                          ? 'border-indigo-400 bg-indigo-50/40 text-indigo-950'
-                                          : 'border-slate-300 bg-white text-slate-800'
-                                      }`}
-                                    />
-                                  </div>
-
-                                  {lockedTravelers[t.id] ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleUnlockTraveler(t.id)}
-                                      className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded"
-                                      title="Desbloquear para rateio automático do saldo"
-                                    >
-                                      <Lock className="w-3.5 h-3.5 text-indigo-600" />
-                                    </button>
-                                  ) : (
-                                    <span
-                                      className="p-1 text-slate-300"
-                                      title="Calculado automaticamente a partir do saldo restante"
-                                    >
-                                      <Unlock className="w-3.5 h-3.5" />
-                                    </span>
+                        return (
+                          <div
+                            key={t.id}
+                            className={`p-2.5 sm:p-3 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 ${
+                              isParticipating
+                                ? 'bg-white border-slate-200 shadow-sm'
+                                : 'bg-slate-100/60 border-slate-200/60 opacity-60'
+                            }`}
+                          >
+                            {/* Traveler check & name header on mobile */}
+                            <div className="flex items-center justify-between w-full sm:w-auto">
+                              <label className="flex items-center gap-2.5 cursor-pointer shrink-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isParticipating}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      const updated = [...selectedTravelers, t.id];
+                                      setSelectedTravelers(updated);
+                                      initSplitsForTravelers(updated, parseFloat(amount) || 0);
+                                    } else {
+                                      const updated = selectedTravelers.filter((id) => id !== t.id);
+                                      setSelectedTravelers(updated);
+                                      initSplitsForTravelers(updated, parseFloat(amount) || 0);
+                                    }
+                                  }}
+                                  className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4"
+                                />
+                                <div>
+                                  <span className="font-semibold text-xs text-slate-900 block">
+                                    {t.display_name}
+                                  </span>
+                                  {t.role === 'OWNER' && (
+                                    <span className="text-[10px] text-slate-400">Organizador</span>
                                   )}
+                                </div>
+                              </label>
 
-                                  <span className="text-[11px] text-slate-400 font-mono min-w-[42px] text-right">
+                              {/* On mobile: Preview percentage & amount right in traveler row */}
+                              {isParticipating && splitInfo && (
+                                <div className="text-right sm:hidden">
+                                  <span className="text-[10px] text-slate-400 font-mono block">
                                     {splitInfo.percentage.toFixed(1)}%
                                   </span>
+                                  <strong className="text-xs font-mono font-bold text-slate-900 block">
+                                    {currency} {splitInfo.amount.toFixed(2)}
+                                  </strong>
                                 </div>
                               )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
 
-                  {/* Summary & Balance Check */}
-                  <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                    <span className="text-slate-500 font-medium">
-                      Soma das partes:
-                      <strong className="text-slate-900 ml-1 font-mono">
-                        {currency} {calculatedSplitsSummary.totalCalculated.toFixed(2)}
-                      </strong>{' '}
-                      / {currency} {(parseFloat(amount) || 0).toFixed(2)}
-                    </span>
+                            {/* Inputs based on Split Mode */}
+                            {isParticipating && splitInfo && (
+                              <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 pt-1.5 sm:pt-0 border-t sm:border-t-0 border-slate-100 w-full sm:w-auto">
+                                {splitMode === 'PARTS' ? (
+                                  /* PARTS / SHARES INPUT */
+                                  <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
+                                    <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
+                                      <span className="text-[10px] text-slate-500 uppercase font-bold">Cotas:</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={sharesByTraveler[t.id] !== undefined ? sharesByTraveler[t.id] : 1}
+                                        onChange={(e) =>
+                                          handleEditTravelerParts(t.id, e.target.value)
+                                        }
+                                        onFocus={(e) => {
+                                          if (e.target.value === '0' || e.target.value === '1') {
+                                            e.target.select();
+                                          }
+                                        }}
+                                        onBlur={() => {
+                                          if (sharesByTraveler[t.id] === '' || sharesByTraveler[t.id] === '0') {
+                                            handleEditTravelerParts(t.id, '1');
+                                          }
+                                        }}
+                                        className="w-12 text-base sm:text-xs font-bold text-center bg-transparent focus:outline-none"
+                                      />
+                                    </div>
 
-                    {Math.abs(calculatedSplitsSummary.totalCalculated - (parseFloat(amount) || 0)) < 0.05 ? (
-                      <span className="text-emerald-700 font-bold flex items-center gap-1 text-[11px]">
-                        <Check className="w-3.5 h-3.5 text-emerald-600" /> 100% Distribuído
+                                    <div className="hidden sm:block text-right min-w-[70px]">
+                                      <span className="text-[10px] text-slate-400 block font-mono">
+                                        {splitInfo.percentage.toFixed(1)}%
+                                      </span>
+                                      <strong className="text-xs font-mono font-bold text-slate-900 block">
+                                        {currency} {splitInfo.amount.toFixed(2)}
+                                      </strong>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  /* EXACT AMOUNT WITH AUTO REMAINDER */
+                                  <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
+                                    <div className="relative flex-1 sm:flex-initial">
+                                      <span className="absolute left-2.5 top-2 sm:top-1.5 text-[11px] text-slate-400 font-mono pointer-events-none">
+                                        {currency}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        placeholder="0.00"
+                                        value={exactAmounts[t.id] !== undefined ? exactAmounts[t.id] : ''}
+                                        onChange={(e) => handleEditTravelerExact(t.id, e.target.value)}
+                                        onFocus={(e) => {
+                                          if (e.target.value === '0' || e.target.value === '0.00') {
+                                            e.target.select();
+                                          }
+                                        }}
+                                        className={`w-full sm:w-28 pl-9 pr-2 py-1.5 sm:py-1 text-base sm:text-xs font-mono font-bold border rounded-lg focus:outline-none ${
+                                          lockedTravelers[t.id]
+                                            ? 'border-indigo-400 bg-indigo-50/40 text-indigo-950'
+                                            : 'border-slate-300 bg-white text-slate-800'
+                                        }`}
+                                      />
+                                    </div>
+
+                                    {lockedTravelers[t.id] ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUnlockTraveler(t.id)}
+                                        className="p-1.5 sm:p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded shrink-0"
+                                        title="Desbloquear para rateio automático do saldo"
+                                      >
+                                        <Lock className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-indigo-600" />
+                                      </button>
+                                    ) : (
+                                      <span
+                                        className="p-1.5 sm:p-1 text-slate-300 shrink-0"
+                                        title="Calculado automaticamente a partir do saldo restante"
+                                      >
+                                        <Unlock className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                                      </span>
+                                    )}
+
+                                    <span className="hidden sm:inline-block text-[11px] text-slate-400 font-mono min-w-[42px] text-right">
+                                      {splitInfo.percentage.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Summary & Balance Check */}
+                    <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+                      <span className="text-slate-500 font-medium">
+                        Soma das partes:
+                        <strong className="text-slate-900 ml-1 font-mono">
+                          {currency} {calculatedSplitsSummary.totalCalculated.toFixed(2)}
+                        </strong>{' '}
+                        / {currency} {(parseFloat(amount) || 0).toFixed(2)}
                       </span>
-                    ) : (
-                      <span className="text-rose-600 font-bold flex items-center gap-1 text-[11px]">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        Diferença: {currency}{' '}
-                        {((parseFloat(amount) || 0) - calculatedSplitsSummary.totalCalculated).toFixed(2)}
-                      </span>
-                    )}
+
+                      {Math.abs(calculatedSplitsSummary.totalCalculated - (parseFloat(amount) || 0)) < 0.05 ? (
+                        <span className="text-emerald-700 font-bold flex items-center gap-1 text-[11px]">
+                          <Check className="w-3.5 h-3.5 text-emerald-600" /> 100% Distribuído
+                        </span>
+                      ) : (
+                        <span className="text-rose-600 font-bold flex items-center gap-1 text-[11px]">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          Diferença: {currency}{' '}
+                          {((parseFloat(amount) || 0) - calculatedSplitsSummary.totalCalculated).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
                   </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Observações (Opcional)</label>
+                  <textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Detalhes adicionais, comprovantes ou regras do grupo..."
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
                 </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Observações (Opcional)</label>
-                <textarea
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Detalhes adicionais, comprovantes ou regras do grupo..."
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
               </div>
 
-              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100">
+              <div className="pt-3 mt-2 flex justify-end gap-2 border-t border-slate-100 shrink-0 bg-white sticky bottom-0 z-10">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
@@ -2300,19 +2368,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       {/* Transfer Modal */}
       {showTransferModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-[94vh] flex flex-col">
             {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
                   <ArrowRightLeft className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900">
                     {editingTransferId ? 'Editar Transferência' : 'Registrar Transferência'}
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-[11px] sm:text-xs text-slate-500">
                     Pagamento direto entre participantes para equilibrar acertos
                   </p>
                 </div>
@@ -2327,7 +2395,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             </div>
 
             {/* Modal Form */}
-            <form onSubmit={handleSaveTransfer} className="p-6 space-y-4">
+            <form onSubmit={handleSaveTransfer} className="p-4 sm:p-6 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
               {transferFormError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
@@ -2335,13 +2403,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                 </div>
               )}
               {/* Who paid -> Who received */}
-              <div className="grid grid-cols-2 gap-3 items-center">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 items-center">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Quem pagou / enviou</label>
                   <select
                     value={transferFromId}
                     onChange={(e) => setTransferFromId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
                     required
                   >
                     <option value="">Selecione...</option>
@@ -2358,7 +2426,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   <select
                     value={transferToId}
                     onChange={(e) => setTransferToId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
                     required
                   >
                     <option value="">Selecione...</option>
@@ -2372,11 +2440,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
               </div>
 
               {/* Amount & Currency */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Valor Transferido</label>
                   <div className="relative">
-                    <span className="absolute left-3 top-2 text-xs text-slate-400 font-mono font-medium">
+                    <span className="absolute left-3 top-2 text-xs text-slate-400 font-mono font-medium pointer-events-none">
                       {transferCurrency}
                     </span>
                     <input
@@ -2386,8 +2454,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                       required
                       placeholder="0.00"
                       value={transferAmount}
-                      onChange={(e) => setTransferAmount(e.target.value)}
-                      className="w-full pl-12 pr-3 py-2 text-sm font-semibold border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
+                      onChange={(e) => handleTransferAmountChange(e.target.value)}
+                      onFocus={(e) => {
+                        if (e.target.value === '0' || e.target.value === '0.00') {
+                          e.target.select();
+                        }
+                      }}
+                      className="w-full pl-12 pr-3 py-2 text-base sm:text-sm font-semibold border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
                     />
                   </div>
                 </div>
@@ -2397,7 +2470,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   <select
                     value={transferCurrency}
                     onChange={(e) => setTransferCurrency(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white font-medium"
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white font-medium"
                   >
                     {availableInputCurrencies.map((c) => (
                       <option key={c} value={c}>
@@ -2414,7 +2487,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
               </div>
 
               {/* Date & Payment Method */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Data</label>
                   <input
@@ -2422,7 +2495,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                     required
                     value={transferDate}
                     onChange={(e) => setTransferDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
                   />
                 </div>
 
@@ -2431,7 +2504,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   <select
                     value={transferPaymentMethod}
                     onChange={(e) => setTransferPaymentMethod(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                    className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
                   >
                     <option value="PIX">Pix</option>
                     <option value="BANK_TRANSFER">Transferência Bancária</option>
@@ -2449,7 +2522,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   value={transferNotes}
                   onChange={(e) => setTransferNotes(e.target.value)}
                   placeholder="Ex: Acerto parcial do jantar, comprovante enviado no WhatsApp..."
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
 
