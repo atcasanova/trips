@@ -16,23 +16,49 @@ import {
   Loader2,
   AlertCircle,
   ExternalLink,
+  Check,
 } from 'lucide-react';
-import { TransportReservation, TransportSegment } from '../types/index.js';
+import { Trip, TransportReservation, TransportSegment } from '../types/index.js';
 import { api } from '../api/client.js';
+import { getAirportByCode } from '../utils/airportLocations.js';
 
 interface TransportsViewProps {
+  trip?: Trip;
   tripId: string;
   transports: TransportReservation[];
   onRefresh: () => void;
   canEdit: boolean;
 }
 
-export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transports, onRefresh, canEdit }) => {
+export const TransportsView: React.FC<TransportsViewProps> = ({ trip, tripId, transports, onRefresh, canEdit }) => {
   const [localTransports, setLocalTransports] = useState<TransportReservation[]>(transports);
+  const [addingCity, setAddingCity] = useState<string | null>(null);
 
   React.useEffect(() => {
     setLocalTransports(transports);
   }, [transports]);
+
+  const handleAddConnectionCity = async (cityName: string) => {
+    if (!trip) return;
+    const currentCities = Array.isArray(trip.cities) ? trip.cities : [];
+    if (currentCities.some((c) => c.toLowerCase() === cityName.toLowerCase())) return;
+
+    setAddingCity(cityName);
+    const updatedCities = [...currentCities, cityName];
+    const updatedSummary = updatedCities.join(', ');
+
+    try {
+      await api.trips.update(trip.id, {
+        cities: updatedCities,
+        destination_summary: updatedSummary,
+      });
+      onRefresh();
+    } catch (err: any) {
+      console.error('Erro ao incluir cidade de conexão:', err);
+    } finally {
+      setAddingCity(null);
+    }
+  };
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [type, setType] = useState('FLIGHT');
@@ -305,7 +331,7 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
               {/* Segments */}
               <div className="mt-4 space-y-3">
                 {tr.segments && tr.segments.length > 0 ? (
-                  tr.segments.map((seg, idx) => {
+                  tr.segments.map((seg, idx, allSegs) => {
                     const paxList: Array<{ name: string; seat?: string | null; bookingCode?: string | null }> = Array.isArray(seg.passengers) && seg.passengers.length > 0
                       ? seg.passengers
                       : Array.isArray(seg.passenger_names)
@@ -314,55 +340,130 @@ export const TransportsView: React.FC<TransportsViewProps> = ({ tripId, transpor
                     const hasPaxSeats = paxList.some((p) => p.seat);
 
                     return (
-                    <div
-                      key={seg.id || idx}
-                      className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="font-mono font-bold text-slate-800 px-2 py-1 bg-white border border-slate-200 rounded">
-                          {seg.identification_number || seg.carrier_name || `Trecho ${idx + 1}`}
+                    <React.Fragment key={seg.id || idx}>
+                      <div
+                        className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="font-mono font-bold text-slate-800 px-2 py-1 bg-white border border-slate-200 rounded">
+                            {seg.identification_number || seg.carrier_name || `Trecho ${idx + 1}`}
+                          </div>
+
+                          <div>
+                            <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                              <span>{seg.departure_location}</span>
+                              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                              <span>{seg.arrival_location}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                              <span>Partida: {seg.departure_date} {seg.departure_time || ''}</span>
+                              <span>•</span>
+                              <span>Chegada: {seg.arrival_date} {seg.arrival_time || ''}</span>
+                            </div>
+                            {paxList.length > 0 && (
+                              <div className="mt-1 text-[11px] text-blue-800 bg-blue-50/80 px-2 py-0.5 rounded border border-blue-100/80 inline-flex items-center gap-1.5 flex-wrap">
+                                <span className="inline-flex items-center gap-1"><User className="w-3 h-3 text-blue-600" /> Passageiro(s){paxList.length > 1 ? ` (${paxList.length})` : ''}:</span>
+                                <strong>
+                                  {paxList.map((p) => {
+                                    const parts: string[] = [];
+                                    if (p.seat) parts.push(`Poltrona: ${p.seat}`);
+                                    if (p.bookingCode && bookingCodes.length > 1) parts.push(`PNR: ${p.bookingCode}`);
+                                    return parts.length > 0 ? `${p.name} (${parts.join(', ')})` : p.name;
+                                  }).join(' • ')}
+                                </strong>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
-                        <div>
-                          <div className="font-semibold text-slate-900 flex items-center gap-1.5">
-                            <span>{seg.departure_location}</span>
-                            <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{seg.arrival_location}</span>
-                          </div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                            <span>Partida: {seg.departure_date} {seg.departure_time || ''}</span>
-                            <span>•</span>
-                            <span>Chegada: {seg.arrival_date} {seg.arrival_time || ''}</span>
-                          </div>
-                          {paxList.length > 0 && (
-                            <div className="mt-1 text-[11px] text-blue-800 bg-blue-50/80 px-2 py-0.5 rounded border border-blue-100/80 inline-flex items-center gap-1.5 flex-wrap">
-                              <span className="inline-flex items-center gap-1"><User className="w-3 h-3 text-blue-600" /> Passageiro(s){paxList.length > 1 ? ` (${paxList.length})` : ''}:</span>
-                              <strong>
-                                {paxList.map((p) => {
-                                  const parts: string[] = [];
-                                  if (p.seat) parts.push(`Poltrona: ${p.seat}`);
-                                  if (p.bookingCode && bookingCodes.length > 1) parts.push(`PNR: ${p.bookingCode}`);
-                                  return parts.length > 0 ? `${p.name} (${parts.join(', ')})` : p.name;
-                                }).join(' • ')}
-                              </strong>
-                            </div>
+                        <div className="flex items-center gap-3 text-[11px] text-slate-600">
+                          {!hasPaxSeats && seg.seat && <span>Assento: <strong>{seg.seat}</strong></span>}
+                          {seg.cabin_class && <span className="capitalize">{seg.cabin_class}</span>}
+                          {seg.duration_minutes && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              {Math.floor(seg.duration_minutes / 60)}h{seg.duration_minutes % 60}m
+                            </span>
                           )}
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3 text-[11px] text-slate-600">
-                        {!hasPaxSeats && seg.seat && <span>Assento: <strong>{seg.seat}</strong></span>}
-                        {seg.cabin_class && <span className="capitalize">{seg.cabin_class}</span>}
-                        {seg.duration_minutes && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            {Math.floor(seg.duration_minutes / 60)}h{seg.duration_minutes % 60}m
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
+                      {/* Connection / Layover between segments */}
+                      {idx < allSegs.length - 1 && (() => {
+                        const nextSeg = allSegs[idx + 1];
+                        let layoverMinutes = seg.layover_minutes || 0;
+                        if (!layoverMinutes && seg.arrival_date && nextSeg.departure_date) {
+                          const arrTime = seg.arrival_time || '00:00';
+                          const depTime = nextSeg.departure_time || '00:00';
+                          const arrMs = new Date(`${seg.arrival_date}T${arrTime}:00`).getTime();
+                          const depMs = new Date(`${nextSeg.departure_date}T${depTime}:00`).getTime();
+                          if (!isNaN(arrMs) && !isNaN(depMs) && depMs > arrMs) {
+                            layoverMinutes = Math.round((depMs - arrMs) / 60000);
+                          }
+                        }
+
+                        const airportLoc = getAirportByCode(seg.arrival_station_code || seg.arrival_location);
+                        const connectionCity = airportLoc?.city || seg.arrival_location.replace(/\s*\([A-Z]{3}\)/i, '').split('/')[0].trim();
+                        const hours = Math.floor(layoverMinutes / 60);
+                        const mins = layoverMinutes % 60;
+                        const layoverStr = layoverMinutes > 0 ? (hours > 0 ? `${hours}h${mins > 0 ? `${mins}m` : ''}` : `${mins}m`) : null;
+
+                        const isLongLayover = layoverMinutes >= 480; // 8 hours or more
+                        const tripCities = Array.isArray(trip?.cities) ? trip.cities : [];
+                        const isCityInTrip = tripCities.some((c) => c.toLowerCase() === connectionCity.toLowerCase());
+
+                        if (isLongLayover) {
+                          return (
+                            <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50/70 border border-amber-200/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs shadow-2xs">
+                              <div className="flex items-center gap-2 text-amber-900">
+                                <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                                <div>
+                                  <span className="font-bold">Conexão longa{layoverStr ? ` de ${layoverStr}` : ''} em {connectionCity}</span>
+                                  <span className="hidden sm:inline text-amber-800 ml-1.5">• Tempo livre para conhecer a cidade?</span>
+                                </div>
+                              </div>
+                              {canEdit && trip && (
+                                <div className="shrink-0">
+                                  {isCityInTrip ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-lg border border-emerald-200">
+                                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                      Destino da viagem
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddConnectionCity(connectionCity)}
+                                      disabled={addingCity === connectionCity}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                                      title={`Adicionar ${connectionCity} como destino da viagem`}
+                                    >
+                                      {addingCity === connectionCity ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <Plus className="w-3.5 h-3.5" />
+                                      )}
+                                      <span>Incluir {connectionCity} como destino</span>
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="py-2 px-3 bg-slate-100/70 border border-slate-200/70 rounded-lg flex items-center justify-between text-[11px] text-slate-500">
+                            <span className="flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Escala / Conexão{layoverStr ? ` de ${layoverStr}` : ''} em <strong>{connectionCity}</strong></span>
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Trânsito em aeroporto</span>
+                          </div>
+                        );
+                      })()}
+                    </React.Fragment>
+                    );
+                  })
                 ) : (
                   <p className="text-xs text-slate-400 italic">Sem trechos detalhados</p>
                 )}

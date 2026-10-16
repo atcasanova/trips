@@ -727,14 +727,44 @@ export const inboundEmailService = {
           if (s.arrivalAirport && !allCities.includes(s.arrivalAirport)) allCities.push(s.arrivalAirport);
         }
 
-        // Collect destination cities (arrival cities, excluding origin of the journey)
+        // Collect destination cities (arrival cities, excluding origin and intermediate short layovers)
         const originCity = segments[0]?.departureCity;
-        for (const s of segments) {
-          if (s.arrivalCity) {
-            const isOrigin = originCity && normalizeText(s.arrivalCity) === normalizeText(originCity);
-            if (!isOrigin && !cities.includes(s.arrivalCity)) {
-              cities.push(s.arrivalCity);
+        for (let i = 0; i < segments.length; i++) {
+          const s = segments[i];
+          if (!s.arrivalCity) continue;
+
+          // Check if arrival is the journey origin (e.g. return flight back home)
+          const isOrigin = originCity && normalizeText(s.arrivalCity) === normalizeText(originCity);
+          if (isOrigin) continue;
+
+          // Check if this segment is followed by an immediate connection from the same airport/city
+          const nextSeg = segments[i + 1];
+          const isIntermediateLayover = nextSeg && (
+            (nextSeg.departureCity && normalizeText(nextSeg.departureCity) === normalizeText(s.arrivalCity)) ||
+            (nextSeg.departureAirport && s.arrivalAirport && normalizeText(nextSeg.departureAirport) === normalizeText(s.arrivalAirport))
+          );
+
+          if (isIntermediateLayover) {
+            // Calculate layover duration
+            let layoverMins = s.layoverMinutes || 0;
+            if (!layoverMins && s.arrivalDate && nextSeg.departureDate) {
+              const arrTime = s.arrivalTime || '00:00';
+              const depTime = nextSeg.departureTime || '00:00';
+              const arrMs = new Date(`${s.arrivalDate}T${arrTime}:00`).getTime();
+              const depMs = new Date(`${nextSeg.departureDate}T${depTime}:00`).getTime();
+              if (!isNaN(arrMs) && !isNaN(depMs) && depMs > arrMs) {
+                layoverMins = Math.round((depMs - arrMs) / 60000);
+              }
             }
+
+            // Layovers under 8 hours (480 mins) are strictly transit connections - never auto-add as trip destination
+            if (layoverMins < 480) {
+              continue;
+            }
+          }
+
+          if (!cities.includes(s.arrivalCity)) {
+            cities.push(s.arrivalCity);
           }
         }
         if (cities.length === 0 && segments[0]?.arrivalCity) {

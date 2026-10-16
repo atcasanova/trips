@@ -27,6 +27,7 @@ import {
   AlertCircle,
   X,
   Link2,
+  Plus,
 } from 'lucide-react';
 import {
   Trip,
@@ -93,6 +94,57 @@ export const TripDetailPage: React.FC = () => {
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Direct city management (add/remove destinations)
+  const [showAddCity, setShowAddCity] = useState(false);
+  const [newCityName, setNewCityName] = useState('');
+
+  const handleRemoveCity = async (cityToRemove: string) => {
+    if (!trip) return;
+    const currentCities = Array.isArray(trip.cities) ? trip.cities : [];
+    const updatedCities = currentCities.filter((c) => c !== cityToRemove);
+    const updatedSummary = updatedCities.join(', ');
+
+    setTrip({ ...trip, cities: updatedCities, destination_summary: updatedSummary });
+
+    try {
+      await api.trips.update(trip.id, {
+        cities: updatedCities,
+        destination_summary: updatedSummary,
+      });
+    } catch (err: any) {
+      console.error('Erro ao remover cidade:', err);
+      loadAllTripData({ silent: true });
+    }
+  };
+
+  const handleAddCity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trip || !newCityName.trim()) return;
+    const cityToAdd = newCityName.trim();
+    const currentCities = Array.isArray(trip.cities) ? trip.cities : [];
+    if (currentCities.some((c) => c.toLowerCase() === cityToAdd.toLowerCase())) {
+      setShowAddCity(false);
+      setNewCityName('');
+      return;
+    }
+    const updatedCities = [...currentCities, cityToAdd];
+    const updatedSummary = updatedCities.join(', ');
+
+    setTrip({ ...trip, cities: updatedCities, destination_summary: updatedSummary });
+    setShowAddCity(false);
+    setNewCityName('');
+
+    try {
+      await api.trips.update(trip.id, {
+        cities: updatedCities,
+        destination_summary: updatedSummary,
+      });
+    } catch (err: any) {
+      console.error('Erro ao adicionar cidade:', err);
+      loadAllTripData({ silent: true });
+    }
+  };
 
   const tripId = id || '';
 
@@ -231,6 +283,76 @@ export const TripDetailPage: React.FC = () => {
     } catch (err: any) {
       setActionError(err.message || 'Erro ao atualizar capa');
     }
+  };
+
+  const renderCitiesManager = () => {
+    const cityList = Array.isArray(trip?.cities) ? trip.cities : [];
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+        {cityList.map((city, idx) => (
+          <span
+            key={`${city}-${idx}`}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 hover:bg-slate-200/70 text-slate-800 text-xs font-semibold rounded-lg transition-colors border border-slate-200/80 shadow-2xs group"
+          >
+            <span>{city}</span>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => handleRemoveCity(city)}
+                className="text-slate-400 hover:text-rose-600 transition-colors p-0.5 rounded cursor-pointer"
+                title={`Remover ${city} dos destinos da viagem`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </span>
+        ))}
+
+        {canEdit && (
+          showAddCity ? (
+            <form onSubmit={handleAddCity} className="inline-flex items-center gap-1">
+              <input
+                type="text"
+                value={newCityName}
+                onChange={(e) => setNewCityName(e.target.value)}
+                placeholder="Nome da cidade..."
+                autoFocus
+                className="px-2.5 py-1 text-xs border border-brand-400 rounded-lg outline-none focus:ring-1 focus:ring-brand-500 w-28 sm:w-36 bg-white"
+              />
+              <button
+                type="submit"
+                disabled={!newCityName.trim()}
+                className="p-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-md text-xs transition-colors cursor-pointer disabled:opacity-50"
+                title="Adicionar"
+              >
+                <Check className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddCity(false);
+                  setNewCityName('');
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-md text-xs transition-colors cursor-pointer"
+                title="Cancelar"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddCity(true)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-brand-600 text-xs font-semibold rounded-lg border border-dashed border-slate-300 transition-colors cursor-pointer"
+              title="Adicionar cidade ou destino à viagem"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Adicionar cidade</span>
+            </button>
+          )
+        )}
+      </div>
+    );
   };
 
   return (
@@ -473,23 +595,12 @@ export const TripDetailPage: React.FC = () => {
                   </p>
 
                   {/* Cities Pill Tags */}
-                  {Array.isArray(trip.cities) && trip.cities.length > 0 && (
-                    <div className="mt-5 pt-4 border-t border-slate-100">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                        Cidades & Paradas
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {trip.cities.map((city, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg"
-                          >
-                            {city}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div className="mt-5 pt-4 border-t border-slate-100">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                      Cidades & Paradas
+                    </span>
+                    {renderCitiesManager()}
+                  </div>
                 </div>
               )}
 
@@ -542,18 +653,10 @@ export const TripDetailPage: React.FC = () => {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-100">
                       <div>
                         <h3 className="text-base font-bold font-serif text-slate-900">Resumo da Viagem</h3>
-                        {Array.isArray(trip.cities) && trip.cities.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {trip.cities.map((city, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2.5 py-0.5 bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg"
-                              >
-                                {city}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mt-2 mb-1">
+                          Cidades & Paradas
+                        </span>
+                        {renderCitiesManager()}
                       </div>
                       <button
                         onClick={() => handleTabChange('report')}
@@ -793,7 +896,7 @@ export const TripDetailPage: React.FC = () => {
         )}
 
         {activeTab === 'transports' && (
-          <TransportsView tripId={trip.id} transports={transports} onRefresh={loadAllTripData} canEdit={canEdit} />
+          <TransportsView trip={trip} tripId={trip.id} transports={transports} onRefresh={loadAllTripData} canEdit={canEdit} />
         )}
 
         {activeTab === 'hotels' && (
