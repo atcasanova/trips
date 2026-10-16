@@ -28,6 +28,7 @@ import {
   Theater,
   Trees,
   AlertTriangle,
+  ClipboardPaste,
 } from 'lucide-react';
 import { Trip, TripLink, LinkPreviewResponse } from '../types/index.js';
 import { api } from '../api/client.js';
@@ -167,6 +168,7 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewData, setPreviewData] = useState<LinkPreviewResponse | null>(null);
   const [savingLink, setSavingLink] = useState(false);
+  const [justPasted, setJustPasted] = useState(false);
 
   // Form edit fields (multi-select for cities and themes)
   const [formCountry, setFormCountry] = useState('');
@@ -234,6 +236,30 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
     }, 300);
     return () => clearTimeout(handler);
   }, [searchQuery]);
+
+  // Read URL from clipboard and fill input
+  const handlePasteLink = async () => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        const inputEl = document.getElementById('link-url-input') as HTMLInputElement | null;
+        inputEl?.focus();
+        return;
+      }
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setInputUrl(text.trim());
+        setError(null);
+        setJustPasted(true);
+        setTimeout(() => setJustPasted(false), 1500);
+        const inputEl = document.getElementById('link-url-input') as HTMLInputElement | null;
+        inputEl?.focus();
+      }
+    } catch (err: any) {
+      console.warn('Erro ao acessar área de transferência:', err);
+      const inputEl = document.getElementById('link-url-input') as HTMLInputElement | null;
+      inputEl?.focus();
+    }
+  };
 
   // Preview link when user enters URL
   const handlePreviewLink = async (e?: React.FormEvent) => {
@@ -486,23 +512,40 @@ export const LinksView: React.FC<LinksViewProps> = ({ trip, canEdit, primaryColo
         {/* Input bar to paste link */}
         {canEdit && (
           <div className="space-y-4">
-            <form onSubmit={handlePreviewLink} className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <input
-                  type="url"
-                  placeholder="Cole aqui um link (Instagram, TikTok, YouTube, Maps, blog, etc.)..."
-                  value={inputUrl}
-                  onChange={(e) => setInputUrl(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3 bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 text-sm rounded-xl border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all outline-none"
-                  required
-                />
-                <Link2 className="w-5 h-5 text-slate-400 absolute left-3.5 top-3.5 pointer-events-none" />
+            <form onSubmit={handlePreviewLink} className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+              <div className="flex items-center gap-2 flex-1">
+                <div className="relative flex-1">
+                  <input
+                    id="link-url-input"
+                    type="url"
+                    placeholder="Cole aqui um link (Instagram, TikTok, YouTube, Maps, blog, etc.)..."
+                    value={inputUrl}
+                    onChange={(e) => setInputUrl(e.target.value)}
+                    className="w-full pl-11 pr-4 py-3 bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 text-sm rounded-xl border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all outline-none"
+                    required
+                  />
+                  <Link2 className="w-5 h-5 text-slate-400 absolute left-3.5 top-3.5 pointer-events-none" />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handlePasteLink}
+                  title="Colar link"
+                  aria-label="Colar link"
+                  className={`self-stretch px-3 sm:px-3.5 flex items-center justify-center rounded-xl border shadow-xs transition-all cursor-pointer shrink-0 ${
+                    justPasted
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-600'
+                      : 'bg-slate-100 hover:bg-slate-200 active:bg-slate-300 border-slate-200 text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {justPasted ? <Check className="w-5 h-5 text-emerald-600" /> : <ClipboardPaste className="w-5 h-5" />}
+                </button>
               </div>
 
               <button
                 type="submit"
                 disabled={previewLoading || !inputUrl.trim()}
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white shadow-sm hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none shrink-0"
                 style={{ backgroundColor: primaryColor }}
               >
                 {previewLoading ? (

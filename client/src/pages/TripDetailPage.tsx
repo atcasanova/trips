@@ -411,8 +411,8 @@ export const TripDetailPage: React.FC = () => {
 
       {/* Main Tab Navigation */}
       <div className="sticky top-16 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <nav className="flex space-x-1 sm:space-x-3 overflow-x-auto py-2.5">
+        <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
+          <nav className="grid grid-cols-9 gap-1 p-1 my-1.5 bg-slate-100/70 rounded-2xl border border-slate-200/80 sm:flex sm:items-center sm:space-x-1 lg:space-x-2 sm:gap-0 sm:p-0 sm:my-0 sm:bg-transparent sm:border-0 sm:rounded-none sm:overflow-x-auto py-0 sm:py-2.5">
             {[
               { id: 'overview', label: 'Visão Geral', icon: Sparkles },
               { id: 'timeline', label: 'Timeline', icon: Route },
@@ -430,16 +430,20 @@ export const TripDetailPage: React.FC = () => {
                 <button
                   key={tItem.id}
                   onClick={() => handleTabChange(tItem.id as TabType)}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                    isActive ? 'text-white shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  title={tItem.label}
+                  aria-label={tItem.label}
+                  className={`flex items-center justify-center sm:justify-start gap-1.5 py-2 px-1 sm:px-3.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all select-none ${
+                    isActive
+                      ? 'text-white shadow-sm ring-1 ring-black/5 font-bold'
+                      : 'bg-white text-slate-600 hover:text-slate-900 active:bg-slate-50 border border-slate-200/90 shadow-2xs sm:bg-transparent sm:border-transparent sm:shadow-none sm:hover:bg-slate-100'
                   }`}
                   style={isActive ? { backgroundColor: primaryColor } : undefined}
                 >
-                  <Icon className="w-4 h-4" />
-                  <span>{tItem.label}</span>
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">{tItem.label}</span>
                   {tItem.count !== undefined && (
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                      className={`hidden sm:inline-block text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                         isActive ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
                       }`}
                     >
